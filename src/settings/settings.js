@@ -264,6 +264,9 @@ async function flushPendingChanges() {
     const usbPowerSettingsChanged = Object.prototype.hasOwnProperty.call(
         pendingChanges.rea,
         'skalePoweredByUsbByDevice',
+    ) || Object.prototype.hasOwnProperty.call(
+        pendingChanges.rea,
+        'skalePoweredByUsb',
     );
     if (Object.keys(pendingChanges.rea).length) tasks.push(setReaSettings(pendingChanges.rea));
     if (Object.keys(pendingChanges.de1).length) tasks.push(setDe1Settings(pendingChanges.de1));
@@ -10211,13 +10214,23 @@ function renderScalePopupToggle(title, description, enabled, inputAttributes) {
     `;
 }
 
+function getScaleDeviceSetting(settings, key, legacyKey, deviceId) {
+    if (Object.prototype.hasOwnProperty.call(settings || {}, key)) {
+        return settings?.[key]?.[deviceId] === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(settings || {}, legacyKey)) {
+        return settings[legacyKey] === true;
+    }
+    return undefined;
+}
+
 function renderScaleDeviceToggle(settings, key, legacyKey, deviceId, title, description) {
     const hasPerDeviceSetting = Object.prototype.hasOwnProperty.call(settings || {}, key);
     if (!hasPerDeviceSetting && !Object.prototype.hasOwnProperty.call(settings || {}, legacyKey)) return '';
     return renderScalePopupToggle(
         title,
         description,
-        hasPerDeviceSetting ? settings?.[key]?.[deviceId] === true : settings[legacyKey] === true,
+        getScaleDeviceSetting(settings, key, legacyKey, deviceId) === true,
         `data-setting-key="${key}" data-legacy-key="${legacyKey}" data-device-id="${escapeHtml(deviceId)}"
          onchange="window.updateScaleDeviceSetting(this.dataset.settingKey, this.dataset.legacyKey, this.dataset.deviceId, this.checked)"`,
     );
@@ -10411,7 +10424,12 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
             ? (scaleInfoByDeviceId.get(device.id) || {})
             : {};
         const usbPowered = type === 'Scale' && isConnected &&
-            settingsCache.rea?.skalePoweredByUsbByDevice?.[device.id] === true;
+            getScaleDeviceSetting(
+                settingsCache.rea,
+                'skalePoweredByUsbByDevice',
+                'skalePoweredByUsb',
+                device.id,
+            ) === true;
         const safeId = (device.id || '').replace(/'/g, "\\'");
         const safeName = (device.name || '').replace(/'/g, "\\'");
         const safeSettingKey = settingKey.replace(/'/g, "\\'");
@@ -10531,10 +10549,6 @@ window.updateScaleDeviceSetting = function(key, legacyKey, deviceId, enabled) {
         if (enabled) values[deviceId] = true;
         else delete values[deviceId];
         updateReaSetting(key, values, false);
-        if (key === 'skalePoweredByUsbByDevice') {
-            scaleInfoByDeviceId.delete(deviceId);
-            renderDeviceListFromCache();
-        }
     } else {
         updateReaSetting(legacyKey, enabled, false);
     }
