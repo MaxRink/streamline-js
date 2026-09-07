@@ -283,32 +283,43 @@ let scaleInfoRequestGeneration = 0;
 let scaleInfoDeviceId = null;
 
 async function refreshScaleInfo(connectedScaleId) {
-    const generation = ++scaleInfoRequestGeneration;
-    scaleInfoDeviceId = connectedScaleId;
-    if (!connectedScaleId) {
+    if (scaleInfoDeviceId !== connectedScaleId) {
+        scaleInfoRequestGeneration += 1;
+        scaleInfoDeviceId = connectedScaleId;
         scaleInfoByDeviceId.clear();
         scaleInfoInFlight.clear();
-        return;
     }
+    if (!connectedScaleId) return;
     if (scaleInfoByDeviceId.has(connectedScaleId)) return;
     if (scaleInfoInFlight.has(connectedScaleId)) return;
+    const generation = scaleInfoRequestGeneration;
     const request = getScaleInfo();
     scaleInfoInFlight.set(connectedScaleId, request);
     try {
         const info = await request;
         if (generation !== scaleInfoRequestGeneration ||
             scaleInfoDeviceId !== connectedScaleId ||
-            !deviceStateCache.devices.some(d => d.id === connectedScaleId && d.state === 'connected')) {
+            !deviceStateCache.devices.some(d =>
+                d.id === connectedScaleId &&
+                d.state === 'connected' &&
+                d.available !== false
+            )) {
             return;
         }
         scaleInfoByDeviceId.set(connectedScaleId, info || {});
         renderDeviceListFromCache();
     } catch (error) {
         if (generation === scaleInfoRequestGeneration) {
-            logger.warn(`Could not load scale info for ${connectedScaleId}:`, error);
+            if ([404, 405, 501, 503].includes(error?.status)) {
+                scaleInfoByDeviceId.set(connectedScaleId, {});
+            } else {
+                logger.warn(`Could not load scale info for ${connectedScaleId}:`, error);
+            }
         }
     } finally {
-        scaleInfoInFlight.delete(connectedScaleId);
+        if (scaleInfoInFlight.get(connectedScaleId) === request) {
+            scaleInfoInFlight.delete(connectedScaleId);
+        }
     }
 }
 
@@ -9118,12 +9129,12 @@ function renderDeviceListFromCache() {
                         device.name.toLowerCase().includes('weight')))
     );
 
+    const connectedScale = scales.find(device => device.state === 'connected' && device.available !== false);
+    refreshScaleInfo(connectedScale?.id || null);
     renderDeviceList('bluetooth-machine-devices-container', machines, 'Machine',
         settingsCache.rea?.preferredMachineId || '', 'preferredMachineId');
     renderDeviceList('bluetooth-scale-devices-container', scales, 'Scale',
         settingsCache.rea?.preferredScaleId || '', 'preferredScaleId');
-    const connectedScale = scales.find(device => device.state === 'connected' && device.available !== false);
-    refreshScaleInfo(connectedScale?.id || null);
 }
 
 // Bluetooth Functions
@@ -9668,15 +9679,17 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
         const isUnavailable = device.available === false;
         const isConnected = !isUnavailable && device.state === 'connected';
         const isPreferred = preferredId && device.id === preferredId;
-        const deviceInfo = type === 'Scale' ? (scaleInfoByDeviceId.get(device.id) || {}) : {};
+        const deviceInfo = type === 'Scale' && isConnected
+            ? (scaleInfoByDeviceId.get(device.id) || {})
+            : {};
         const safeId = (device.id || '').replace(/'/g, "\\'");
         const safeName = (device.name || '').replace(/'/g, "\\'");
         const safeSettingKey = settingKey.replace(/'/g, "\\'");
         const firmware = deviceInfo.firmwareVersion
             ? `<span class="text-[18px] text-[var(--text-primary)] opacity-60">${getTranslation('Firmware')} ${escapeHtml(deviceInfo.firmwareVersion)}</span>`
             : '';
-        const batteryLevel = type === 'Scale' && isConnected
-            ? (Number.isFinite(deviceInfo.batteryLevel) ? deviceInfo.batteryLevel : window.getLatestScaleBattery?.())
+        const batteryLevel = Number.isFinite(deviceInfo.batteryLevel)
+            ? deviceInfo.batteryLevel
             : null;
         const batteryBadge = batteryLevel !== null && batteryLevel !== undefined
             ? renderBatteryBadge(batteryLevel)
