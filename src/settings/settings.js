@@ -1,5 +1,5 @@
 import { isEcoSteamEnabled, setEcoSteamEnabled } from '../modules/eco-steam.js';
-import {  getReaSettings, getDe1Settings, getDe1AdvancedSettings, setReaSettings, setDe1Settings, setDe1AdvancedSettings, resetDe1Settings, setMachineState, connectScaleDevice, connectDeviceWebSocket, sendDeviceCommand, awaitDeviceConnectResult, dimDisplay, restoreDisplay, isBlackScreenSaver, setBlackScreenSaver as apiSetBlackScreenSaver, rememberBrightness, getLastDisplayState, currentMachineState, signalHeartbeat, MachineState, getDeviceWebSocket, initDeviceWebSocketWithCallback, saveScaleDeviceId, getScaleDeviceId, connectDisplayWebSocket, sendDisplayCommand, connectUpdateWebSocket, sendUpdateCommand, enableWakeLock, disableWakeLock, isWakeLockEnabled, getPresenceSettings, setPresenceSettings, getPresenceSchedules, createPresenceSchedule, updatePresenceSchedule, deletePresenceSchedule, getAppInfo, getMachineInfo, getWorkflow, updateWorkflow, getAllSkins, getDefaultSkin, setDefaultSkin, updateSkins, stopWebuiServer, startWebuiServer, getWebuiServerStatus, uploadFirmware, applyFirmware, cancelFirmwareUpdate, getFirmwareCatalog, setWaterLevels, API_BASE_URL, listWifiScales, addWifiScale, removeWifiScale, forgetDevice, getLedStrip, setLedStrip, commitLedStrip, resetLedStrip, previewLedStrip, clearLedStripPreview, getCupWarmer, setCupWarmer, setCupWarmerPrewarm, calibrateScale, tareScale, getSensorCalibration, setSensorCalibration, getLastMachineSnapshot, ensureMachineSnapshotSocket, connectScaleWebSocket, setFirmwareFlashInFlight, persistSharedValue, MILK_STOP_LAST_VALUE_KEY, STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, STEAM_TEMP_LAST_VALUE_KEY, HOT_WATER_VOLUME_LAST_VALUE_KEY, HOT_WATER_TEMP_LAST_VALUE_KEY, approvePluginUpdate, getPlugins, getDecentAccountStatus, getPluginSettings, setPluginSettings, callPluginEndpoint, enablePlugin } from '../modules/api.js';
+import {  getReaSettings, getDe1Settings, getDe1AdvancedSettings, setReaSettings, setDe1Settings, setDe1AdvancedSettings, resetDe1Settings, setMachineState, connectScaleDevice, connectDeviceWebSocket, sendDeviceCommand, awaitDeviceConnectResult, dimDisplay, restoreDisplay, isBlackScreenSaver, setBlackScreenSaver as apiSetBlackScreenSaver, rememberBrightness, getLastDisplayState, currentMachineState, signalHeartbeat, MachineState, getDeviceWebSocket, initDeviceWebSocketWithCallback, saveScaleDeviceId, getScaleDeviceId, connectDisplayWebSocket, sendDisplayCommand, connectUpdateWebSocket, sendUpdateCommand, enableWakeLock, disableWakeLock, isWakeLockEnabled, getPresenceSettings, setPresenceSettings, getPresenceSchedules, createPresenceSchedule, updatePresenceSchedule, deletePresenceSchedule, getAppInfo, getMachineInfo, getWorkflow, updateWorkflow, getAllSkins, getDefaultSkin, setDefaultSkin, updateSkins, stopWebuiServer, startWebuiServer, getWebuiServerStatus, uploadFirmware, applyFirmware, cancelFirmwareUpdate, getFirmwareCatalog, setWaterLevels, API_BASE_URL, listWifiScales, addWifiScale, removeWifiScale, forgetDevice, getLedStrip, setLedStrip, commitLedStrip, resetLedStrip, previewLedStrip, clearLedStripPreview, getCupWarmer, setCupWarmer, setCupWarmerPrewarm, calibrateScale, tareScale, getSensorCalibration, setSensorCalibration, getLastMachineSnapshot, ensureMachineSnapshotSocket, connectScaleWebSocket, setFirmwareFlashInFlight, persistSharedValue, MILK_STOP_LAST_VALUE_KEY, STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, STEAM_TEMP_LAST_VALUE_KEY, HOT_WATER_VOLUME_LAST_VALUE_KEY, HOT_WATER_TEMP_LAST_VALUE_KEY, approvePluginUpdate, getPlugins, getDecentAccountStatus, getPluginSettings, setPluginSettings, callPluginEndpoint, enablePlugin, getScaleInfo } from '../modules/api.js';
 import * as ui from '../modules/ui.js';
 import { initScaling } from '../modules/scaling.js';
 import { getSupportedLanguages, getCurrentLanguage, setLanguage, translatePage, getTranslation } from '../modules/i18n.js';
@@ -277,6 +277,40 @@ let deviceStateCache = {
     scanning: false,
     initialized: false
 };
+const scaleInfoByDeviceId = new Map();
+const scaleInfoInFlight = new Map();
+let scaleInfoRequestGeneration = 0;
+let scaleInfoDeviceId = null;
+
+async function refreshScaleInfo(connectedScaleId) {
+    const generation = ++scaleInfoRequestGeneration;
+    scaleInfoDeviceId = connectedScaleId;
+    if (!connectedScaleId) {
+        scaleInfoByDeviceId.clear();
+        scaleInfoInFlight.clear();
+        return;
+    }
+    if (scaleInfoByDeviceId.has(connectedScaleId)) return;
+    if (scaleInfoInFlight.has(connectedScaleId)) return;
+    const request = getScaleInfo();
+    scaleInfoInFlight.set(connectedScaleId, request);
+    try {
+        const info = await request;
+        if (generation !== scaleInfoRequestGeneration ||
+            scaleInfoDeviceId !== connectedScaleId ||
+            !deviceStateCache.devices.some(d => d.id === connectedScaleId && d.state === 'connected')) {
+            return;
+        }
+        scaleInfoByDeviceId.set(connectedScaleId, info || {});
+        renderDeviceListFromCache();
+    } catch (error) {
+        if (generation === scaleInfoRequestGeneration) {
+            logger.warn(`Could not load scale info for ${connectedScaleId}:`, error);
+        }
+    } finally {
+        scaleInfoInFlight.delete(connectedScaleId);
+    }
+}
 
 // Render generic loading state
 function renderLoadingState(title) {
@@ -9088,6 +9122,8 @@ function renderDeviceListFromCache() {
         settingsCache.rea?.preferredMachineId || '', 'preferredMachineId');
     renderDeviceList('bluetooth-scale-devices-container', scales, 'Scale',
         settingsCache.rea?.preferredScaleId || '', 'preferredScaleId');
+    const connectedScale = scales.find(device => device.state === 'connected' && device.available !== false);
+    refreshScaleInfo(connectedScale?.id || null);
 }
 
 // Bluetooth Functions
@@ -9632,14 +9668,14 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
         const isUnavailable = device.available === false;
         const isConnected = !isUnavailable && device.state === 'connected';
         const isPreferred = preferredId && device.id === preferredId;
-        const deviceInfo = {};
+        const deviceInfo = type === 'Scale' ? (scaleInfoByDeviceId.get(device.id) || {}) : {};
         const safeId = (device.id || '').replace(/'/g, "\\'");
         const safeName = (device.name || '').replace(/'/g, "\\'");
         const safeSettingKey = settingKey.replace(/'/g, "\\'");
         const firmware = deviceInfo.firmwareVersion
             ? `<span class="text-[18px] text-[var(--text-primary)] opacity-60">${getTranslation('Firmware')} ${escapeHtml(deviceInfo.firmwareVersion)}</span>`
             : '';
-        const batteryLevel = type === 'Scale' && isConnected && deviceInfo.powerSource !== 'usb'
+        const batteryLevel = type === 'Scale' && isConnected
             ? (Number.isFinite(deviceInfo.batteryLevel) ? deviceInfo.batteryLevel : window.getLatestScaleBattery?.())
             : null;
         const batteryBadge = batteryLevel !== null && batteryLevel !== undefined
@@ -9690,9 +9726,6 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
                 </div>
                 <div class="flex items-center gap-[20px] flex-shrink-0 ml-[24px]">
                     ${batteryBadge}
-                    ${type === 'Scale' && isConnected && deviceInfo.powerSource === 'usb'
-                        ? '<span class="text-[20px] font-bold px-[16px] py-[6px] rounded-full bg-[#385a92] text-white">USB</span>'
-                        : ''}
                     ${settingKey && type !== 'Scale' ? `
                     <div class="flex flex-col items-center gap-[4px]">
                         <span class="text-[16px] text-[var(--text-primary)] opacity-50" data-i18n-key="Preferred">Preferred</span>
