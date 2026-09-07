@@ -416,7 +416,34 @@ function highlightSearchInContent() {
     }
 }
 
+// Maintenance is an extracted category (categories/maintenance.js). The shell
+// loads it directly, but once this legacy module mounts it owns the nav clicks
+// too — so route these categories to the same module instead of keeping a
+// second copy of the screens here. A category with no case at all would fall
+// through to renderGeneralSettings().
+const MAINTENANCE_CATEGORIES = new Set(['maint_cleaning', 'maint_descaling', 'maint_airpurge']);
+let maintenanceCleanup = null;
+let maintenanceSequence = 0;
+
+async function mountMaintenanceCategory(category, container) {
+    const sequence = ++maintenanceSequence;
+    try {
+        const module = await import('./categories/maintenance.js');
+        // Guard a fast switch away: a late import must not paint over the page
+        // the user is now looking at.
+        if (sequence !== maintenanceSequence) return;
+        maintenanceCleanup = await module.mountSettingsCategory({ container, category });
+    } catch (error) {
+        logger.error('Failed to mount maintenance category:', error);
+    }
+}
+
 function updateSettingsContentArea(category) {
+    // Always tear the previous maintenance mount down, including when moving
+    // between two maintenance pages — its poller and listeners are per-mount.
+    maintenanceSequence += 1;
+    maintenanceCleanup?.();
+    maintenanceCleanup = null;
     // Leaving the Lighting page → flush any deferred cross-state palette PUT,
     // THEN stop previewing (flush-before-clear: one strip transition, and the
     // edit persists exactly as the old always-PUT behaviour did).
@@ -463,6 +490,9 @@ function updateSettingsContentArea(category) {
         }
         if (category === 'ledstrip') {
             setTimeout(initLedPicker, 0);
+        }
+        if (MAINTENANCE_CATEGORIES.has(category)) {
+            mountMaintenanceCategory(category, contentArea);
         }
         if (category === 'calib_sensors') {
             setTimeout(initSensorCal, 0);
@@ -692,10 +722,11 @@ export function renderSettingsContent(category) {
             return renderSensorCalSettings();
         case 'calib_loadcell':
             return renderLoadCellCalibration();
+        case 'maint_cleaning':
         case 'maint_descaling':
-            return renderMainDescalingSettings();
         case 'maint_airpurge':
-            return renderMainAirPurgeSettings();
+            // Mounted by the extracted category module, not rendered here.
+            return '';
         case 'theme':
             return renderThemeSettings();
         case 'skin':
@@ -4913,89 +4944,6 @@ export function renderSensorCalSettings() {
 }
 
 
-export function renderMainDescalingSettings() {
-    return `
-        <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
-            <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
-                <p class="leading-[1.2]" data-i18n-key="Machine Descaling">Machine Descaling</p>
-            </div>
-
-            <div class="h-0 relative w-full"><hr class="border-t border-[#c9c9c9] w-full" /></div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[#385a92] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Machine Descaling">Machine Descaling</p>
-                        </div>
-                        <button class="bg-[#385a92] h-[72px] px-[48px] rounded-[72px] text-white text-[24px] font-bold"
-                                onclick="window.startDescaling()" data-i18n-key="Start">
-                            Start
-                        </button>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Run a descaling cycle to remove mineral buildup">
-                        Run a descaling cycle to remove mineral buildup
-                    </p>
-                    <a href="https://app.basecamp.com/3671212/buckets/7351439/documents/7743429669"
-                       class="font-['Inter:Semi_Bold',sans-serif] font-semibold leading-[1.4] not-italic text-[#385a92] underline text-[24px]"
-                       data-i18n-key="Descaling Instruction">
-                        Descaling Instruction
-                    </a>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-export function renderMainAirPurgeSettings() {
-    return `
-        <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
-            <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
-                <p class="leading-[1.2]" data-i18n-key="Transport Mode">Transport Mode</p>
-            </div>
-
-            <div class="h-0 relative w-full"><hr class="border-t border-[#c9c9c9] w-full" /></div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[#385a92] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Transport Mode">Transport Mode</p>
-                        </div>
-                        <button class="bg-[#385a92] h-[72px] px-[48px] rounded-[72px] text-white text-[24px] font-bold"
-                                onclick="window.startAirPurge()" data-i18n-key="Start">
-                            Start
-                        </button>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full pr-[220px]"
-                       data-i18n-key="Purges remaining water from inside the machine. Run before packing the machine to prevent leaks during transport.">
-                        Purges remaining water from inside the machine. Run before packing the machine to prevent leaks during transport.
-                    </p>
-                </div>
-            </div>
-
-            <dialog id="airpurge-confirm-modal" class="modal">
-                <div class="modal-box bg-[var(--box-color)] max-w-2xl">
-                    <h3 class="font-bold text-[28px] text-[var(--text-primary)] mb-2" data-i18n-key="Transport Mode">Transport Mode</h3>
-                    <p class="text-[20px] text-[var(--text-primary)] opacity-80 mb-4 break-words" data-i18n-key="Prepare your espresso machine for transport">
-                        Prepare your espresso machine for transport
-                    </p>
-                    <div class="modal-action">
-                        <button class="border-[var(--mimoja-blue)] text-[var(--mimoja-blue)] h-[62px] rounded-[67.5px] border px-[32px] text-[24px] font-bold transition-colors duration-200 hover:bg-[var(--mimoja-blue)] hover:text-white"
-                                onclick="document.getElementById('airpurge-confirm-modal').close()" data-i18n-key="Cancel">
-                            Cancel
-                        </button>
-                        <button class="bg-[#385a92] h-[62px] px-[32px] rounded-[67.5px] text-white text-[24px] font-bold"
-                                onclick="window.confirmStartAirPurge()" data-i18n-key="Start">
-                            Start
-                        </button>
-                    </div>
-                </div>
-            </dialog>
-        </div>
-    `;
-}
-
 // ── Skin update check ────────────────────────────────────────────────────────
 // For every bundled skin installed from a GitHub release, "Update available"
 // compares the installed version the bridge reports (GET /api/v1/webui/skins ->
@@ -7772,17 +7720,6 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
         }
     };
 
-    window.startDescaling = async function() {
-        if (!confirm('Start descaling cycle? The machine will run the descaling program. Make sure the descaling solution is prepared.')) return;
-        try {
-            await setMachineState('descaling');
-            ui.showToast('Descaling cycle started', 3000, 'success');
-        } catch (error) {
-            logger.error('Error starting descaling:', error);
-            ui.showToast(`Failed to start descaling: ${error.message}`, 5000, 'error');
-        }
-    };
-
     // --- DE1 sensor calibration handlers ---
     // Capture takes the DE1's own reading WHILE the machine runs, averaged
     // over the sample window so one noisy frame cannot set the correction.
@@ -8012,51 +7949,6 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
         ui.showToast('Load-cell calibration complete', 3000, 'success');
         calResetWizard();
         calRerender();
-    };
-
-    // Hold a "running, don't touch the machine" toast for as long as the machine
-    // reports airPurge, then report completion. Polls the snapshot-fed
-    // currentMachineState rather than adding a listener — nothing else here
-    // subscribes to state changes. The cap is a leak guard, not a purge timer:
-    // a purge that outlives it just drops the banner early.
-    // ponytail: 1 s poll, swap for a state-change listener if one ever exists.
-    function watchAirPurge() {
-        ui.showToast(getTranslation('Now removing water from your espresso machine.'), 0, 'info');
-        let entered = false;
-        const startedAt = Date.now();
-        const timer = setInterval(() => {
-            const running = currentMachineState === MachineState.AIR_PURGE;
-            if (running) entered = true;
-            if (entered && !running) {
-                clearInterval(timer);
-                ui.showToast(getTranslation('You can turn your machine off once it is out of water. It will then be ready for transport.'), 8000, 'success');
-            } else if (Date.now() - startedAt > 5 * 60 * 1000) {
-                clearInterval(timer);
-                ui.hideToast();
-            }
-        }, 1000);
-    }
-
-    window.startAirPurge = async function() {
-        // Firmware quirk: a needsWater state blocks transport mode outright.
-        // Pressing the group stop button overrides the out-of-water signal,
-        // after which Start works normally.
-        if (currentMachineState === MachineState.NEEDS_WATER) {
-            ui.showToast(`${getTranslation('Out of water')} — ${getTranslation('Press the stop button on the group head to override, then tap Start again.')}`, 6000, 'error');
-            return;
-        }
-        document.getElementById('airpurge-confirm-modal')?.showModal();
-    };
-
-    window.confirmStartAirPurge = async function() {
-        document.getElementById('airpurge-confirm-modal')?.close();
-        try {
-            await setMachineState('airPurge');
-            watchAirPurge();
-        } catch (error) {
-            logger.error('Error starting air purge:', error);
-            ui.showToast(`Failed to start air purge: ${error.message}`, 5000, 'error');
-        }
     };
 
     // Real DE1 images are a fixed ~454 KB (reaprime's firmware manifest reports

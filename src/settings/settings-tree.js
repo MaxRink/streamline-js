@@ -45,6 +45,7 @@ export const SETTINGS_TREE = {
     'maintenance': {
         name: 'Maintenance',
         subcategories: [
+            { id: 'machinecleaning',  name: 'Clean',             settingsCategory: 'maint_cleaning' },
             { id: 'machinedescaling', name: 'Machine Descaling', settingsCategory: 'maint_descaling' },
             { id: 'transportmode',    name: 'Transport Mode',    settingsCategory: 'maint_airpurge' }
         ]

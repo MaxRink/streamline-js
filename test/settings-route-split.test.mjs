@@ -27,8 +27,11 @@ test('settings shell keeps quick adjustments out of the legacy module', () => {
     assert.match(shell, /getElementById\('settings-body'\)\?\.parentElement/);
     assert.doesNotMatch(quick, /settings\.js/);
     assert.doesNotMatch(maintenance, /settings\.js/);
-    assert.match(maintenance, /action !== 'descale' && action !== 'confirm-air-purge'/);
-    assert.match(maintenance, /setMachineState\(action === 'descale' \? 'descaling' : 'airPurge'\)/);
+    // Cleaning and descaling share one templated view and one state machine, so
+    // the two cannot drift; air purge keeps its own bespoke flow.
+    assert.match(maintenance, /action === 'clean' \|\| action === 'descale'/);
+    assert.match(maintenance, /setMachineState\(procedure\.state\)/);
+    assert.match(maintenance, /setMachineState\('airPurge'\)/);
     assert.match(app, /addEventListener\('pointerdown',[\s\S]*prefetchSettingsPage/);
 });
 
@@ -55,4 +58,34 @@ test('the shell nav tree and the legacy nav tree share one source, so they canno
     // exact spots that had drifted; assert they still round-trip.
     assert.ok(SETTINGS_TREE.calibration.subcategories.some(sub => sub.settingsCategory === 'calib_sensors'));
     assert.deepEqual(SETTINGS_TREE.skin.subcategories.map(sub => sub.settingsCategory), ['theme', 'appearance']);
+});
+
+// The legacy module owns nav clicks once it mounts, and its category switch
+// ends in `default: renderGeneralSettings()`. So a subcategory added to the
+// tree without a case there does not fail loudly — it silently shows General
+// Settings, which is exactly what maint_cleaning did.
+test('every subcategory in the tree is routed by the legacy switch, not swallowed by its default', () => {
+    const legacy = read('src/settings/settings.js');
+
+    for (const [mainCategory, category] of Object.entries(SETTINGS_TREE)) {
+        for (const sub of category.subcategories) {
+            assert.ok(
+                legacy.includes(`case '${sub.settingsCategory}':`),
+                `${mainCategory}/${sub.settingsCategory} has no case in renderSettingsContent — it would fall through to renderGeneralSettings()`
+            );
+        }
+    }
+});
+
+test('maintenance screens exist once, mounted from the extracted module by both paths', () => {
+    const legacy = read('src/settings/settings.js');
+
+    // The legacy switch hands these to categories/maintenance.js rather than
+    // rendering a second copy that would drift from the extracted one.
+    assert.match(legacy, /import\('\.\/categories\/maintenance\.js'\)/);
+    assert.match(legacy, /MAINTENANCE_CATEGORIES\s*=\s*new Set\(\['maint_cleaning', 'maint_descaling', 'maint_airpurge'\]\)/);
+    assert.doesNotMatch(legacy, /renderMainDescalingSettings|renderMainAirPurgeSettings/);
+    assert.doesNotMatch(legacy, /window\.startAirPurge|window\.startDescaling/);
+    // A mount left running after navigating away keeps polling the machine.
+    assert.match(legacy, /maintenanceCleanup\?\.\(\)/);
 });
