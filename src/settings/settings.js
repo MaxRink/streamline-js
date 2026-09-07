@@ -261,6 +261,10 @@ export function mergeStagedOverFetched(fetched, staged) {
 
 async function flushPendingChanges() {
     const tasks = [];
+    const usbPowerSettingsChanged = Object.prototype.hasOwnProperty.call(
+        pendingChanges.rea,
+        'skalePoweredByUsbByDevice',
+    );
     if (Object.keys(pendingChanges.rea).length) tasks.push(setReaSettings(pendingChanges.rea));
     if (Object.keys(pendingChanges.de1).length) tasks.push(setDe1Settings(pendingChanges.de1));
     if (Object.keys(pendingChanges.de1Advanced).length) tasks.push(setDe1AdvancedSettings(pendingChanges.de1Advanced));
@@ -291,6 +295,11 @@ async function flushPendingChanges() {
     }
     const written = { de1: { ...pendingChanges.de1 }, de1Advanced: { ...pendingChanges.de1Advanced } };
     if (tasks.length) await Promise.all(tasks);
+    if (usbPowerSettingsChanged) {
+        scaleInfoRequestGeneration += 1;
+        scaleInfoByDeviceId.clear();
+        scaleInfoInFlight.clear();
+    }
     saveSettingsBackup();
     // Only after the writes resolved: a rejected write never reached the
     // machine, and recording it would make the next visit offer to restore
@@ -10401,17 +10410,22 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
         const deviceInfo = type === 'Scale' && isConnected
             ? (scaleInfoByDeviceId.get(device.id) || {})
             : {};
+        const usbPowered = type === 'Scale' && isConnected &&
+            settingsCache.rea?.skalePoweredByUsbByDevice?.[device.id] === true;
         const safeId = (device.id || '').replace(/'/g, "\\'");
         const safeName = (device.name || '').replace(/'/g, "\\'");
         const safeSettingKey = settingKey.replace(/'/g, "\\'");
         const firmware = deviceInfo.firmwareVersion
             ? `<span class="text-[18px] text-[var(--text-primary)] opacity-60">${getTranslation('Firmware')} ${escapeHtml(deviceInfo.firmwareVersion)}</span>`
             : '';
-        const batteryLevel = Number.isFinite(deviceInfo.batteryLevel)
+        const batteryLevel = !usbPowered && Number.isFinite(deviceInfo.batteryLevel)
             ? deviceInfo.batteryLevel
             : null;
         const batteryBadge = batteryLevel !== null && batteryLevel !== undefined
             ? renderBatteryBadge(batteryLevel)
+            : '';
+        const usbBadge = usbPowered
+            ? '<span class="text-[20px] font-bold px-[16px] py-[6px] rounded-full bg-[#385a92] text-white">USB</span>'
             : '';
 
         const dotClass = isConnected ? 'bg-green-500'
@@ -10458,9 +10472,7 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
                 </div>
                 <div class="flex items-center gap-[20px] flex-shrink-0 ml-[24px]">
                     ${batteryBadge}
-                    ${type === 'Scale' && isConnected && deviceInfo.powerSource === 'usb'
-                        ? '<span class="text-[20px] font-bold px-[16px] py-[6px] rounded-full bg-[#385a92] text-white">USB</span>'
-                        : ''}
+                    ${usbBadge}
                     ${settingKey && type !== 'Scale' ? `
                     <div class="flex flex-col items-center gap-[4px]">
                         <span class="text-[16px] text-[var(--text-primary)] opacity-50" data-i18n-key="Preferred">Preferred</span>
@@ -10519,6 +10531,10 @@ window.updateScaleDeviceSetting = function(key, legacyKey, deviceId, enabled) {
         if (enabled) values[deviceId] = true;
         else delete values[deviceId];
         updateReaSetting(key, values, false);
+        if (key === 'skalePoweredByUsbByDevice') {
+            scaleInfoByDeviceId.delete(deviceId);
+            renderDeviceListFromCache();
+        }
     } else {
         updateReaSetting(legacyKey, enabled, false);
     }
