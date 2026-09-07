@@ -2,7 +2,7 @@ import { connectWebSocket, getWorkflow, connectScaleWebSocket, ensureGatewayMode
 import { initScaling } from './scaling.js';
 import * as chart from './chart.js';
 import * as ui from './ui.js';
-import { initI18n, getTranslation, fitTelemetry, fitTextToWidth } from './i18n.js';
+import { initI18n, getTranslation, fitTelemetry } from './i18n.js';
 import { settingsReady } from './settingsSync.js';
 import { initUnits, formatTemp, fromDisplayTemp } from './units.js';
 import * as history from './history.js';
@@ -1449,17 +1449,17 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
         // low-water warning has to stay quiet on one (issue #60).
         setRefillKitPresent(machineInfo?.extra?.refillKit ?? null);
 
-        // Bengle-only header quick-toggle for the cup warmer. Fails closed: a
-        // failed machine-info fetch leaves the gate off and the button hidden.
+        // Bengle-only cup-warmer entry in the telemetry row. Fails closed: a
+        // failed machine-info fetch leaves the gate off and the entry hidden.
         // Also re-runs on a live machine swap (loadInitialData fires again via
         // machineLink.onLinkUp) -- hide it explicitly when the newly connected
-        // machine isn't a Bengle, since the button starts hidden but nothing
+        // machine isn't a Bengle, since the entry starts hidden but nothing
         // else re-hides it once shown.
         if (isBengleMachine()) {
             initCupWarmerToggle();
         } else {
-            const cupWarmerBtn = document.getElementById('cupwarmer-toggle-btn');
-            if (cupWarmerBtn) cupWarmerBtn.style.display = 'none';
+            const cupWarmerEl = document.getElementById('cupwarmer-info-container');
+            if (cupWarmerEl) cupWarmerEl.style.display = 'none';
         }
 
         if (steamsettings) {
@@ -1625,7 +1625,7 @@ async function isShotBlockedByNoScale() {
     return true;
 }
 
-// ── Bengle cup-warmer quick toggle (header button) ───────────────────────────
+// ── Bengle cup-warmer quick toggle (telemetry row) ────────────────────────
 // Reflects/toggles the warmer live via /machine/cupWarmer (temperature 0 = off).
 // Uses the same target the Settings → Cup Warmer page stores in localStorage.
 //
@@ -1640,9 +1640,9 @@ async function isShotBlockedByNoScale() {
 // this one subscription live for the whole session.
 async function initCupWarmerToggle() {
     invalidateCupWarmerState(); // (re)connect: drop any stale snapshot before re-seeding
-    const btn = document.getElementById('cupwarmer-toggle-btn');
-    if (!btn) return;
-    btn.style.display = '';
+    const el = document.getElementById('cupwarmer-info-container');
+    if (!el) return;
+    el.style.display = '';
     try {
         const data = await api.getCupWarmer();
         setCupWarmerState(data || { temperature: 0 });
@@ -1650,9 +1650,12 @@ async function initCupWarmerToggle() {
         // Model already said Bengle — keep the button. The snapshot stays null
         // (renders as "off") and the Settings page refetches on entry.
     }
-    if (!btn.dataset.wired) { // idempotent: init runs again on reconnect flows
-        btn.dataset.wired = '1';
-        btn.addEventListener('click', toggleCupWarmerFromHeader);
+    if (!el.dataset.wired) { // idempotent: init runs again on reconnect flows
+        el.dataset.wired = '1';
+        el.addEventListener('click', toggleCupWarmerFromHeader);
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCupWarmerFromHeader(); }
+        });
     }
     startCupWarmerHeaderPoll();
 }
@@ -1685,33 +1688,45 @@ function startCupWarmerHeaderPoll() {
 }
 onCupWarmerStateChange(() => updateCupWarmerButton());
 function updateCupWarmerButton() {
-    const btn = document.getElementById('cupwarmer-toggle-btn');
-    if (!btn) return;
+    const el = document.getElementById('cupwarmer-info-container');
+    if (!el) return;
     const state = getCupWarmerState();
     const on = isCupWarmerOn(state?.temperature);
-    // A scheduled pre-warm runs the mat BY ITSELF — at 06:30, with the machine
-    // still asleep and the boilers cold. The button would just light up with no
+    // A scheduled pre-warm runs the mat BY ITSELF -- at 06:30, with the machine
+    // still asleep and the boilers cold. The reading would just come up with no
     // explanation, which reads as a bug. MatPreheatActive is the firmware saying
-    // "that was me", so we say so on the button. It is null on firmware without
-    // the register, and a null is never fabricated into a `true` — old firmware
-    // simply keeps the plain "Warmer" label.
+    // "that was me", so we say so in the label. It is null on firmware without
+    // the register, and a null is never fabricated into a `true` -- old firmware
+    // simply keeps the plain "Cups" label.
     const prewarming = resolvePrewarm(state).active;
-    const labelKey = prewarming ? 'Pre-warming' : 'Warmer';
-    if (btn.dataset.i18nKey !== labelKey) {
+    const labelKey = prewarming ? 'Pre-warming' : 'Cups';
+    const labelEl = document.getElementById('cupwarmer-text');
+    if (labelEl && labelEl.dataset.i18nKey !== labelKey) {
         // Swap the i18n KEY too, not just the text: translatePage() rewrites
         // textContent from the key on every language change, and would otherwise
         // silently revert the label (the #sleep-button precedent in ui.js).
-        btn.setAttribute('data-i18n-key', labelKey);
-        btn.textContent = getTranslation(labelKey);
-        fitTextToWidth(btn); // "Pre-warming" is much longer than "Warmer" in a fixed box
+        labelEl.setAttribute('data-i18n-key', labelKey);
+        labelEl.textContent = getTranslation(labelKey);
     }
-    btn.setAttribute('aria-label', getTranslation(
+    el.setAttribute('aria-label', getTranslation(
         prewarming ? 'Cup warmer pre-warming for a scheduled wake' : 'Toggle Cup Warmer',
     ));
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    btn.style.backgroundColor = on ? 'var(--mimoja-blue)' : '';
-    btn.style.color = on ? '#ffffff' : '';
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+    // The VALUE carries the on/off state -- an off warmer reads "--". Dimming the
+    // entry was tried and rejected: it made the row's blue look unlike Weight's,
+    // and the entry IS the toggle, so it must stay full-strength and tappable.
+    const valueEl = document.getElementById('data-cupwarmer-temp');
+    if (!valueEl) return;
+    // Prefer the live mat reading; firmware without `currentTemperature` falls
+    // back to the setpoint the mat is holding.
+    const live = state?.currentTemperature;
+    const shown = !on ? null
+        : ((typeof live === 'number' && Number.isFinite(live)) ? live : state.temperature);
+    valueEl.textContent = shown === null ? '--' : formatTemp(shown, 0);
 }
+// The reading is Celsius-canonical; a unit-preference flip must repaint it now
+// rather than at the next ~60 s poll (the ui.js telemetry precedent).
+document.addEventListener('streamline:unitchange', () => updateCupWarmerButton());
 async function toggleCupWarmerFromHeader() {
     const target = readCupWarmerTarget(localStorage.getItem(CUP_WARMER_TARGET_KEY));
     const next = !isCupWarmerOn(getCupWarmerState()?.temperature);

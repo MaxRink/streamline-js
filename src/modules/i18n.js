@@ -143,10 +143,9 @@ else document.addEventListener('DOMContentLoaded', () => document.body.appendChi
  * Resets to the CSS-defined size first so switching to a shorter language grows
  * it back. ponytail: 1px steps, min 8px — plenty precise for button labels.
  *
- * Exported for callers that swap a data-fit-text label at RUNTIME (the header
- * cup-warmer button becomes "Pre-warming", which is far longer than "Warmer" in
- * a fixed 150px box). The ResizeObserver above only fires on size changes, and
- * the box never changes size — so a text swap must re-fit explicitly.
+ * Exported for callers that swap a data-fit-text label at RUNTIME: the
+ * ResizeObserver above only fires on size changes, and a fixed box never
+ * changes size — so a text swap must re-fit explicitly.
  */
 /**
  * Height variant of fitTextToWidth, for labels that WRAP inside a fixed box
