@@ -7,6 +7,8 @@ import { callPluginEndpoint, getPluginSettings } from './api.js';
 import { validateProfileStructure } from './profileManager.js';
 import { loadECharts } from './echarts-loader.js';
 import { renderChart } from './echarts-renderer.js';
+import { parseTclProfile, isLikelyTclProfile } from './tcl-profile.js';
+import { FIELD_LIMITS, EXIT_TYPES, EXIT_UNIT_MAP, EXIT_STEP_MAP, EXIT_MAX_MAP, DEFAULT_LIMITER_RANGE } from './profile-field-limits.js';
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -164,14 +166,11 @@ function inlineEditValue(displayEl, currentValue, { min, max, step, unit, onComm
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-// Rea API only supports pressure/flow exit types (profile.dart:129 ExitType
-// enum). 'off' is a UI-only state that maps to `step.exit = null` on save.
-// Weight-based stop is expressed via profile-level `target_weight`; time-based
-// stop is expressed via step `seconds`.
-const EXIT_TYPES    = ['pressure', 'flow', 'off'];
-const EXIT_UNIT_MAP = { pressure: 'bar', flow: 'mL/s' };
-const EXIT_STEP_MAP = { pressure: 0.1, flow: 0.1 };
-const EXIT_MAX_MAP  = { pressure: 12,  flow: 8 };
+// EXIT_TYPES/EXIT_UNIT_MAP/EXIT_STEP_MAP/EXIT_MAX_MAP and FIELD_LIMITS live in
+// profile-field-limits.js (imported above) so the legacy-TCL importer clamps
+// against the exact same bounds this editor enforces, rather than a second
+// copy that can drift the way the grid/text tabs once did (see that module's
+// header comment).
 
 // A step with no `exit` has no exit condition, so it reads as 'off'. Both tabs
 // go through this so they agree: the grid used to default a missing exit to
@@ -184,31 +183,6 @@ function readExitDef(step) {
     }
     return { type: e.type, condition: e.condition || 'over', value: e.value ?? 0 };
 }
-
-// Single source of truth for every numeric field's bounds. The grid and text
-// tabs each used to carry their own copy, and they had drifted: weight/volume
-// clamped at 1000 in the grid but 500 in the text tab, pressure at 12 vs 16.
-// The same field would clamp differently depending on which tab you edited in.
-const FIELD_LIMITS = {
-    // 105 is the ceiling the TCL skin enforces (skin.tcl:1848). The grid's ±
-    // buttons used to allow 110 while its numpad clamped to 105 — and the
-    // numpad's own label read "0–110".
-    temperature:   { min: 0, max: 105, step: 0.5 },
-    flow:          { min: 0, max: 15,  step: 0.1 },
-    // 0 bar is a valid "pump off" target, same as a 0 limiter — the grid used
-    // to set min 1, making it impossible to reach from the − button.
-    pressure:      { min: 0, max: 12,  step: 0.1 },
-    flowLimit:     { min: 0, max: 8,   step: 0.1 }, // flow limit on a pressure step
-    pressureLimit: { min: 0, max: 12,  step: 0.1 }, // pressure limit on a flow step
-    weight:        { min: 0, max: 500, step: 1 },
-    // 127 is the protocol ceiling, not a taste call: frame length goes over the
-    // wire as F8_1_7 (de1app binary.tcl:1053), whose encoder clamps anything
-    // above 127 — "Numbers over 127 are not allowed this F8_1_7; limiting at
-    // 127" (binary.tcl:555-559). The old 300 let the grid show a duration the
-    // machine could never run, with the truncation logged only firmware-side.
-    seconds:       { min: 0, max: 127, step: 1 },
-    volume:        { min: 0, max: 500, step: 1 },
-};
 
 // Builds a numpad config from a FIELD_LIMITS entry so the displayed range label
 // can never disagree with the range actually enforced.
@@ -463,7 +437,7 @@ function createSpinner(initialValue, step, unit, onChange, opts = {}) {
 // pick a step that actually carries a limiter -- profiles routinely limit only
 // their last step, and the earlier steps' dead `value: 0` limiters keep a stale
 // range. Live limiters agree within a profile, so the first live one wins.
-const DEFAULT_LIMITER_RANGE = 0.6;
+// DEFAULT_LIMITER_RANGE itself lives in profile-field-limits.js (imported above).
 
 function limitedSteps(pump) {
     return (editorState.profile?.steps || []).filter(s => s.pump === pump && s.limiter);
@@ -1239,7 +1213,7 @@ function renderSettingsTab() {
                 fileInput = document.createElement('input');
                 fileInput.type = 'file';
                 fileInput.id = 'pe-upload-input';
-                fileInput.accept = '.json';
+                fileInput.accept = '.json,.tcl';
                 fileInput.style.display = 'none';
                 document.body.appendChild(fileInput);
             }
@@ -1248,7 +1222,16 @@ function renderSettingsTab() {
                 const file = e.target.files[0];
                 if (!file) return;
                 try {
-                    const parsed = JSON.parse(await file.text());
+                    const text = await file.text();
+                    // Legacy de1app/Visualizer profiles are Tcl, not JSON — branch on
+                    // the extension first, and fall back to sniffing the content (a
+                    // JSON profile always starts with '{') for a misnamed file, so
+                    // this one button still handles both formats. The Tcl branch is
+                    // converted to this app's JSON profile shape entirely in
+                    // tcl-profile.js — nothing downstream of this point (including
+                    // validateProfileStructure and reloadEditorWithProfile) ever sees Tcl.
+                    const isTcl = /\.tcl$/i.test(file.name || '') || (!/\.json$/i.test(file.name || '') && isLikelyTclProfile(text));
+                    const parsed = isTcl ? parseTclProfile(text) : JSON.parse(text);
                     const validation = validateProfileStructure(parsed);
                     if (!validation.isValid) throw new Error(validation.errorMessage);
                     reloadEditorWithProfile(parsed, null);
