@@ -425,6 +425,28 @@ And the buttons around the preview:
 | **RESET** | Restore the selected profile to its original settings |
 | **1**–**5** | Assign the selected profile to a favourite slot on the home screen |
 
+### Adding a profile
+
+Tap **+** to start a new profile. The editor opens with a ready-made template, so you can just build
+from there — or, before you save, load something else into it instead. Both options live in the
+editor's **SETTINGS** tab:
+
+- **Upload Local File** — pick a profile file (`.json`) saved on your device. It loads into the
+  editor to review; nothing reaches your library until you tap **SAVE**.
+- **Import from Share Code** — enter the 4-character code from a profile shared on visualizer.coffee
+  and tap **Import**. This needs a Decent Visualizer account already configured — if you haven't
+  added one, a message tells you to set it up in Settings → **Extensions** → **Visualizer** (§13)
+  first. A working code saves the profile straight to your library and opens it here so you can keep
+  tweaking it.
+
+Tapping **CANCEL** after loading either one asks you to confirm, since backing out can't be
+undone — for a share-code import, confirming also removes it from your library again.
+
+> An unreadable file, or a code that's wrong, expired, or tied to an account you're not logged into,
+> shows an error instead of loading anything. If an import seems to succeed but nothing new shows up
+> in the library, see [Troubleshooting](#14-troubleshooting) — profiles are matched by content, so an
+> identical one may already be there under a different name.
+
 ### The editor
 
 **EDIT** opens the profile editor. Three tabs: **STEP**, **SUMMARY** and **SETTINGS**.
