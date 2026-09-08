@@ -452,6 +452,9 @@ function updateSettingsContentArea(category) {
     if (category !== 'calib_loadcell' && calWsClaimed) calReleaseScaleWs();
     if (category !== 'calib_sensors') {
         sensorCalStopLive();
+        // Leaving clears a failed read, so returning to the page tries once
+        // more — the machine may have come back in the meantime.
+        sensorCalLoadError = '';
         ({ shown: sensorCalWarningShown, ack: sensorCalWarningAck } = sensorCalWarningNextState(
             { shown: sensorCalWarningShown, ack: sensorCalWarningAck }, 'leave').state);
         document.getElementById('sensor-cal-warning-modal')?.close();
@@ -4766,12 +4769,25 @@ async function sensorCalRememberPrevious(id, value) {
     }
 }
 
+// ── sensor-cal load re-entry policy (pure) ──────────────────────────────────
+// initSensorCal runs from the render path, and its own `finally` re-renders —
+// so every flag that means "do not start another read" has to be checked here
+// or the read loops. `error` is the one that used to be missing: a failure
+// recorded the message, re-rendered, and started another read, so a machine
+// answering /machine/calibration with a 504 produced one failed read per
+// gateway timeout (~12 s) for as long as the page stayed open. A failure now
+// stops until the Retry button (or leaving the page) clears the error.
+function shouldStartSensorCalLoad({ loaded, loading, error }) {
+    return !loaded && !loading && !error;
+}
+// ── end sensor-cal load re-entry policy ─────────────────────────────────────
+
 async function initSensorCal() {
     // The live column is fed by the snapshot socket, which nobody has opened
     // if the app booted straight onto this page (a reload while in Settings).
     ensureMachineSnapshotSocket();
     sensorCalStartLive();
-    if (sensorCalLoaded || sensorCalLoading) return;
+    if (!shouldStartSensorCalLoad({ loaded: sensorCalLoaded, loading: sensorCalLoading, error: sensorCalLoadError })) return;
     sensorCalLoading = true;
     sensorCalLoadError = '';
     try {
@@ -4948,7 +4964,13 @@ export function renderSensorCalSettings() {
     if (sensorCalLoading) {
         body = `<p class="${CAL_BODY}" data-i18n-key="Reading calibration from the machine…">Reading calibration from the machine…</p>`;
     } else if (sensorCalLoadError) {
-        body = `<p class="${CAL_BODY} text-red-500">${escapeHtml(sensorCalLoadError)}</p>`;
+        // The read no longer retries on its own, so the error has to offer the
+        // way back — otherwise a transient 504 stranded the page until the user
+        // navigated away and returned.
+        body = `<p class="${CAL_BODY} text-red-500">${escapeHtml(sensorCalLoadError)}</p>
+            <button onclick="window.sensorCalRetryLoad()"
+                    class="${SENSOR_CAL_SMALL_BTN} mt-[16px] bg-[var(--button-primary-bg)] text-white"
+                    data-i18n-key="Retry">Retry</button>`;
     } else {
         body = `
             <div class="w-full" style="overflow-x:auto">
@@ -7794,6 +7816,13 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     window.sensorCalWarningCancel = function() {
         document.getElementById('sensor-cal-warning-modal')?.close();
         document.querySelector('.settings-subnav-btn[data-category="calib_defaultload"]')?.click();
+    };
+
+    // Clearing the error re-opens initSensorCal's re-entry gate, so the
+    // re-render below performs exactly one fresh attempt.
+    window.sensorCalRetryLoad = function() {
+        sensorCalLoadError = '';
+        sensorCalRerender();
     };
 
     window.sensorCalInput = function(id, value) {

@@ -84,3 +84,39 @@ test('an unknown event is a no-op, never opening the warning', () => {
     assert.equal(result.open, false);
     assert.deepEqual(result.state, FRESH);
 });
+
+// ── Load re-entry policy ────────────────────────────────────────────────────
+// Second bug on the same page, same shape: initSensorCal() runs from the
+// render path and its own `finally` re-renders, so any state meaning "do not
+// start another read" has to gate re-entry. The error flag did not, so a
+// machine answering /machine/calibration with a 504 produced one failed read
+// per gateway timeout (~12 s) for as long as the page stayed open.
+
+const loadStart = source.indexOf('// ── sensor-cal load re-entry policy');
+const loadEnd = source.indexOf('// ── end sensor-cal load re-entry policy');
+assert.ok(loadStart !== -1 && loadEnd !== -1 && loadEnd > loadStart, 'sensor-cal load policy block not found in settings.js');
+
+const { shouldStartSensorCalLoad } = new Function(`${source.slice(loadStart, loadEnd)}
+    return { shouldStartSensorCalLoad };`)();
+
+test('a fresh page starts one read', () => {
+    assert.equal(shouldStartSensorCalLoad({ loaded: false, loading: false, error: '' }), true);
+});
+
+test('a read already in flight does not start a second', () => {
+    assert.equal(shouldStartSensorCalLoad({ loaded: false, loading: true, error: '' }), false);
+});
+
+test('a completed read is not repeated', () => {
+    assert.equal(shouldStartSensorCalLoad({ loaded: true, loading: false, error: '' }), false);
+});
+
+test('a failed read does not retry itself — this is the 504 loop', () => {
+    assert.equal(shouldStartSensorCalLoad({ loaded: false, loading: false, error: 'Status: 504' }), false);
+});
+
+test('clearing the error (Retry, or leaving the page) allows exactly one more attempt', () => {
+    const failed = { loaded: false, loading: false, error: 'Status: 504' };
+    assert.equal(shouldStartSensorCalLoad(failed), false);
+    assert.equal(shouldStartSensorCalLoad({ ...failed, error: '' }), true);
+});
