@@ -39,6 +39,8 @@ export let reconnectingWebSocket = null; // Exporting for app.js access
 export let currentMachineState = null;
 let previousMachineState = null;
 let scaleWebSocket = null;
+let sensorSnapshotWebSocket = null;
+let sensorSnapshotWebSocketId = null; // sensor `id` the open socket is bound to
 let displayWebSocket = null;
 let displayWebSocketReady = false;
 let pendingDisplayCommand = null;
@@ -130,6 +132,29 @@ export async function getDevices() {
         throw new Error('Failed to get devices');
     }
     return response.json();
+}
+
+// ── Sensors (Bengle milk probe et al.) ──────────────────────────────────────
+// GET /api/v1/sensors lists devices currently registered on the sensor bus
+// (e.g. a Bengle's onboard milk probe, auto-registered by reaprime's
+// BengleProbeBridge while it is physically attached). Each entry is
+// `{ id, info: { name, vendor, data: DataChannel[], commands } }` — note the
+// wire key is `info.data`, not `info.dataChannels` as rest_v1.yml's
+// SensorManifest schema states; the schema is stale here, confirmed against
+// reaprime's SensorInfo.toJson(). Returns [] (not a throw) on any failure so
+// callers can poll this without special-casing errors.
+export async function getSensors() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/sensors`);
+        if (!response.ok) {
+            logger.warn(`Failed to get sensors (status ${response.status})`);
+            return [];
+        }
+        return await response.json();
+    } catch (error) {
+        logger.warn('Error fetching sensors:', error);
+        return [];
+    }
 }
 
 // How long we are willing to hold a caller on a scan before answering from the
@@ -520,6 +545,52 @@ export function connectScaleWebSocket(onData, onReconnect, onDisconnect) {
     };
 
     scaleWebSocket.onreconnect = null;
+}
+
+// ── Generic per-sensor snapshot (Bengle milk probe today) ───────────────────
+// ws/v1/sensors/<id>/snapshot streams whatever the sensor's own `data` map
+// looks like — for the Bengle milk probe that is `{ timestamp, temperature }`
+// (BengleMilkProbe in reaprime), not the `{ id, values }` SensorSnapshot shape
+// rest_v1.yml documents. The id is only valid while reaprime has that sensor
+// registered (see getSensors()); a probe that later detaches is not reflected
+// by the socket closing, only by no further frames arriving, so callers must
+// re-poll getSensors() and treat a stale/missing id as absence themselves.
+export function connectSensorSnapshotWebSocket(sensorId, onData) {
+    if (sensorSnapshotWebSocket && sensorSnapshotWebSocketId === sensorId) {
+        return; // already bound to this sensor
+    }
+    if (sensorSnapshotWebSocket) {
+        logger.info('Closing existing sensor snapshot WebSocket before opening a new one.');
+        sensorSnapshotWebSocket.close();
+    }
+
+    sensorSnapshotWebSocketId = sensorId;
+    sensorSnapshotWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/sensors/${sensorId}/snapshot`, [], {
+        reconnectInterval: 3000,
+    });
+
+    sensorSnapshotWebSocket.onmessage = (event) => {
+        try {
+            onData(JSON.parse(event.data));
+        } catch (error) {
+            logger.error('Error parsing sensor snapshot WebSocket message:', error);
+        }
+    };
+
+    sensorSnapshotWebSocket.onerror = (error) => {
+        logger.error('Sensor snapshot WebSocket error:', error);
+    };
+
+    sensorSnapshotWebSocket.onreconnect = null;
+}
+
+/** Close and clear the sensor snapshot socket (no matching sensor found). */
+export function closeSensorSnapshotWebSocket() {
+    if (sensorSnapshotWebSocket) {
+        sensorSnapshotWebSocket.close();
+    }
+    sensorSnapshotWebSocket = null;
+    sensorSnapshotWebSocketId = null;
 }
 
 export function connectShotSettingsWebSocket(onData) {

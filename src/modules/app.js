@@ -1,4 +1,4 @@
-import { connectWebSocket, getWorkflow, connectScaleWebSocket, ensureGatewayModeTracking, reconnectingWebSocket, getDevices, reconnectDevice, scanForDevices,connectShotSettingsWebSocket, getDe1AdvancedSettings, updateShotSettingsCache, getDe1Settings, MachineState, getShotIds, getShots, getValueFromStore, verifyVisualizerCredentials, connectScaleDevice, tareScale, connectTimeToReadyWebSocket, connectShotStateWebSocket, sendDeviceCommand, saveScaleDeviceId, getScaleDeviceId, getDeviceWebSocket, initDeviceWebSocketWithCallback, connectDeviceWebSocket, connectDisplayWebSocket, restoreBrightnessFromStorage, getMachineInfo, getMachineState, setMachineState, getReaSettings, getAppInfo, getCachedRefillKitSetting } from './api.js';
+import { connectWebSocket, getWorkflow, connectScaleWebSocket, ensureGatewayModeTracking, reconnectingWebSocket, getDevices, reconnectDevice, scanForDevices,connectShotSettingsWebSocket, getDe1AdvancedSettings, updateShotSettingsCache, getDe1Settings, MachineState, getShotIds, getShots, getValueFromStore, verifyVisualizerCredentials, connectScaleDevice, tareScale, connectTimeToReadyWebSocket, connectShotStateWebSocket, sendDeviceCommand, saveScaleDeviceId, getScaleDeviceId, getDeviceWebSocket, initDeviceWebSocketWithCallback, connectDeviceWebSocket, connectDisplayWebSocket, restoreBrightnessFromStorage, getMachineInfo, getMachineState, setMachineState, getReaSettings, getAppInfo, getCachedRefillKitSetting, getSensors, connectSensorSnapshotWebSocket, closeSensorSnapshotWebSocket } from './api.js';
 import { initScaling } from './scaling.js';
 import * as chart from './chart.js';
 import * as ui from './ui.js';
@@ -16,7 +16,7 @@ import { deriveScreensaverAction, isMachineAsleep, isScreensaverSuppressed } fro
 import { createMachineLinkWatcher, machineFromDevicesPayload } from './machine-link.js';
 import { setMachineModel, isBengleMachine, setRefillKitPresent, isRefillKitPresent } from './machine.js';
 import { classifyStopReason, canonicalStopReason, STOP_TARGET_WEIGHT, STOP_TARGET_VOLUME, STOP_PROFILE_ENDED } from './stop-reason.js';
-import { resolveMilkProbePresence } from './steam-mode.js';
+import { resolveMilkProbePresence, MILK_PROBE_ABSENT_AFTER_MS, selectMilkProbeSensorId } from './steam-mode.js';
 import { readTimeToReadyFrame, heatingSecondsLeft } from './heating-countdown.js';
 import { workflowTileValues, changedTileValues } from './workflow-watch.js';
 import { isCupWarmerOn, readCupWarmerTarget, resolvePrewarm, getCupWarmerState, setCupWarmerState, patchCupWarmerState, invalidateCupWarmerState, onCupWarmerStateChange, CUP_WARMER_TARGET_KEY } from './cup-warmer.js';
@@ -583,12 +583,20 @@ function applyScreensaverAction(state) {
 }
 
 // ── Milk probe (Bengle) ──────────────────────────────────────────────────────
-// Fed one snapshot milkTemperature per frame (contract: 0/absent = no probe or
-// no reading). Presence survives brief 0-glitches and drops only after a
-// sustained absence (resolveMilkProbePresence, steam-mode.js). The main-screen
-// steam tile consumes this through ui.setMilkProbePresent (Milk-mode gating +
-// probe-loss un-arm); the settings steam page through window.app.getMilkProbe
-// (render-time state) and window.onMilkProbeUpdate (live ticks + presence flips).
+// A Bengle's onboard milk probe is NOT part of the machine snapshot: reaprime's
+// MachineSnapshot has no milkTemperature field (confirmed against reaprime's
+// machine.dart and rest_v1.yml's MachineSnapshot schema — neither has ever had
+// one). The value only exists on SteamSnapshot, which itself is never streamed
+// live; the actual live path is the generic sensor bus — GET /api/v1/sensors
+// lists the probe (auto-registered by reaprime's BengleProbeBridge while
+// physically attached) and ws/v1/sensors/<id>/snapshot streams its readings.
+// pollMilkProbeSensor() below owns discovery/(re)subscription; each resolved
+// reading is folded here the same way a per-frame value would be, so presence
+// survives brief drop-outs and only clears after a sustained absence
+// (resolveMilkProbePresence, steam-mode.js). The main-screen steam tile
+// consumes this through ui.setMilkProbePresent (Milk-mode gating + probe-loss
+// un-arm); the settings steam page through window.app.getMilkProbe (render-time
+// state) and window.onMilkProbeUpdate (live ticks + presence flips).
 let milkProbeState = { present: false, lastPositiveMs: null };
 let latestMilkTemp = 0; // last positive reading while present; 0 when absent
 function updateMilkProbeFromSnapshot(tempC) {
@@ -603,6 +611,58 @@ function updateMilkProbeFromSnapshot(tempC) {
     window.onMilkProbeUpdate?.(milkProbeState.present, latestMilkTemp);
 }
 window.app.getMilkProbe = () => ({ present: milkProbeState.present, temperature: latestMilkTemp });
+
+// Sensor-bus feed for the milk probe (see comment above). currentMilkSensorId
+// tracks which sensor id the snapshot socket is bound to so a change (or
+// disappearance) on the next poll re-subscribes instead of leaking a socket.
+// latestSensorReadingAtMs marks when a reading last actually arrived; a
+// reading older than MILK_PROBE_ABSENT_AFTER_MS is treated as no reading this
+// tick, same as resolveMilkProbePresence would treat a 0/absent snapshot field.
+let currentMilkSensorId = null;
+let latestSensorTemp = null;
+let latestSensorReadingAtMs = null;
+
+function handleMilkSensorSnapshot(frame) {
+    const t = frame?.temperature;
+    if (typeof t === 'number' && isFinite(t)) {
+        latestSensorTemp = t;
+        latestSensorReadingAtMs = Date.now();
+    }
+}
+
+const MILK_PROBE_SENSOR_POLL_MS = 3000; // comfortably under MILK_PROBE_ABSENT_AFTER_MS (5s)
+
+async function pollMilkProbeSensor() {
+    let sensors;
+    try {
+        sensors = await getSensors();
+    } catch (error) {
+        logger.warn('Milk-probe sensor poll failed:', error);
+        return;
+    }
+    const id = selectMilkProbeSensorId(sensors);
+    if (id === currentMilkSensorId) return;
+    currentMilkSensorId = id;
+    latestSensorTemp = null;
+    latestSensorReadingAtMs = null;
+    if (id) {
+        connectSensorSnapshotWebSocket(id, handleMilkSensorSnapshot);
+    } else {
+        closeSensorSnapshotWebSocket();
+    }
+}
+
+function initMilkProbeSensorPolling() {
+    pollMilkProbeSensor();
+    setInterval(pollMilkProbeSensor, MILK_PROBE_SENSOR_POLL_MS);
+}
+
+/** Reading to feed updateMilkProbeFromSnapshot this machine-snapshot tick. */
+function currentMilkProbeReading() {
+    if (latestSensorReadingAtMs === null) return undefined;
+    if (Date.now() - latestSensorReadingAtMs >= MILK_PROBE_ABSENT_AFTER_MS) return undefined;
+    return latestSensorTemp;
+}
 
 function handleData(data) {
     if (!data?.state) {
@@ -782,7 +842,7 @@ function handleData(data) {
     });
     ui.updateSleepButton(state);
     ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature });
-    updateMilkProbeFromSnapshot(data.milkTemperature);
+    updateMilkProbeFromSnapshot(currentMilkProbeReading());
 
     // Update Chart and Shot Data Table
     if (MachineState.ESPRESSO.includes(state)) {
@@ -1914,6 +1974,7 @@ async function initMainPageOnce() {
         setTimeout(() => { restoreBrightnessFromStorage(); }, 1500);
         ensureGatewayModeTracking();
         resetDataTimeout();
+        initMilkProbeSensorPolling();
         connectShotSettingsWebSocket(handleShotSettingsData);
         void initVisualizer().catch(error => logger.error('Visualizer initialization failed:', error));
         mainPageInitialized = true;
