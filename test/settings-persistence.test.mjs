@@ -34,6 +34,35 @@ test('a synced write is mirrored to KV, an unsynced one is not', () => {
     assert.equal(storage.getItem('reaHostname'), '10.0.0.5', 'the real write still happens');
 });
 
+test('a repeated identical value is written locally but never re-pushed to KV', () => {
+    // A hot-path writer (e.g. waterTank.js's per-frame websocket handler) can
+    // call setItem with the same value on every frame. Only a real change
+    // should reach the network — see issue #816 (1400+ POSTs/session for an
+    // unchanging waterRefillLevel).
+    const { storage, proto } = makeStorage();
+    const pushed = [];
+    installMirror(proto, (k, v) => pushed.push([k, v]), () => {});
+
+    storage.setItem('waterRefillLevel', '15');
+    storage.setItem('waterRefillLevel', '15');
+    storage.setItem('waterRefillLevel', '15');
+
+    assert.deepEqual(pushed, [['waterRefillLevel', '15']], 'only the first write is a real change');
+    assert.equal(storage.getItem('waterRefillLevel'), '15', 'the local value is still current');
+});
+
+test('a genuine change is still pushed after repeats of the old value', () => {
+    const { storage, proto } = makeStorage();
+    const pushed = [];
+    installMirror(proto, (k, v) => pushed.push([k, v]), () => {});
+
+    storage.setItem('waterRefillLevel', '15');
+    storage.setItem('waterRefillLevel', '15');
+    storage.setItem('waterRefillLevel', '20');   // the user (or Decaid) actually changed it
+
+    assert.deepEqual(pushed, [['waterRefillLevel', '15'], ['waterRefillLevel', '20']]);
+});
+
 test('credentials and the hostname stay out of the KV store', () => {
     // KV answers over the LAN (webui binds the WiFi address), localStorage does not.
     for (const key of ['visualizerPassword', 'visualizerUsername', 'reaHostname']) {

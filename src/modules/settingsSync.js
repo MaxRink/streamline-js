@@ -63,8 +63,14 @@ export function installMirror(storageProto, push, drop) {
     if (storageProto.__streamlineMirrored) return;
     const { setItem, removeItem, clear } = storageProto;
     storageProto.setItem = function (key, value) {
+        // A hot-path writer (e.g. a per-frame websocket handler) can call
+        // setItem with the same value over and over. Push only on a real
+        // change — same equality idiom hydrate() already uses — so an
+        // unchanged value never becomes a KV write.
+        const str = String(value);
+        const changed = synced.has(key) && this.getItem(key) !== str;
         setItem.call(this, key, value);
-        if (synced.has(key)) push(key, String(value));
+        if (changed) push(key, str);
     };
     storageProto.removeItem = function (key) {
         removeItem.call(this, key);
