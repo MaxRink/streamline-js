@@ -461,6 +461,21 @@ function updateSettingsContentArea(category) {
     }
     // Leaving the Cup Warmer page → stop its ~5 s revalidate poll.
     if (category !== 'cupwarmer' && cupWarmerPollTimer !== null) stopCupWarmerPoll();
+    // A render of calib_sensors rebuilds #settings-content-area from scratch,
+    // which recreates <dialog id="sensor-cal-warning-modal"> as a brand new,
+    // closed node -- silently destroying it if it happened to be open when an
+    // UNRELATED render lands (preloadSettings() finishing in the background,
+    // a language change, another settings write's re-render -- none of which
+    // have anything to do with the calibration read). Capture the real,
+    // browser-reported open state of the node THAT IS ABOUT TO BE REPLACED,
+    // before the rebuild below destroys it, so it can be restored afterwards.
+    // This is deliberately read from the DOM, not from sensorCalWarningShown:
+    // shown only means "opened at some point this visit" and must NOT itself
+    // reopen a dialog the user already dismissed (Ok, or Cancel navigating
+    // away) or closed with Escape -- .open naturally goes false in all of
+    // those cases, so this only fires for a genuine mid-flight interruption.
+    const sensorCalWarningWasOpen = category === 'calib_sensors'
+        && document.getElementById('sensor-cal-warning-modal')?.open === true;
     const contentArea = document.getElementById('settings-content-area');
     if (contentArea) {
         contentArea.innerHTML = renderSettingsContent(category);
@@ -512,7 +527,12 @@ function updateSettingsContentArea(category) {
                 { shown: sensorCalWarningShown, ack: sensorCalWarningAck }, 'render');
             sensorCalWarningShown = state.shown;
             sensorCalWarningAck = state.ack;
-            if (open) setTimeout(sensorCalShowWarning, 0);
+            // `open` alone would leave the warning gone for good the moment an
+            // unrelated render interrupts it before the user has acted on it
+            // -- see sensorCalWarningShouldReopen for why folding in
+            // sensorCalWarningWasOpen (captured above, before the rebuild) is
+            // safe against reopening on a user-driven render.
+            if (sensorCalWarningShouldReopen(open, sensorCalWarningWasOpen)) setTimeout(sensorCalShowWarning, 0);
         }
         // Step 4's live readout needs the scale WS — claim it on every render
         // of the page at step 4 (idempotent), so returning to a resumed wizard
@@ -4705,6 +4725,30 @@ function sensorCalWarningNextState(state, event) {
 }
 // ─── end sensor-cal warning visit policy ───────────────────────────────────
 
+// ─── sensor-cal warning reopen-after-interruption policy ───────────────────
+// Whether THIS render should (re)open the dialog, combining what
+// sensorCalWarningNextState('render') decided (`open`: true only for the
+// very first render of a visit) with whether the dialog that render is about
+// to destroy was actually showing when the render started (`wasOpen`, read
+// straight from the browser -- see updateSettingsContentArea, which captures
+// it before contentArea.innerHTML tears the old <dialog> down).
+//
+// `wasOpen` can only be true for a render NOT caused by the user: showModal()
+// makes the rest of the page inert, so nothing the user does inside
+// calib_sensors (a keystroke, Capture, Apply, Restore -- all of which call
+// sensorCalRerender()) can happen while the dialog is genuinely open. Only an
+// UNRELATED render landing mid-flight (a background settings refresh, a
+// language change, the calibration read itself completing) can interrupt it.
+// So this reopens exactly the interrupted showing, resumed on the fresh node
+// within the same task -- one continuous appearance, not a second one -- and
+// never reopens a dialog the user already dismissed (Ok, Cancel navigating
+// away, or Escape all leave the node's own .open false, so wasOpen is false
+// on the next render regardless of `shown`/`ack`).
+function sensorCalWarningShouldReopen(open, wasOpen) {
+    return open || wasOpen;
+}
+// ─── end sensor-cal warning reopen-after-interruption policy ──────────────
+
 function sensorCalRerender() {
     updateSettingsContentArea('calib_sensors');
 }
@@ -4790,6 +4834,14 @@ async function initSensorCal() {
     if (!shouldStartSensorCalLoad({ loaded: sensorCalLoaded, loading: sensorCalLoading, error: sensorCalLoadError })) return;
     sensorCalLoading = true;
     sensorCalLoadError = '';
+    // Paint the "Reading calibration…" state before awaiting the read below --
+    // without this, sensorCalLoading flips true and back to false around the
+    // await with no render in between (the only rerender was in `finally`),
+    // so the page silently sat on its stale first paint (an empty table) for
+    // however long the read took, then jumped straight to the result. Safe
+    // against the render this itself causes re-entering: that render's own
+    // setTimeout(initSensorCal, 0) sees loading=true and returns immediately.
+    sensorCalRerender();
     try {
         await Promise.all(SENSOR_CAL_TARGETS.flatMap((t) => [
             sensorCalRead(t.id),
@@ -4802,6 +4854,58 @@ async function initSensorCal() {
     } finally {
         sensorCalLoading = false;
         sensorCalRerender();
+    }
+}
+
+// Re-render the Sensor Calibration page ONLY if it is what's actually on
+// screen right now. sensorCalRerender() (used above) is safe to call
+// unconditionally because it only ever runs from within calib_sensors's own
+// render path -- but warmSensorCalibration() below is kicked off as soon as
+// Settings is reached and can finish well after that, by which point the
+// user may be on a completely different settings category, or have left
+// Settings altogether. activeSettingsCategory alone isn't a safe enough
+// signal for that: it is legacy settings.js module state that persists
+// across page visits and can be stale. The dialog's own id only exists in
+// the DOM while renderSensorCalSettings() is the last thing painted into
+// #settings-content-area, so its presence is the truth.
+function sensorCalRerenderIfVisible() {
+    if (document.getElementById('sensor-cal-warning-modal')) sensorCalRerender();
+}
+
+// Warms the calibration read in the background as soon as Settings is
+// reached, rather than waiting for the user to open Sensor Calibration --
+// so the table usually has values the moment they get there instead of a
+// loading flash (or, on a struggling machine, the read having barely
+// started). Deliberately narrow: reuses shouldStartSensorCalLoad, the SAME
+// re-entry gate initSensorCal already has, so this can never race a read
+// initSensorCal has already started (or vice versa) -- there is exactly one
+// gate for "is a read in flight", not two. No socket, no live timer, no
+// render-on-start: nothing is on screen yet to feed or animate, and those
+// are initSensorCal's job for when the page actually mounts.
+//
+// A failed warm attempt is logged and then left exactly as if it never ran
+// (loading/loaded/error all reset to their starting values) rather than
+// recorded as sensorCalLoadError -- it must not spend the page's one real
+// attempt on a failure the user never saw, and must not leave the page
+// showing a stale error with nothing in flight the moment they do open it.
+export async function warmSensorCalibration() {
+    if (!shouldStartSensorCalLoad({ loaded: sensorCalLoaded, loading: sensorCalLoading, error: sensorCalLoadError })) return;
+    sensorCalLoading = true;
+    try {
+        await Promise.all(SENSOR_CAL_TARGETS.flatMap((t) => [
+            sensorCalRead(t.id),
+            sensorCalLoadPrevious(t.id),
+        ]));
+        sensorCalLoaded = true;
+    } catch (error) {
+        logger.warn('Background sensor calibration warm-up failed (the page will try again when opened):', error);
+    } finally {
+        sensorCalLoading = false;
+        // Covers the narrow window where the user opened the page while this
+        // warm attempt was still in flight: initSensorCal's own call saw
+        // loading=true and returned without a render, so this is the only
+        // thing that will paint the result now that it's done.
+        sensorCalRerenderIfVisible();
     }
 }
 
@@ -4966,8 +5070,10 @@ export function renderSensorCalSettings() {
     } else if (sensorCalLoadError) {
         // The read no longer retries on its own, so the error has to offer the
         // way back — otherwise a transient 504 stranded the page until the user
-        // navigated away and returned.
-        body = `<p class="${CAL_BODY} text-red-500">${escapeHtml(sensorCalLoadError)}</p>
+        // navigated away and returned. Lead with something a user can act on
+        // rather than the raw status line (logged in full via logger.error in
+        // initSensorCal's catch, for anyone who needs the technical detail).
+        body = `<p class="${CAL_BODY} text-red-500" data-i18n-key="Couldn't read calibration from the machine. Check the connection and try again.">Couldn't read calibration from the machine. Check the connection and try again.</p>
             <button onclick="window.sensorCalRetryLoad()"
                     class="${SENSOR_CAL_SMALL_BTN} mt-[16px] bg-[var(--button-primary-bg)] text-white"
                     data-i18n-key="Retry">Retry</button>`;
