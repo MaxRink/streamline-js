@@ -450,7 +450,12 @@ function updateSettingsContentArea(category) {
     if (category !== 'ledstrip') { ledFlushDirty(); ledClearPreview(); }
     // Leaving the Load Cells page → hand the scale WS back to the main page.
     if (category !== 'calib_loadcell' && calWsClaimed) calReleaseScaleWs();
-    if (category !== 'calib_sensors') { sensorCalStopLive(); sensorCalWarningAck = false; }
+    if (category !== 'calib_sensors') {
+        sensorCalStopLive();
+        ({ shown: sensorCalWarningShown, ack: sensorCalWarningAck } = sensorCalWarningNextState(
+            { shown: sensorCalWarningShown, ack: sensorCalWarningAck }, 'leave').state);
+        document.getElementById('sensor-cal-warning-modal')?.close();
+    }
     // Leaving the Cup Warmer page → stop its ~5 s revalidate poll.
     if (category !== 'cupwarmer' && cupWarmerPollTimer !== null) stopCupWarmerPoll();
     const contentArea = document.getElementById('settings-content-area');
@@ -496,10 +501,15 @@ function updateSettingsContentArea(category) {
         }
         if (category === 'calib_sensors') {
             setTimeout(initSensorCal, 0);
-            // Re-checked on every render of this page: initSensorCal()'s own
-            // re-render replaces the dialog element, so a single show-on-entry
-            // would be wiped the moment the calibration read lands.
-            if (!sensorCalWarningAck) setTimeout(sensorCalShowWarning, 0);
+            // Every render of this page (load completing, capture, edits,
+            // apply/restore) reaches this same branch -- sensorCalWarningNextState
+            // only opens on the first one of a visit, so the modal no longer
+            // reopens on each subsequent re-render.
+            const { state, open } = sensorCalWarningNextState(
+                { shown: sensorCalWarningShown, ack: sensorCalWarningAck }, 'render');
+            sensorCalWarningShown = state.shown;
+            sensorCalWarningAck = state.ack;
+            if (open) setTimeout(sensorCalShowWarning, 0);
         }
         // Step 4's live readout needs the scale WS — claim it on every render
         // of the page at step 4 (idempotent), so returning to a resumed wizard
@@ -4660,9 +4670,37 @@ let sensorCalLoaded = false;    // ponytail: read once per session, refreshed
 let sensorCalLoadError = '';
 // Re-armed every time the page is left, so the danger warning is shown once
 // per visit rather than once per session: a bad write here can leave the
-// machine unusable, and the page re-renders on every keystroke, so the modal
-// is re-opened after each render until it is acknowledged.
+// machine unusable.
 let sensorCalWarningAck = false;
+// Separate from sensorCalWarningAck: this page re-renders on every
+// keystroke, capture, apply/restore, and the initial calibration load
+// completing -- each render rebuilds the <dialog> from scratch (closed), so
+// gating on "acknowledged?" alone reopened the modal on every one of those
+// renders until Ok was clicked. "shown" gates opening; "ack" is still
+// tracked for callers that care whether the user actually clicked through.
+let sensorCalWarningShown = false;
+
+// ─── sensor-cal warning visit policy ────────────────────────────────────────
+// Pure state transition, DOM-free on purpose: test/sensor-cal-warning.test.mjs
+// slices this block straight out of the source (see that file's header) so
+// coverage can't silently drift from what actually ships in this legacy file.
+// Events: 'render' (page mount or any later re-render), 'ack' (Ok clicked),
+// 'leave' (navigated to a different settings category).
+function sensorCalWarningNextState(state, event) {
+    switch (event) {
+        case 'render':
+            return state.shown
+                ? { state, open: false }
+                : { state: { shown: true, ack: state.ack }, open: true };
+        case 'ack':
+            return { state: { shown: state.shown, ack: true }, open: false };
+        case 'leave':
+            return { state: { shown: false, ack: false }, open: false };
+        default:
+            return { state, open: false };
+    }
+}
+// ─── end sensor-cal warning visit policy ───────────────────────────────────
 
 function sensorCalRerender() {
     updateSettingsContentArea('calib_sensors');
@@ -7745,7 +7783,8 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     // Acknowledging is per visit, not per session -- sensorCalWarningAck is
     // re-armed on leaving the page.
     window.sensorCalWarningProceed = function() {
-        sensorCalWarningAck = true;
+        ({ shown: sensorCalWarningShown, ack: sensorCalWarningAck } = sensorCalWarningNextState(
+            { shown: sensorCalWarningShown, ack: sensorCalWarningAck }, 'ack').state);
         document.getElementById('sensor-cal-warning-modal')?.close();
     };
 
