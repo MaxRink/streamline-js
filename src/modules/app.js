@@ -2019,7 +2019,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         initScaling();
         if (!isSubPage()) requestAnimationFrame(() => loadECharts().catch(error => logger.error('ECharts load failed:', error)));
         requestAnimationFrame(() => requestAnimationFrame(() => {
-            ['numpad-modal.css', 'time-picker-modal.css', 'context-menu.css']
+            // context-menu.css is not here: context-menu.js loads its own, so a
+            // boot that never reaches this line cannot leave the menu unstyled.
+            ['numpad-modal.css', 'time-picker-modal.css']
                 .forEach(file => loadStyle(`src/css/${file}`).catch(() => {}));
             initHelpLauncher();
             Promise.all([

@@ -768,24 +768,22 @@ function renderProfiles() {
                 updateSelectedProfileView(clickedItem);
             };
 
-            const overflowButton = document.createElement('button');
-            overflowButton.type = 'button';
-            overflowButton.className = 'profile-context-trigger w-[56px] h-[56px] flex-shrink-0 flex items-center justify-center rounded-[8px] text-[var(--text-primary)] hover:bg-white/15';
-            overflowButton.setAttribute('aria-label', `${getTranslation('More actions')} ${displayTitle}`);
-            overflowButton.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
-            overflowButton.style.touchAction = 'manipulation';
-            overflowButton.addEventListener('pointerdown', (event) => event.stopPropagation());
-            overflowButton.addEventListener('click', (event) => {
-                event.stopPropagation();
-                selectItem();
-                showProfileContextMenu(key, profileRecord, overflowButton);
-            });
-            div.appendChild(overflowButton);
-
-            setupPressAndHold(div, selectItem, () => {
+            const openMenu = () => {
                 selectItem();
                 showProfileContextMenu(key, profileRecord, div);
-            }, { touchAction: 'pan-y' });
+            };
+
+            div.setAttribute('aria-haspopup', 'menu');
+            setupPressAndHold(div, selectItem, openMenu, { touchAction: 'pan-y' });
+
+            // Long press is the only affordance now that the overflow button is
+            // gone, and it needs a pointer held down — which a mouse user has no
+            // reason to try. The root suppresses the browser's own menu (see
+            // suppressTouchDefaults), so right-click is free to open ours.
+            div.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                openMenu();
+            });
 
             container.appendChild(div);
         };
