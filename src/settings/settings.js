@@ -6916,7 +6916,7 @@ async function initFirmwareCheck() {
 // machine. One constant so the number cannot drift between the three places.
 // Keep in sync with FIRMWARE_ESTIMATED_TOTAL_SECONDS in firmware-progress.js —
 // that's this same number driving the countdown, not an independent guess.
-const FIRMWARE_DURATION_NOTE = 'The whole update takes at least 50 minutes. Do not power off the machine or leave this page until it finishes.';
+const FIRMWARE_DURATION_NOTE = 'The whole update takes at least 50 minutes. Do not power off the machine and leave this page until it finishes.';
 
 // Phase -> user-facing line. Shared by the live progress callback and the page
 // re-render, so a rejoined update reads identically to one watched throughout.
