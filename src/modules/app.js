@@ -245,24 +245,87 @@ function deviceListHasScale(devices) {
 
 // Scale auto-retry on disconnect
 let scaleAutoRetryCount = 0;
+let scaleAutoRetryWaitCount = 0;
 let scaleAutoRetryTimer = null;
 const SCALE_AUTO_RETRY_MAX = 3;
+const SCALE_AUTO_RETRY_MAX_WAITS = 6; // ~30s at SCALE_AUTO_RETRY_INTERVAL_MS, comfortably past Decaid's ~15s scan window
 const SCALE_AUTO_RETRY_INTERVAL_MS = 5000;
 
 function clearScaleAutoRetry() {
     clearTimeout(scaleAutoRetryTimer);
     scaleAutoRetryTimer = null;
     scaleAutoRetryCount = 0;
+    scaleAutoRetryWaitCount = 0;
+}
+
+// Decides what an auto-retry tick should do. Pulled out pure so sleep/wake
+// timing bugs (like the one this guards against) are testable without a
+// WebSocket or a timer: reaprime's De1StateManager deliberately skips its own
+// post-wake scan burst when a preferred scale id is set, because its
+// background ScaleWatch reacquires the scale passively — a scan from here
+// during that window competes for the BLE radio and can fail the reacquire
+// (observed as a GATT Error 133). So while the machine is asleep we must not
+// even keep the chain armed (onScaleDisconnect re-arms it for a real drop),
+// and while host is scanning or we're in the post-wake grace window we must
+// wait without burning a retry, not scan. Waits are bounded by their own
+// budget (separate from the retry budget): isScaleScanning only updates when
+// a devices-WS payload carries a 'scanning' key, so if that socket drops
+// mid-scan the flag can stay stuck true forever — without a wait budget the
+// chain would re-arm every tick with no termination condition.
+export function scaleAutoRetryDecision({
+    scaleConnected,
+    retryCount,
+    maxRetries,
+    hasScaleId,
+    powerMode,
+    machineAsleep,
+    inWakeGrace,
+    hostScanning,
+    waitCount,
+    maxWaits,
+}) {
+    if (
+        scaleConnected ||
+        retryCount >= maxRetries ||
+        !hasScaleId ||
+        powerMode === 'disconnect' ||
+        machineAsleep ||
+        waitCount >= maxWaits
+    ) {
+        return 'stop';
+    }
+    if (inWakeGrace || hostScanning) {
+        return 'wait';
+    }
+    return 'retry';
 }
 
 async function attemptScaleAutoRetry() {
-    if (isScaleConnected) { clearScaleAutoRetry(); return; }
-    if (scaleAutoRetryCount >= SCALE_AUTO_RETRY_MAX) { clearScaleAutoRetry(); return; }
-    if (!getScaleDeviceId()) { clearScaleAutoRetry(); return; }
+    let scalePowerMode;
     try {
         const reaSettings = await getReaSettings();
-        if (reaSettings?.scalePowerMode === 'disconnect') { clearScaleAutoRetry(); return; }
-    } catch (_) { /* proceed */ }
+        scalePowerMode = reaSettings?.scalePowerMode;
+    } catch (_) { /* proceed, treat as not-disconnect */ }
+
+    const decision = scaleAutoRetryDecision({
+        scaleConnected: isScaleConnected,
+        retryCount: scaleAutoRetryCount,
+        maxRetries: SCALE_AUTO_RETRY_MAX,
+        hasScaleId: !!getScaleDeviceId(),
+        powerMode: scalePowerMode,
+        machineAsleep: previousState.state === MachineState.SLEEPING,
+        inWakeGrace: isInWakeGracePeriod,
+        hostScanning: isScaleScanning,
+        waitCount: scaleAutoRetryWaitCount,
+        maxWaits: SCALE_AUTO_RETRY_MAX_WAITS,
+    });
+
+    if (decision === 'stop') { clearScaleAutoRetry(); return; }
+    if (decision === 'wait') {
+        scaleAutoRetryWaitCount++;
+        scaleAutoRetryTimer = setTimeout(attemptScaleAutoRetry, SCALE_AUTO_RETRY_INTERVAL_MS);
+        return;
+    }
 
     scaleAutoRetryCount++;
     logger.info(`Scale auto-retry ${scaleAutoRetryCount}/${SCALE_AUTO_RETRY_MAX}`);
