@@ -90,6 +90,7 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
         el.setAttribute('tabindex', '-1');
         
         el.addEventListener('click', (e) => {
+            if ((type === 'steam-duration' || type === 'steam-flow') && ui.isAutoSteamMode()) return;
             e.preventDefault();
             e.stopPropagation();
             

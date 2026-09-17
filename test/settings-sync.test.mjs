@@ -35,7 +35,7 @@ function lift(module, patterns) {
         const workflowWrites = [];
         const api = new Function(
             'logger', 'persistSharedValue', 'updateWorkflow', 'getValueFromStore', 'openDB', 'getSetting',
-            `${body}\nreturn { setStopAtTemperature, resyncMilkStopIfDrifted, resyncIfDrifted };`,
+             `const isAutoSteamActive = () => false; ${body}\nreturn { setStopAtTemperature, resyncMilkStopIfDrifted, resyncIfDrifted };`,
         )(
             { warn() {}, error() {} },
             async (key, value) => { kvWrites.push([key, value]); },
@@ -146,7 +146,7 @@ function lift(module, patterns) {
         const workflowWrites = [];
         const api = new Function(
             'logger', 'persistSharedValue', 'updateWorkflow', 'getWorkflow', 'getValueFromStore', 'openDB', 'getSetting',
-            `${body}\nreturn { setTargetSteamDuration, setTargetSteamTemp };`,
+            `const isAutoSteamActive = () => false; ${body}\nreturn { setTargetSteamDuration, setTargetSteamTemp };`,
         )(
             { warn() {}, error() {} },
             async (key, value) => { kvWrites.push([key, value]); },
