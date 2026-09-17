@@ -27,8 +27,14 @@ import { haYamlBlocks } from '../modules/home-assistant.js';
 import { loadIro } from '../modules/vendor-loader.js';
 import { readSettingsLocation, writeSettingsLocation } from './settings-location.js';
 import { SETTINGS_TREE as settingsTree } from './settings-tree.js';
+import { adoptFromMachine, diffUserSettings, restorePatches } from './settings-restore.js';
 import { escapeHtml, pluginViewModel, pluginStatusLabel, pluginNavEntries,
          pluginIdFromCategory, pluginCategoryFor } from './plugin-view.js';
+
+// The DE1 caps the fan-threshold MMR item at 50 °C (min 0, max 50 in Decaid's
+// MMRItem table) and clamps a higher write without reporting it, so the machine
+// keeps its old value while the page shows what was typed.
+const FAN_THRESHOLD_MAX = 50;
 
 // Config for each numeric input that should get two-click numpad support
 const SETTINGS_NUMPAD_CONFIGS = {
@@ -36,7 +42,10 @@ const SETTINGS_NUMPAD_CONFIGS = {
     flushFlowInput:          { title: 'FLUSH FLOW',          unit: 'ml/s', min: 1,   max: 8,    fieldType: 'settings-flush-flow' },
     tankTempInput:           { title: 'TANK TEMPERATURE',    unit: '°C',   min: 10,  max: 40,   fieldType: 'settings-tank-temp' },
     waterAlertInput:         { title: 'WATER ALERT LEVEL',   unit: 'mm',   min: 0,   max: 30,   fieldType: 'settings-water-alert' },
-    calibFanInput:           { title: 'FAN THRESHOLD',       unit: '%',    min: 0,   max: 100,  fieldType: 'settings-calib-fan' },
+    // 50 is the DE1's own ceiling for this MMR item, not a UI preference: the
+    // machine silently clamps anything higher and reports 50 back, so a page
+    // offering 100 let users "set" a value that never took.
+    calibFanInput:           { title: 'FAN THRESHOLD',       unit: '°C',   min: 0,   max: FAN_THRESHOLD_MAX, fieldType: 'settings-calib-fan' },
     calibWeightInput:        { title: 'CALIBRATION WEIGHT',  unit: 'g',    min: 1,   max: 10000,fieldType: 'settings-calib-weight' },
     // DE1 sensor calibration: only the measured half is typed — the DE1's own
     // reading is captured off the machine. The temperature box is entered in
@@ -238,6 +247,18 @@ function hasPendingChanges() {
 }
 const isNum = (v) => typeof v === 'number' && isFinite(v);
 
+// A background refresh must not throw away an edit the user has made but not
+// saved yet. The fetch was started before that edit existed, so its value is
+// the older one -- staging wins. Without this a preload landing mid-edit (or
+// the 3-second retry loop that runs while the DE1 is unreachable) snaps the
+// page back to the machine's value, and the user then steps from that number
+// and saves something they never intended.
+export function mergeStagedOverFetched(fetched, staged) {
+    if (!fetched || typeof fetched !== 'object') return fetched;
+    if (!staged || Object.keys(staged).length === 0) return fetched;
+    return { ...fetched, ...staged };
+}
+
 async function flushPendingChanges() {
     const tasks = [];
     if (Object.keys(pendingChanges.rea).length) tasks.push(setReaSettings(pendingChanges.rea));
@@ -268,8 +289,15 @@ async function flushPendingChanges() {
         if (isNum(water.volume)) persistSharedValue(HOT_WATER_VOLUME_LAST_VALUE_KEY, water.volume);
         if (isNum(water.targetTemperature)) persistSharedValue(HOT_WATER_TEMP_LAST_VALUE_KEY, water.targetTemperature);
     }
+    const written = { de1: { ...pendingChanges.de1 }, de1Advanced: { ...pendingChanges.de1Advanced } };
     if (tasks.length) await Promise.all(tasks);
     saveSettingsBackup();
+    // Only after the writes resolved: a rejected write never reached the
+    // machine, and recording it would make the next visit offer to restore
+    // something that never applied.
+    if (Object.keys(written.de1).length || Object.keys(written.de1Advanced).length) {
+        await syncMachineSettingsRecord(written);
+    }
     resetPendingChanges();
 }
 
@@ -650,6 +678,174 @@ async function saveSettingsBackup() {
     } catch (e) {
         console.warn('saveSettingsBackup failed:', e);
     }
+}
+
+// ── Restore the user's own machine settings ────────────────────────────────
+//
+// Two halves: remember what the user saved here (recordSavedMachineSettings),
+// and, when the machine later reports something else, ask whether to put the
+// user's values back (checkMachineSettingsDrift). Nothing is written to the
+// machine without the user answering -- see settings-restore.js for why a
+// difference cannot be read as a lost setting.
+
+const USER_MACHINE_SETTINGS_KEY = 'userMachineSettings';
+
+// Asked at most once per visit to the settings page, so declining is not
+// undone by the next background refresh landing.
+let machineDriftChecked = false;
+let machineDriftPending = null;
+
+async function readUserMachineSettings() {
+    try {
+        await openDB();
+        return await getSetting(USER_MACHINE_SETTINGS_KEY) || null;
+    } catch (e) {
+        console.warn('readUserMachineSettings failed:', e);
+        return null;
+    }
+}
+
+async function writeUserMachineSettings(record) {
+    try {
+        await openDB();
+        await setSetting(USER_MACHINE_SETTINGS_KEY, record);
+    } catch (e) {
+        console.warn('writeUserMachineSettings failed:', e);
+    }
+}
+
+// Re-read the machine after a write Streamline made and store what it now
+// reports. Every write path here calls this -- saving, restoring, and resetting
+// to defaults -- so the record always reflects this skin's own doing and
+// anything that disagrees with it later came from somewhere else.
+//
+// `written` names keys the user has just set for the first time, which is what
+// adds them to the tracked set; the values come from the machine.
+async function syncMachineSettingsRecord(written = {}) {
+    try {
+        const [de1, de1Advanced] = await Promise.all([getDe1Settings(), getDe1AdvancedSettings()]);
+        settingsCache.de1 = de1;
+        settingsCache.de1Advanced = de1Advanced;
+        const existing = await readUserMachineSettings();
+        await writeUserMachineSettings(adoptFromMachine(existing, { de1, de1Advanced }, written));
+    } catch (e) {
+        // A failed read-back leaves the record as it was: better to ask about a
+        // difference later than to record a value the machine never confirmed.
+        logger.warn('Could not sync machine settings record:', e);
+    }
+}
+
+async function checkMachineSettingsDrift() {
+    if (machineDriftChecked) return;
+    if (!settingsCache.de1 && !settingsCache.de1Advanced) return;
+    // An edit in flight is the user's current intent; comparing against it
+    // would report their own unsaved change as machine drift.
+    if (hasPendingChanges()) return;
+    machineDriftChecked = true;
+
+    const record = await readUserMachineSettings();
+    if (!record) return;
+    const differences = diffUserSettings(record, {
+        de1: settingsCache.de1,
+        de1Advanced: settingsCache.de1Advanced,
+    });
+    if (!differences.length) return;
+
+    machineDriftPending = { record, differences };
+    // Appended to the body rather than to a category's markup: the content area
+    // is rebuilt on every navigation, which would destroy an open dialog.
+    if (!document.getElementById('machine-drift-modal')) {
+        document.body.insertAdjacentHTML('beforeend', machineDriftModal());
+    }
+    const dlg = document.getElementById('machine-drift-modal');
+    if (dlg) {
+        dlg.querySelector('[data-role="machine-drift-list"]').innerHTML = differences
+            .map(d => `<li class="flex items-center justify-between gap-[24px] w-full">
+                    <span>${escapeHtml(getTranslation(machineSettingLabel(d.key)))}</span>
+                    <span class="font-bold text-[var(--text-primary)] whitespace-nowrap">
+                        ${escapeHtml(String(d.actual))} → ${escapeHtml(String(d.saved))}
+                    </span>
+                </li>`)
+            .join('');
+        translatePage();
+        if (!dlg.open) dlg.showModal();
+    }
+}
+
+// Put the user's values back. Only the keys that differ are written, and the
+// caches are refreshed from the machine afterwards so the page shows what the
+// machine actually took rather than what was asked for.
+async function machineDriftRestore() {
+    const pending = machineDriftPending;
+    document.getElementById('machine-drift-modal')?.close();
+    machineDriftPending = null;
+    if (!pending) return;
+    const patches = restorePatches(pending.differences);
+    try {
+        const tasks = [];
+        if (patches.de1) tasks.push(setDe1Settings(patches.de1));
+        if (patches.de1Advanced) tasks.push(setDe1AdvancedSettings(patches.de1Advanced));
+        await Promise.all(tasks);
+        await syncMachineSettingsRecord();
+        ui.showToast(getTranslation('Settings restored'), 3000, 'success');
+        if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
+    } catch (e) {
+        logger.error('Failed to restore machine settings', e);
+        ui.showToast(`${getTranslation('Failed')}: ${e.message || e}`, 5000, 'error');
+    }
+}
+
+// Keeping the machine's values makes them the user's values: without this the
+// same question is asked on every visit to the page.
+async function machineDriftKeep() {
+    const pending = machineDriftPending;
+    document.getElementById('machine-drift-modal')?.close();
+    machineDriftPending = null;
+    if (!pending) return;
+    // The outside change becomes the known state, so it is not queried again.
+    await writeUserMachineSettings(adoptFromMachine(pending.record, {
+        de1: settingsCache.de1,
+        de1Advanced: settingsCache.de1Advanced,
+    }));
+}
+
+// The keys are the API's own field names; these are what the settings pages
+// already call them on screen.
+const MACHINE_SETTING_LABELS = {
+    fan: 'Fan Threshold',
+    flushTemp: 'Flush Temperature',
+    flushFlow: 'Flush Flow',
+    flushTimeout: 'Flush Timeout',
+    hotWaterFlow: 'Hot Water Flow',
+    steamFlow: 'Steam Flow',
+    tankTemp: 'Water Tank Temperature',
+    steamPurgeMode: 'Steam Purge Mode',
+    usb: 'USB Charger Mode',
+};
+
+function machineSettingLabel(key) {
+    return MACHINE_SETTING_LABELS[key] || pluginSettingLabel(key);
+}
+
+function machineDriftModal() {
+    return `
+        <dialog id="machine-drift-modal" class="modal">
+            <div class="modal-box bg-[var(--box-color)] max-w-2xl">
+                <h3 class="font-bold text-[28px] text-[var(--text-primary)] mb-2" data-i18n-key="Machine settings differ">Machine settings differ</h3>
+                <p class="text-[24px] text-[var(--text-primary)] leading-[1.4] mb-[20px]" data-i18n-key="The machine reports different values than the ones you saved. Restore your saved settings?">The machine reports different values than the ones you saved. Restore your saved settings?</p>
+                <ul data-role="machine-drift-list" class="flex flex-col gap-[10px] w-full text-[22px] text-[var(--text-secondary)]"></ul>
+                <div class="modal-action">
+                    <button class="border-[var(--mimoja-blue)] text-[var(--mimoja-blue)] h-[62px] rounded-[67.5px] border px-[32px] text-[24px] font-bold transition-colors duration-200 hover:bg-[var(--mimoja-blue)] hover:text-white"
+                            onclick="window.machineDriftKeep()" data-i18n-key="Keep machine values">
+                        Keep machine values
+                    </button>
+                    <button class="bg-[#385a92] h-[62px] px-[32px] rounded-[67.5px] text-white text-[24px] font-bold"
+                            onclick="window.machineDriftRestore()" data-i18n-key="Restore">
+                        Restore
+                    </button>
+                </div>
+            </div>
+        </dialog>`;
 }
 
 // NOTE: the settingsBackup written by saveSettingsBackup() is consumed ONLY by
@@ -1234,7 +1430,7 @@ export function renderFanThresholdSettings(settings) {
     }
 
     const fanVal = settings.fan !== undefined ? settings.fan : 40;
-    const pct = Math.round(Math.max(0, Math.min(100, fanVal)));
+    const pct = Math.round(Math.max(0, Math.min(FAN_THRESHOLD_MAX, fanVal)));
 
     return `
         <div class="content-stretch flex flex-col gap-[48px] items-start relative w-full">
@@ -1290,7 +1486,7 @@ export function renderFanThresholdSettings(settings) {
                     </div>
                     <div class="flex justify-between text-[18px] text-[var(--text-primary)] opacity-50">
                         <span>0°C</span>
-                        <span data-i18n-key="Range: 0 – 100°C">Range: 0 – 100°C</span>
+                        <span data-i18n-key="Range: 0 – 50°C">Range: 0 – 50°C</span>
                         <span>100°C</span>
                     </div>
                 </div>
@@ -4868,7 +5064,7 @@ export function renderCalibFanSettings(settings) {
                              style="width: 130px;">
                             <input type="text" inputmode="numeric" pattern="[0-9]*" id="calibFanInput"
                                    class="text-center text-[var(--text-primary)] text-[24px] font-bold bg-transparent border-none w-full"
-                                   value="${fanValue}" step="1" min="0" max="100"
+                                   value="${fanValue}" step="1" min="0" max="${FAN_THRESHOLD_MAX}"
                                    onchange="window.updateDe1Setting('fan', parseInt(this.value))">
                             <span class="ml-2 text-nowrap">°C</span>
                         </div>
@@ -4880,8 +5076,8 @@ export function renderCalibFanSettings(settings) {
                             </svg>
                         </button>
                     </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full text-center" data-i18n-key="Temperature threshold at which the fan turns on (0–100°C)">
-                        Temperature threshold at which the fan turns on (0–100°C)
+                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full text-center" data-i18n-key="Temperature threshold at which the fan turns on (0–50°C)">
+                        Temperature threshold at which the fan turns on (0–50°C)
                     </p>
                 </div>
             </div>
@@ -7696,15 +7892,28 @@ async function _preloadSettingsInternal() {
 
         // Handle Workflow result
         if (workflowResult.status === 'fulfilled') {
-            settingsCache.workflow = workflowResult.value;
+            const workflow = workflowResult.value;
+            // Steam and hot water stage a full copy of their block, so the
+            // staged block replaces the fetched one field by field.
+            if (workflow && typeof workflow === 'object') {
+                if (pendingChanges.workflow.steamSettings) {
+                    workflow.steamSettings = mergeStagedOverFetched(
+                        workflow.steamSettings || {}, pendingChanges.workflow.steamSettings);
+                }
+                if (pendingChanges.workflow.hotWaterData) {
+                    workflow.hotWaterData = mergeStagedOverFetched(
+                        workflow.hotWaterData || {}, pendingChanges.workflow.hotWaterData);
+                }
+            }
+            settingsCache.workflow = workflow;
         } else {
             console.error('Error loading workflow data:', workflowResult.reason);
         }
 
         // Update cache with results
-        settingsCache.rea = reaSettings ? { ...reaSettings, ...pendingChanges.rea } : reaSettings;
-        settingsCache.de1 = de1Settings;
-        settingsCache.de1Advanced = de1AdvancedSettings;
+        settingsCache.rea = mergeStagedOverFetched(reaSettings, pendingChanges.rea);
+        settingsCache.de1 = mergeStagedOverFetched(de1Settings, pendingChanges.de1);
+        settingsCache.de1Advanced = mergeStagedOverFetched(de1AdvancedSettings, pendingChanges.de1Advanced);
         settingsCache.appInfo = appInfo;
         settingsCache.machineInfo = machineInfo;
         // Keep the shared Bengle gate fresh (the machine may have changed since
@@ -7777,8 +7986,13 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     // Pre-seed cache from IDB backup for instant render, then fetch from network in background
     await preSeedFromIDB();
     Object.entries(initialReaChanges).forEach(([key, value]) => updateReaSetting(key, value, false));
+    machineDriftChecked = false;
     preloadSettings().then(() => {
         if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
+        // After the network values are in: the IDB pre-seed is the skin's own
+        // last snapshot, so comparing against it would only ever compare the
+        // record with itself.
+        checkMachineSettingsDrift().catch(e => logger.warn('Machine settings check failed:', e));
     });
 
     // Initialize WebSocket for live device state updates
@@ -8004,8 +8218,10 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     window.resetDe1Settings = async function() {
         try {
             await resetDe1Settings();
-            settingsCache.de1Advanced = await getDe1AdvancedSettings();
-            settingsCache.de1 = await getDe1Settings();
+            // A reset is this skin's own doing, so the defaults it produces
+            // become the known state -- otherwise the next visit would offer to
+            // undo a reset the user just asked for.
+            await syncMachineSettingsRecord();
             ui.showToast('Machine settings reset to defaults', 3000, 'success');
             if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
         } catch (error) {
@@ -8497,6 +8713,8 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
 
     // Acknowledging is per visit, not per session -- sensorCalWarningAck is
     // re-armed on leaving the page.
+    window.machineDriftRestore = machineDriftRestore;
+    window.machineDriftKeep = machineDriftKeep;
     window.sensorCalWarningProceed = function() {
         ({ shown: sensorCalWarningShown, ack: sensorCalWarningAck } = sensorCalWarningNextState(
             { shown: sensorCalWarningShown, ack: sensorCalWarningAck }, 'ack').state);
@@ -9291,7 +9509,7 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
         const input = document.getElementById('calibFanInput');
         if (input) {
             let newValue = parseInt(input.value, 10) + change;
-            newValue = Math.max(0, Math.min(100, newValue));
+            newValue = Math.max(0, Math.min(FAN_THRESHOLD_MAX, newValue));
             input.value = newValue;
             input.dispatchEvent(new Event('change'));
         }
@@ -9303,7 +9521,7 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
         const fill = document.getElementById('fan-track-fill');
         if (input) {
             let newValue = parseInt(input.value, 10) + change;
-            newValue = Math.max(0, Math.min(100, newValue));
+            newValue = Math.max(0, Math.min(FAN_THRESHOLD_MAX, newValue));
             input.value = newValue;
             if (display) display.textContent = newValue;
             if (fill) fill.style.width = newValue + '%';
