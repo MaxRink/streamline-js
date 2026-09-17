@@ -27,6 +27,8 @@ import { haYamlBlocks } from '../modules/home-assistant.js';
 import { loadIro } from '../modules/vendor-loader.js';
 import { readSettingsLocation, writeSettingsLocation } from './settings-location.js';
 import { SETTINGS_TREE as settingsTree } from './settings-tree.js';
+import { escapeHtml, pluginViewModel, pluginStatusLabel, pluginNavEntries,
+         pluginIdFromCategory, pluginCategoryFor } from './plugin-view.js';
 
 // Config for each numeric input that should get two-click numpad support
 const SETTINGS_NUMPAD_CONFIGS = {
@@ -142,9 +144,6 @@ function attachSettingsNumpad() {
     });
 }
 
-function escapeHtml(str) {
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 let screensaverImagesCache = [];
 
@@ -498,6 +497,10 @@ function updateSettingsContentArea(category) {
         if (category === 'plugins') {
             setTimeout(() => window.loadPluginList?.(), 0);
         }
+        const mountPluginId = pluginIdFromCategory(category);
+        if (mountPluginId) {
+            setTimeout(() => window.loadPluginPage?.(mountPluginId), 0);
+        }
         if (category === 'fontsize') {
             setTimeout(initFontSizeSettings, 0);
         }
@@ -662,6 +665,12 @@ async function saveSettingsBackup() {
 
 // ── Render settings content based on selected category
 export function renderSettingsContent(category) {
+    // A plugin's own page. Its category is derived from the plugin id
+    // (plugin-view.js), so it never appears in the switch below and never needs
+    // an entry in settings-tree.js -- installing the plugin is what creates it.
+    const ownPagePluginId = pluginIdFromCategory(category);
+    if (ownPagePluginId) return renderPluginPage(ownPagePluginId);
+
     // Determine loading state for the specific category
     let isLoading = false;
     let error = null;
@@ -778,10 +787,6 @@ export function renderSettingsContent(category) {
             return renderPluginManagerSettings();
         case 'shotupload':
             return renderShotUploadSettings();
-        case 'dye2':
-            return renderDye2Settings();
-        case 'printtheshot':
-            return renderPrintTheShotSettings();
         case 'extensions':
         case 'extention1':
         case 'extention2':
@@ -5727,6 +5732,82 @@ export function renderLanguageSettings() {
 }
 
 // Render plugin manager — lists all installed plugins with enable/disable toggles
+// Plugins Decaid reported, kept so the Extensions nav can list one row per
+// plugin without an await: renderSubcategories is synchronous and runs on every
+// category click. Populated by ensurePluginNav(), which refreshes it whenever
+// Extensions is opened, then re-renders the nav in place if the set changed --
+// a plugin installed from the Decaid dashboard shows up on the next visit
+// without a reload, and the first visit of a session shows the rows as soon as
+// the bridge answers.
+let pluginNavCache = null;
+
+function selfInstallablePluginIds() {
+    return Object.keys(PLUGIN_CARD_OVERRIDES).filter(id => PLUGIN_CARD_OVERRIDES[id].onInstall);
+}
+
+export function extensionPluginNavEntries() {
+    return pluginNavEntries(pluginNavCache, selfInstallablePluginIds()).map(row => ({
+        ...row,
+        // A plugin's own row answers searches for its description and manifest
+        // setting names, which is what the aggregate Plugins page used to do for
+        // all of them at once.
+        keywords: pluginKeywords((pluginNavCache || []).find(p => p?.id === row.pluginId)),
+    }));
+}
+
+async function ensurePluginNav() {
+    const before = extensionPluginNavEntries().map(e => e.id).join('|');
+    try {
+        const { getPlugins } = await import('../modules/api.js');
+        const plugins = await getPlugins();
+        // null is the fetch-failed sentinel: keep whatever was listed before
+        // rather than emptying the nav out from under the user mid-session.
+        if (plugins) pluginNavCache = plugins;
+    } catch (err) {
+        logger.warn('Plugin nav list unavailable:', err?.message);
+    }
+    if (extensionPluginNavEntries().map(e => e.id).join('|') === before) return;
+    const panel = document.getElementById('sub-categories-panel');
+    // Only repaint while Extensions is the open category -- the panel holds
+    // another category's rows otherwise, and this resolves after navigation.
+    if (!panel || lastRenderedMainCategory !== 'extensions') return;
+    panel.innerHTML = renderSubcategories('extensions');
+    translatePage();
+    // Clicks are delegated on the panel, so the rebuilt rows need no listeners
+    // -- only the active row's styling, which lived on the element just
+    // replaced. Matches activateSubcategory().
+    const active = panel.querySelector(`.settings-subnav-btn[data-category="${CSS.escape(activeSettingsCategory || '')}"]`);
+    if (active) {
+        active.classList.add('text-white', 'bg-[#2c4a7a]');
+        active.classList.remove('text-[#959595]');
+    }
+}
+
+// One plugin's own settings page: the same card the Plugins list used to stack,
+// given a page of its own so eight installed plugins are eight nav rows instead
+// of one column the length of eight plugins.
+function renderPluginPage(pluginId) {
+    return `
+        <div class="content-stretch flex flex-col gap-[40px] items-start relative w-full">
+            <div id="plugin-page-container" class="flex flex-col gap-[40px] w-full" data-plugin-page="${escapeHtml(pluginId)}">
+                <div class="flex items-center justify-center w-full py-[40px]">
+                    <span class="loading loading-spinner loading-lg text-[#385a92]"></span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Page title for a plugin's own page, in the same place and weight every other
+// settings page puts its title -- so a plugin page reads as part of Settings
+// rather than as a panel that wandered in from the bridge.
+function renderPluginPageTitle(name) {
+    return `
+        <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
+            <p class="leading-[1.2]" data-i18n-key="${escapeHtml(name)}">${escapeHtml(getTranslation(name))}</p>
+        </div>`;
+}
+
 export function renderPluginManagerSettings() {
     return `
         <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
@@ -5797,15 +5878,31 @@ export function renderShotUploadSettings() {
     `;
 }
 
-// "AutoUpload" -> "Auto Upload". The schema names a setting but never labels it,
-// so the key is split rather than a friendlier label being invented here -- an
-// invented one is exactly what goes stale. The sentence the user actually reads
-// is the manifest's own `description`.
+// "AutoUpload" -> "Auto Upload". The fallback for a manifest that carries no
+// `label` for a setting: the key is split rather than a friendlier name being
+// invented here, since an invented one is exactly what goes stale. A manifest
+// that does carry `label` wins -- see pluginSettingDisplayLabel.
 export function pluginSettingLabel(key) {
     return String(key)
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .replace(/[_-]+/g, ' ')
         .trim();
+}
+
+// What a setting is called on screen. PluginSettingSchema.label is the author's
+// own name for it ("Upload shots automatically" rather than the storage key
+// "AutoUpload"); the spec says an absent, empty or whitespace label falls back
+// to the key, so a manifest written before labels existed renders as it always
+// did.
+export function pluginSettingDisplayLabel(key, schema) {
+    const label = typeof schema?.label === 'string' ? schema.label.trim() : '';
+    return label || pluginSettingLabel(key);
+}
+
+// A secure setting is never returned in plaintext: GET /plugins/{id}/settings
+// reports { isSet } instead. Anything else is the stored value.
+export function pluginSecureIsSet(value) {
+    return value && typeof value === 'object' ? value.isSet === true : !!value;
 }
 
 // One control per manifest setting, for the types the plugins on these pages
@@ -5817,16 +5914,24 @@ export function pluginSettingLabel(key) {
 // (Shot Uploader, Print The Shot); the ids have to stay distinct per page.
 export function renderPluginSettingControl(key, schema, idPrefix = 'shotupload') {
     const id = `${idPrefix}-setting-${key}`;
-    const label = escapeHtml(getTranslation(pluginSettingLabel(key)));
+    const label = escapeHtml(getTranslation(pluginSettingDisplayLabel(key, schema)));
+    // One weight for every setting name on the page, including the plugin's own
+    // Enabled row: a manifest toggle printed in 30px bold blue (as these were)
+    // read as a section heading and outranked the switch that turns the whole
+    // plugin on.
+    const labelHtml = `<span class="font-['Inter:SemiBold',sans-serif] font-semibold text-[var(--text-primary)] text-[26px] leading-[1.2]">${label}</span>`;
+    // Manifest help text, under the name it explains rather than under the
+    // control, so a long description cannot drift toward the next setting.
     const description = schema?.description
-        ? `<p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="${escapeHtml(schema.description)}">${escapeHtml(getTranslation(schema.description))}</p>`
+        ? `<span class="font-['Inter:Regular',sans-serif] leading-[1.4] text-[var(--text-primary)] opacity-70 text-[22px]" data-i18n-key="${escapeHtml(schema.description)}">${escapeHtml(getTranslation(schema.description))}</span>`
         : '';
+    const inputClass = 'p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue)]';
 
     if (schema?.type === 'boolean') {
         return `
-            <div class="content-stretch flex items-center justify-between relative w-full">
-                <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[#385a92] text-[30px]">
-                    <p class="leading-[1.2]">${label}</p>
+            <div class="flex items-center justify-between gap-[24px] w-full">
+                <div class="flex flex-col gap-[4px] max-w-[52ch]">
+                    ${labelHtml}
                     ${description}
                 </div>
                 <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
@@ -5839,12 +5944,31 @@ export function renderPluginSettingControl(key, schema, idPrefix = 'shotupload')
 
     if (schema?.type === 'number') {
         return `
-            <div class="flex flex-col gap-[8px] w-full">
-                <div class="flex items-center gap-4">
-                    <label for="${id}" class="text-[var(--text-primary)] text-[24px]">${label}</label>
-                    <input type="number" id="${id}" min="0" data-setting-key="${escapeHtml(key)}" data-setting-type="number" class="w-24 p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue)]">
+            <div class="flex items-center justify-between gap-[24px] w-full">
+                <div class="flex flex-col gap-[4px] max-w-[52ch]">
+                    <label for="${id}">${labelHtml}</label>
+                    ${description}
                 </div>
-                ${description}
+                <input type="number" id="${id}" min="0" data-setting-key="${escapeHtml(key)}" data-setting-type="number" class="w-[140px] flex-shrink-0 text-right ${inputClass}">
+            </div>`;
+    }
+
+    // An enum names its allowed values in the manifest and the API rejects
+    // anything else, so it is a closed list, not free text -- a plugin that
+    // declares one used to render nothing at all here.
+    if (schema?.type === 'enum' && Array.isArray(schema.values)) {
+        const options = schema.values
+            .map(value => `<option value="${escapeHtml(value)}">${escapeHtml(getTranslation(String(value)))}</option>`)
+            .join('');
+        return `
+            <div class="flex items-center justify-between gap-[24px] w-full">
+                <div class="flex flex-col gap-[4px] max-w-[52ch]">
+                    <label for="${id}">${labelHtml}</label>
+                    ${description}
+                </div>
+                <select id="${id}" data-setting-key="${escapeHtml(key)}" data-setting-type="enum" class="flex-shrink-0 max-w-[340px] ${inputClass}">
+                    ${options}
+                </select>
             </div>`;
     }
 
@@ -5853,14 +5977,105 @@ export function renderPluginSettingControl(key, schema, idPrefix = 'shotupload')
     // rendering every string in the clear.
     if (schema?.type === 'string') {
         return `
-            <div class="flex flex-col gap-[8px] w-full">
-                <label for="${id}" class="text-[var(--text-primary)] text-[24px]">${label}</label>
-                <input type="${schema.secure ? 'password' : 'text'}" id="${id}" data-setting-key="${escapeHtml(key)}" data-setting-type="string" class="w-full max-w-[500px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue)]">
-                ${description}
+            <div class="flex flex-col gap-[10px] w-full">
+                <div class="flex flex-col gap-[4px] max-w-[62ch]">
+                    <label for="${id}">${labelHtml}</label>
+                    ${description}
+                </div>
+                <input type="${schema.secure ? 'password' : 'text'}" id="${id}" data-setting-key="${escapeHtml(key)}" data-setting-type="${schema.secure ? 'secure' : 'string'}" class="w-full max-w-[560px] ${inputClass}">
             </div>`;
     }
 
     return '';
+}
+
+// Fill a rendered schema form with its stored values and wire each control to
+// write straight through to the plugin. Shared by the Shot Uploader page and
+// the generic plugin card: two copies of this is how one of them ended up
+// painting a secure setting's { isSet } state object into a password box and
+// saving "[object Object]" as the credential.
+//
+// `ensureLoaded` is awaited before switching a setting ON, because a setting
+// means nothing while the plugin is unloaded.
+export function bindPluginSettingControls(rootEl, {
+    pluginId, idPrefix, schema, keys, settings, ensureLoaded = async () => {}, logLabel = pluginId,
+}) {
+    if (!rootEl) return;
+
+    // A secure value never arrives in plaintext -- GET /plugins/{id}/settings
+    // reports { isSet } -- so the field stays empty and only reports whether a
+    // credential is stored.
+    const markSecure = (el, isSet) => {
+        el.value = '';
+        el.placeholder = getTranslation(isSet ? 'Saved' : 'Not set');
+    };
+
+    // Stored value first, manifest default second -- a plugin that has never
+    // been written to has no stored value, and the default is what it is
+    // actually running with.
+    for (const key of keys) {
+        const el = rootEl.querySelector(`[id="${idPrefix}-setting-${key}"]`);
+        if (!el) continue;
+        const value = settings[key] !== undefined ? settings[key] : schema[key]?.default;
+        if (el.dataset.settingType === 'secure') markSecure(el, pluginSecureIsSet(value));
+        else if (el.type === 'checkbox') el.checked = value === true;
+        else if (value !== undefined && value !== null) el.value = value;
+    }
+
+    rootEl.querySelectorAll('[data-setting-key]').forEach(el => {
+        el.addEventListener('change', async function () {
+            const key = this.dataset.settingKey;
+            const type = this.dataset.settingType;
+            const previous = settings[key] !== undefined ? settings[key] : schema[key]?.default;
+
+            let value;
+            if (type === 'boolean') {
+                value = this.checked;
+            } else if (type === 'secure') {
+                // Typing sets the credential; an empty field keeps the stored
+                // one, which is what the isSet marker is for. Clearing is not
+                // offered here -- an empty box far likelier means "I did not
+                // touch this". Not trimmed: spaces can be part of a secret.
+                if (!this.value) return;
+                value = this.value;
+            } else if (type === 'string' || type === 'enum') {
+                value = this.value.trim();
+            } else {
+                value = parseFloat(this.value);
+                // Rejected rather than written: a NaN or a negative would be
+                // persisted and read back as a broken threshold on every later
+                // load. The schema carries no bounds.
+                if (!isFinite(value) || value < 0) {
+                    this.value = previous ?? '';
+                    return;
+                }
+            }
+
+            this.disabled = true;
+            try {
+                if (value === true) await ensureLoaded();
+                await setPluginSettings(pluginId, { [key]: value });
+                settings[key] = type === 'secure' ? { isSet: true } : value;
+                if (type === 'boolean') {
+                    ui.showToast(
+                        `${getTranslation(pluginSettingDisplayLabel(key, schema[key]))}: ${getTranslation(value ? 'On' : 'Off')}`,
+                        2000, 'success');
+                } else if (type === 'secure') {
+                    // The typed credential must not stay on screen, and the
+                    // placeholder is now the only thing reporting its state.
+                    markSecure(this, true);
+                    ui.showToast(getTranslation('Saved'), 2000, 'success');
+                }
+            } catch (e) {
+                logger.error(`Failed to change ${logLabel} setting ${key}`, e);
+                ui.showToast(`${getTranslation('Failed')}: ${e.message || e}`, 4000, 'error');
+                if (type === 'boolean') this.checked = previous === true;
+                else if (type === 'secure') markSecure(this, pluginSecureIsSet(previous));
+                else this.value = previous ?? '';
+            }
+            this.disabled = false;
+        });
+    });
 }
 
 // Every control writes straight through to the plugin's settings -- there is no
@@ -5985,69 +6200,20 @@ function setupShotUploadListeners() {
             getTranslation('Nothing to configure'),
             getTranslation('This plugin does not expose any settings.'));
 
-        // Stored value first, manifest default second -- a plugin that has never
-        // been written to has no stored value, and the default is what it is
-        // actually running with.
-        for (const key of keys) {
-            const el = document.getElementById(`shotupload-setting-${key}`);
-            if (!el) continue;
-            const value = settings[key] !== undefined ? settings[key] : schema[key]?.default;
-            if (el.type === 'checkbox') el.checked = value === true;
-            else if (value !== undefined && value !== null) el.value = value;
-        }
         setControlsEnabled(true);
 
-        // A setting means nothing while the plugin is unloaded, so switching one ON
-        // loads it first. Switching off leaves it loaded: the manual upload button
-        // and the status endpoint still work.
-        const saveSetting = async (patch, { needsPlugin = false } = {}) => {
-            if (needsPlugin && !plugin.loaded) {
+        // Switching a setting off leaves the plugin loaded: the manual upload
+        // button and the status endpoint still work.
+        bindPluginSettingControls(controlsEl, {
+            pluginId: PLUGIN_ID,
+            idPrefix: 'shotupload',
+            schema, keys, settings,
+            logLabel: 'shot upload',
+            ensureLoaded: async () => {
+                if (plugin.loaded) return;
                 await enablePlugin(PLUGIN_ID);
                 plugin.loaded = true;
-            }
-            await setPluginSettings(PLUGIN_ID, patch);
-        };
-
-        controlsEl.querySelectorAll('[data-setting-key]').forEach(el => {
-            el.addEventListener('change', async function () {
-                const key = this.dataset.settingKey;
-                const type = this.dataset.settingType;
-                const previous = settings[key] !== undefined ? settings[key] : schema[key]?.default;
-
-                let value;
-                if (type === 'boolean') {
-                    value = this.checked;
-                } else if (type === 'string') {
-                    value = this.value;
-                } else {
-                    value = parseFloat(this.value);
-                    // Rejected rather than written: a NaN or a negative would be
-                    // persisted and read back as a broken threshold on every
-                    // later load. The schema carries no bounds, so this keeps the
-                    // one rule the hand-written field already enforced.
-                    if (!isFinite(value) || value < 0) {
-                        this.value = previous ?? '';
-                        return;
-                    }
-                }
-
-                this.disabled = true;
-                try {
-                    await saveSetting({ [key]: value }, { needsPlugin: value === true });
-                    settings[key] = value;
-                    if (type === 'boolean') {
-                        ui.showToast(
-                            `${getTranslation(pluginSettingLabel(key))}: ${getTranslation(value ? 'On' : 'Off')}`,
-                            2000, 'success');
-                    }
-                } catch (e) {
-                    logger.error(`Failed to change shot upload setting ${key}`, e);
-                    ui.showToast(`${getTranslation('Failed')}: ${e.message || e}`, 4000, 'error');
-                    if (type === 'boolean') this.checked = previous === true;
-                    else this.value = previous ?? '';
-                }
-                this.disabled = false;
-            });
+            },
         });
 
         uploadNowBtn?.addEventListener('click', async function () {
@@ -6170,251 +6336,128 @@ function pluginDescription(plugin) {
         .trim();
 }
 
-// Print The Shot -- the settings half of print-the-shot.reaplugin, which sends a
-// finished shot to a local print server that renders it as a paper receipt.
+// ─── Generic plugin settings card ─────────────────────────────────────────
 //
-// Settings only, on purpose. The plugin ships its own complete page at its `ui`
-// endpoint -- shot browser, log, print buttons, the 3x retry -- and printing
-// there means converting the shot to the TCL wire format the print server wants,
-// which is ~130 lines living inside the plugin's own bundle. A copy of that here
-// would be wrong the first time the plugin's format changed, for the same reason
-// hand-written setting controls go stale (see renderShotUploadSettings). So this
-// page owns what the skin is better at -- the settings, in the skin's own
-// styling, generated from the manifest -- and hands printing to the page that
-// owns the format.
-const PRINT_THE_SHOT_PLUGIN_ID = 'print-the-shot.reaplugin';
+// One card renderer drives every plugin's settings, whether that plugin is
+// DYE2, Print The Shot, or something installed tomorrow with no skin code at
+// all: name, description, an Open link when the manifest declares a `ui`
+// endpoint, an enable/disable toggle, version and source with an
+// Approve-update button when Decaid is holding one back for permissions, and
+// the manifest's own settings schema (renderPluginSettingControl, the same
+// widgets Shot Uploader's page uses). See docs/AI_API_NOTES.md for the plugin
+// transport this reads, and pluginViewModel (plugin-view.js) for the
+// install/enable/update state machine.
+//
+// GET /plugins has no field for a plugin Decaid hasn't installed yet (no repo,
+// no registry entry -- see PluginManifest in rest_v1.yml), so a generic card
+// can only manage what the bridge already reports. PLUGIN_CARD_OVERRIDES is
+// the narrow, explicit exception list for UI that cannot come from the
+// manifest: currently just DYE2's self-install (it ships from a GitHub repo
+// dyeStrip.js already knows) and its master on/off switch, which is a
+// skin-level feature flag independent of the plugin's loaded state (see
+// setupDye2Extra).
+const PLUGIN_CARD_OVERRIDES = {
+    'dye2.reaplugin': {
+        fallbackTitle: 'Describe Your Espresso',
+        getVersionInfo: getDye2VersionInfo,
+        onInstall: installDye2Plugin,
+        renderExtra: renderDye2Extra,
+        setupExtra: setupDye2Extra,
+        replacesToggle: true,
+    },
+};
 
-export function renderPrintTheShotSettings() {
-    setTimeout(setupPrintTheShotListeners, 0);
-
-    return `
-        <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
-            <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
-                <p class="leading-[1.2]" id="printtheshot-title" data-i18n-key="Print The Shot">Print The Shot</p>
-            </div>
-
-            <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                <p id="printtheshot-description" class="text-[24px] text-[var(--text-primary)] leading-[1.4] opacity-75"></p>
-
-                <!-- Replaced with a notice when the plugin is missing or unreachable. -->
-                <div id="printtheshot-gate" class="w-full">
-                    <div class="flex items-center justify-center w-full py-[20px]">
-                        <span class="loading loading-spinner loading-lg text-[#385a92]"></span>
-                    </div>
-                </div>
-
-                <!-- Filled from the manifest schema by setupPrintTheShotListeners. -->
-                <div id="printtheshot-controls" class="content-stretch flex flex-col gap-[30px] items-start relative w-full"></div>
-
-                <!-- Filled with a link to the plugin's own page once we know it has one. -->
-                <div id="printtheshot-ui-link" class="w-full"></div>
-            </div>
-        </div>
-    `;
+function pluginCardOverride(pluginId) {
+    return PLUGIN_CARD_OVERRIDES[pluginId] || {};
 }
 
-function setupPrintTheShotListeners() {
-    const gateEl = document.getElementById('printtheshot-gate');
-    const controlsEl = document.getElementById('printtheshot-controls');
-    if (!gateEl || !controlsEl) return;
-
-    const notice = (title, body) => `
-        <div class="flex flex-col gap-[24px] p-[36px] rounded-[20px] border-2 border-dashed border-[var(--profile-button-outline-color)] bg-[var(--box-color)] items-center text-center">
-            <div class="flex flex-col gap-[8px]">
-                <p class="text-[26px] font-bold text-[var(--text-primary)]">${title}</p>
-                <p class="text-[22px] text-[var(--low-contrast-white)] max-w-[500px] leading-[1.4]">${body}</p>
+// DYE2's master switch -- gates the dashboard header UI, not the plugin's
+// loaded state. Persists streamline.dye2Enabled (default OFF) and, when
+// flipped on, live-updates the dashboard via the window.applyDye2Enabled
+// bridge dyeStrip.js installs on the main page. Turning it on requires the
+// plugin installed, loaded, and at DYE2's KV-contract floor -- see
+// ensureDye2PluginReady/checkDye2PluginRequirement in dyeStrip.js -- so the
+// generic enable/disable toggle would be the wrong control here; this
+// replaces it (PLUGIN_CARD_OVERRIDES.replacesToggle).
+function renderDye2Extra() {
+    return `
+        <div class="flex items-center justify-between gap-[24px] w-full">
+            <div class="flex flex-col gap-[4px] max-w-[52ch]">
+                <span class="font-['Inter:SemiBold',sans-serif] font-semibold text-[var(--text-primary)] text-[26px] leading-[1.2]" data-i18n-key="DYE2">DYE2</span>
+                <span class="font-['Inter:Regular',sans-serif] leading-[1.4] text-[var(--text-primary)] opacity-70 text-[22px]" data-i18n-key="Show DYE auto-favourites and recipes on the dashboard header.">
+                    Show DYE auto-favourites and recipes on the dashboard header.
+                </span>
             </div>
+            <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
+                <input type="checkbox" id="dye2-enabled" class="sr-only peer">
+                <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[#385a92] peer-checked:border-[#385a92]"></div>
+                <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
+            </label>
         </div>`;
-
-    (async () => {
-        controlsEl.style.opacity = '0.4';
-
-        // getPlugins answers null when the request failed and [] when there really
-        // are none, so the two must not collapse into "not installed" -- that would
-        // tell a user with a working plugin to go and install it again.
-        const plugins = await getPlugins();
-        if (!document.getElementById('printtheshot-gate')) return;
-        if (!plugins) {
-            gateEl.innerHTML = notice(
-                getTranslation('Could not check'),
-                getTranslation("Couldn't reach the bridge to check the Print The Shot plugin."));
-            return;
-        }
-        const plugin = plugins.find(p => p?.id === PRINT_THE_SHOT_PLUGIN_ID);
-        if (!plugin) {
-            gateEl.innerHTML = notice(
-                getTranslation('Print The Shot plugin not installed'),
-                getTranslation('Decaid has no Print The Shot plugin installed. Install it on Decaid, then come back to set up printing.'));
-            return;
-        }
-
-        // The plugin names and explains itself. Both are optional on the wire, so
-        // the static header stands in if either is missing.
-        const titleEl = document.getElementById('printtheshot-title');
-        if (titleEl && plugin.name) {
-            titleEl.textContent = getTranslation(plugin.name);
-            titleEl.setAttribute('data-i18n-key', plugin.name);
-        }
-        const descriptionEl = document.getElementById('printtheshot-description');
-        if (descriptionEl && plugin.description) {
-            descriptionEl.textContent = getTranslation(plugin.description);
-            descriptionEl.setAttribute('data-i18n-key', plugin.description);
-        }
-
-        let settings;
-        try {
-            // Strict: the lenient default returns {} for a failed read, which would
-            // paint the controls at their defaults while printing is in fact set up.
-            settings = await getPluginSettings(PRINT_THE_SHOT_PLUGIN_ID, { strict: true }) || {};
-        } catch (e) {
-            logger.warn('Print The Shot settings unavailable:', e);
-            gateEl.innerHTML = notice(
-                getTranslation('Could not check'),
-                getTranslation("Couldn't read the Print The Shot settings. Reopen this page to try again."));
-            return;
-        }
-        // The page can be left while those awaits are in flight, which drops the
-        // form -- same hazard loadVisualizerSettings guards against.
-        if (!document.getElementById('printtheshot-controls')) return;
-
-        gateEl.innerHTML = '';
-
-        const schema = plugin.settings && typeof plugin.settings === 'object' ? plugin.settings : {};
-        const keys = Object.keys(schema);
-        controlsEl.innerHTML = keys.map(key => {
-            const html = renderPluginSettingControl(key, schema[key], 'printtheshot');
-            if (!html) logger.warn(`Print The Shot: no control for setting ${key} of type ${schema[key]?.type}`);
-            return html;
-        }).join('');
-
-        for (const key of keys) {
-            const el = document.getElementById(`printtheshot-setting-${key}`);
-            if (!el) continue;
-            const value = settings[key] !== undefined ? settings[key] : schema[key]?.default;
-            if (el.type === 'checkbox') el.checked = value === true;
-            else if (value !== undefined && value !== null) el.value = value;
-        }
-        controlsEl.style.opacity = '1';
-
-        // Plain same-frame link, as on the Plugins page: the tablet's host opens an
-        // OS browser on this navigation, and a _blank would die in the webview.
-        const uiUrl = pluginUiUrl(plugin);
-        const linkEl = document.getElementById('printtheshot-ui-link');
-        if (linkEl && uiUrl) {
-            linkEl.innerHTML = `
-                <div class="flex flex-col gap-[10px] p-[24px] rounded-[14px] bg-[var(--box-color)] border border-[var(--profile-button-outline-color)]">
-                    <p class="text-[22px] font-bold text-[var(--text-primary)]" data-i18n-key="Printing">Printing</p>
-                    <p class="text-[20px] text-[var(--low-contrast-white)] leading-[1.4]" data-i18n-key="Browse shots, print one by hand and watch the upload log on the plugin's own page.">Browse shots, print one by hand and watch the upload log on the plugin's own page.</p>
-                    <a href="${escapeHtml(uiUrl)}" class="text-[20px] text-[#385a92] underline font-mono break-words">${escapeHtml(uiUrl)}</a>
-                </div>`;
-        }
-        translatePage();
-
-        controlsEl.querySelectorAll('[data-setting-key]').forEach(el => {
-            el.addEventListener('change', async function () {
-                const key = this.dataset.settingKey;
-                const type = this.dataset.settingType;
-                const previous = settings[key] !== undefined ? settings[key] : schema[key]?.default;
-
-                let value;
-                if (type === 'boolean') {
-                    value = this.checked;
-                } else if (type === 'string') {
-                    value = this.value.trim();
-                } else {
-                    value = parseFloat(this.value);
-                    // Rejected rather than written: a NaN or a negative would be
-                    // persisted and read back as a broken threshold on every later
-                    // load. The schema carries no bounds.
-                    if (!isFinite(value) || value < 0) {
-                        this.value = previous ?? '';
-                        return;
-                    }
-                }
-
-                this.disabled = true;
-                try {
-                    // A setting means nothing while the plugin is unloaded, so
-                    // switching one ON loads it first.
-                    if (value === true && !plugin.loaded) {
-                        await enablePlugin(PRINT_THE_SHOT_PLUGIN_ID);
-                        plugin.loaded = true;
-                    }
-                    await setPluginSettings(PRINT_THE_SHOT_PLUGIN_ID, { [key]: value });
-                    settings[key] = value;
-                    if (type === 'boolean') {
-                        ui.showToast(
-                            `${getTranslation(pluginSettingLabel(key))}: ${getTranslation(value ? 'On' : 'Off')}`,
-                            2000, 'success');
-                    }
-                } catch (e) {
-                    logger.error(`Failed to change Print The Shot setting ${key}`, e);
-                    ui.showToast(`${getTranslation('Failed')}: ${e.message || e}`, 4000, 'error');
-                    if (type === 'boolean') this.checked = previous === true;
-                    else this.value = previous ?? '';
-                }
-                this.disabled = false;
-            });
-        });
-    })();
 }
 
-// Render DYE2 (Describe Your Espresso 2) settings — its own Extensions sub-page.
-export function renderDye2Settings() {
-    setTimeout(setupDye2SettingsListeners, 0);
+function setupDye2Extra(cardEl, refreshVersion) {
+    // Opening this card is the update check -- no button for it. The version
+    // block already painted from GET /plugins; checkDye2UpdatesIfDue installs
+    // anything that needs no new permission on its own (rate-limit aware) and
+    // what survives becomes a pendingUpdate the block repaints with its
+    // Approve button.
+    checkDye2UpdatesIfDue()
+        .then(() => refreshVersion())
+        .catch((e) => logger.error('DYE2 update check failed', e));
 
-    return `
-        <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
-            <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
-                <p class="leading-[1.2]" data-i18n-key="Describe Your Espresso">Describe Your Espresso</p>
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <!-- DYE2 master switch — gates the whole DYE2 dashboard header UI. Default OFF. -->
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[#385a92] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="DYE2">DYE2</p>
-                            <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Show DYE auto-favourites and recipes on the dashboard header.">
-                                Show DYE auto-favourites and recipes on the dashboard header.
-                            </p>
-                        </div>
-                        <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                            <input type="checkbox" id="dye2-enabled" class="sr-only peer">
-                            <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[#385a92] peer-checked:border-[#385a92]"></div>
-                            <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-                        </label>
-                    </div>
-
-                    <!-- Installed version, where Decaid tracks it from, and any update held back for asking new permissions. -->
-                    <div class="content-stretch flex flex-col gap-[10px] items-start relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[#385a92] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Plugin Version">Plugin Version</p>
-                        </div>
-                        <div id="dye2-version-info" class="w-full text-[24px] text-[var(--text-secondary)]">
-                            ${getTranslation('Checking')}…
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
+    const toggle = cardEl.querySelector('#dye2-enabled');
+    if (!toggle) return;
+    const KEY = 'streamline.dye2Enabled';
+    let enabled = false;
+    try { enabled = localStorage.getItem(KEY) === 'true'; } catch (e) { /* private mode */ }
+    toggle.checked = enabled;
+    toggle.addEventListener('change', async function () {
+        const on = this.checked;
+        // Turning on requires the plugin installed, loaded, and >= its minimum
+        // version -- ensureDye2PluginReady prompts with a download link and
+        // returns false if not, in which case we revert the toggle.
+        if (on) {
+            const ready = await ensureDye2PluginReady();
+            if (!ready) { this.checked = false; return; }
+        }
+        try { localStorage.setItem(KEY, on ? 'true' : 'false'); } catch (e) { /* private mode */ }
+        if (typeof window.applyDye2Enabled === 'function') window.applyDye2Enabled(on);
+        try { ui.showToast(`DYE2 ${on ? 'enabled' : 'disabled'}`, 1500, 'success'); } catch (e) { /* ui not ready */ }
+        // Switching on is the moment the user cares whether the plugin is
+        // current. Deliberately not awaited before the toggle is saved: an
+        // update check is a network round-trip and DYE2 is already usable
+        // without it.
+        if (on) {
+            offerDye2Update()
+                .then((changed) => {
+                    if (changed) ui.showToast(getTranslation('DYE2 plugin updated'), 2500, 'success');
+                    return refreshVersion();
+                })
+                .catch((e) => logger.error('DYE2 update offer failed', e));
+        }
+    });
 }
 
-// Paint the DYE2 plugin card. Everything shown comes from the bridge (GET
-// /plugins): Decaid tracks where the plugin came from and installs new releases
-// itself, so there is no "latest version" to fetch and nothing to compare. The
-// only state that needs a human is a pendingUpdate — an update Decaid downloaded
-// and refused to install because it asks for permissions the installed version
-// does not hold. Unknowns stay "—" rather than being guessed at.
-function renderDye2VersionInfo(info) {
-    const el = document.getElementById('dye2-version-info');
-    if (!el) return;
-    const pill = (text, cls) =>
-        `<span class="text-[20px] font-bold px-[16px] py-[6px] rounded-full ${cls}">${text}</span>`;
+// Paint the version/source/install-state block shared by every plugin card.
+// Everything shown comes from the bridge (GET /plugins by default, or a
+// plugin override's own getVersionInfo): Decaid tracks where a plugin came
+// from and installs new releases itself, so there is nothing here to compare
+// against a "latest" fetched separately. The only state that needs a human is
+// a pendingUpdate -- an update Decaid downloaded and refused to install
+// because it asks for permissions the installed version does not hold.
+// Unknowns stay "—" rather than being guessed at. Returns a refresh() so the
+// caller (and an override's own listeners, e.g. DYE2's master switch) can
+// repaint after an install/update/approve.
+function renderPluginVersionInfo(el, pluginId, info, override) {
+    if (!el) return null;
     const button = (id, label) =>
-        `<button id="${id}" class="bg-[#385a92] h-[56px] px-[28px] rounded-[64px] text-white text-[22px] font-bold">${label}</button>`;
+        `<button id="${id}" class="bg-[#385a92] h-[56px] px-[32px] rounded-[64px] text-white text-[22px] font-bold self-start">${label}</button>`;
 
+    // The pill states what Decaid currently thinks of this plugin, so it sits
+    // on the version line it describes rather than on a row of its own.
+    const pill = (text, cls) =>
+        `<span class="text-[20px] font-bold px-[16px] py-[6px] rounded-full whitespace-nowrap ${cls}">${text}</span>`;
     let status;
     if (!info.reachable) {
         status = pill(getTranslation('Could not check'), 'bg-[var(--profile-button-outline-color)]/30 text-[var(--text-primary)] opacity-70');
@@ -6429,13 +6472,13 @@ function renderDye2VersionInfo(info) {
     }
 
     const row = (label, value) => `
-        <div class="flex items-center justify-between w-full">
+        <div class="flex items-center justify-between gap-[24px] w-full">
             <span data-i18n-key="${label}">${getTranslation(label)}</span>
-            <span class="font-bold text-[var(--text-primary)]">${value}</span>
+            <span class="font-bold text-[var(--text-primary)] text-right break-all">${value}</span>
         </div>`;
 
-    // A tracked source is a repo plus the exact release tag or commit installed;
-    // a ZIP or folder install is a snapshot Decaid cannot update.
+    // A tracked source is a repo plus the exact release tag or commit
+    // installed; a ZIP or folder install is a snapshot Decaid cannot update.
     const src = info.source;
     let sourceText = '—';
     if (src?.kind === 'github_release') sourceText = `${escapeHtml(src.repo || '')} ${escapeHtml(src.releaseTag || '')}`.trim();
@@ -6443,114 +6486,237 @@ function renderDye2VersionInfo(info) {
     else if (src?.kind === 'local_zip') sourceText = getTranslation('Local ZIP');
     else if (src?.kind === 'local_folder') sourceText = getTranslation('Local folder');
 
-    // The added permissions are the whole point of the prompt, so list them
-    // verbatim — approving is consent to those, not to "an update".
+    const idPrefix = `plugin-${pluginId}`;
+
+    // Approving is consent to these specific permissions, not to "an update",
+    // so the button lives inside the panel that names them -- not in a shared
+    // action row further down where the two could be read apart.
     const pendingBlock = info.pending ? `
-        <div class="flex flex-col gap-[10px] w-full pt-[4px]">
-            <span class="text-[20px] text-[var(--text-primary)]">
+        <div class="flex flex-col gap-[12px] w-full rounded-[16px] bg-amber-500/10 border border-amber-500/30 p-[24px]">
+            <span class="text-[22px] text-[var(--text-primary)]">
                 v${escapeHtml(info.pending.version || '?')} ${getTranslation('is available but asks for new permissions')}:
             </span>
-            <span class="text-[20px] font-bold text-[var(--text-primary)] break-words">
+            <span class="text-[22px] font-bold text-[var(--text-primary)] break-words">
                 ${(info.pending.addedPermissions || []).map(escapeHtml).join(', ') || '—'}
             </span>
+            ${button(`${idPrefix}-approve-update`, getTranslation('Approve update'))}
+        </div>` : '';
+
+    const errorBlock = src?.lastError ? `
+        <div class="flex flex-col gap-[8px] w-full rounded-[16px] bg-amber-500/10 border border-amber-500/30 p-[24px]">
+            <span class="text-[22px] font-bold text-[var(--text-primary)]" data-i18n-key="Last error">${getTranslation('Last error')}</span>
+            <span class="text-[22px] text-[var(--text-primary)] break-words">${escapeHtml(src.lastError)}</span>
         </div>` : '';
 
     el.innerHTML = `
-        <div class="flex flex-col gap-[10px] w-full">
-            ${row('Installed version', info.installed ? `v${escapeHtml(info.installed)}` : '—')}
-            ${row('Source', sourceText)}
-            ${src?.lastError ? row('Last error', `<span class="text-amber-600">${escapeHtml(src.lastError)}</span>`) : ''}
-            ${pendingBlock}
-            <div class="flex items-center gap-[14px] flex-wrap pt-[4px]">
-                ${status}
-                ${info.reachable && !info.installed ? button('dye2-install-plugin', getTranslation('Install')) : ''}
-                ${info.pending ? button('dye2-approve-update', getTranslation('Approve update')) : ''}
+        <div class="flex flex-col gap-[12px] w-full">
+            <div class="flex items-center justify-between gap-[24px] w-full">
+                <span data-i18n-key="Version">${getTranslation('Version')}</span>
+                <span class="flex items-center gap-[14px] flex-wrap justify-end">
+                    <span class="font-bold text-[var(--text-primary)]">${info.installed ? `v${escapeHtml(info.installed)}` : '—'}</span>
+                    ${status}
+                </span>
             </div>
+            ${row('Source', sourceText)}
+            ${errorBlock}
+            ${pendingBlock}
+            ${info.reachable && !info.installed && override?.onInstall
+                ? `<div class="pt-[4px]">${button(`${idPrefix}-install`, getTranslation('Install'))}</div>` : ''}
         </div>`;
 
-    const refresh = () => getDye2VersionInfo().then(renderDye2VersionInfo).catch(() => {});
+    const refresh = async () => renderPluginVersionInfo(el, pluginId, await fetchPluginVersionInfo(pluginId, override), override);
     const busy = (btn, label) => { btn.disabled = true; btn.textContent = label; };
 
-    document.getElementById('dye2-install-plugin')?.addEventListener('click', async function () {
+    el.querySelector(`[id="${idPrefix}-install"]`)?.addEventListener('click', async function () {
         busy(this, `${getTranslation('Installing')}…`);
         try {
-            await installDye2Plugin();
-            ui.showToast(getTranslation('DYE2 plugin installed'), 2000, 'success');
+            await override.onInstall();
+            ui.showToast(getTranslation('Plugin installed'), 2000, 'success');
         } catch (e) {
-            logger.error('DYE2 install failed', e);
+            logger.error(`Plugin install failed (${pluginId})`, e);
             ui.showToast(`${getTranslation('Install failed')}: ${e.message || e}`, 4000, 'error');
         }
         refresh();
     });
 
-    document.getElementById('dye2-approve-update')?.addEventListener('click', async function () {
+    el.querySelector(`[id="${idPrefix}-approve-update"]`)?.addEventListener('click', async function () {
         busy(this, `${getTranslation('Updating')}…`);
         try {
-            const result = await approvePluginUpdate('dye2.reaplugin');
-            ui.showToast(`${getTranslation('DYE2 updated to')} v${result?.version || '?'}`, 2500, 'success');
+            const result = await approvePluginUpdate(pluginId);
+            ui.showToast(`${getTranslation('Plugin updated to')} v${result?.version || '?'}`, 2500, 'success');
         } catch (e) {
-            // 409: the release or branch moved after this permission delta was shown.
-            // Decaid has already recorded the new candidate, so re-reading shows the
-            // fresh delta to approve — retrying this call would only 409 again.
+            // 409: the release or branch moved after this permission delta was
+            // shown. Decaid has already recorded the new candidate, so
+            // re-reading shows the fresh delta to approve -- retrying this
+            // call would only 409 again.
             if (e.status === 409) {
                 ui.showToast(getTranslation('The update changed since it was shown — review it again'), 5000, 'error');
             } else {
-                logger.error('DYE2 update approval failed', e);
+                logger.error(`Plugin update approval failed (${pluginId})`, e);
                 ui.showToast(`${getTranslation('Update failed')}: ${e.message || e}`, 4000, 'error');
             }
         }
         refresh();
     });
+
+    return refresh;
 }
 
-// DYE2 master on/off. Persists streamline.dye2Enabled (default OFF). Flipping it
-// live-updates the dashboard header via the window.applyDye2Enabled bridge that
-// dyeStrip.js installs on the main page; if the header isn't mounted (e.g. deep in
-// settings on some flows) the flag still takes effect on the next dashboard load.
-function setupDye2SettingsListeners() {
-    // Opening this page is the update check — no button for it. Paint what the
-    // bridge already knows first so the card is never blank, then let the check
-    // (rate-limit aware, see checkDye2UpdatesIfDue) repaint it with the outcome.
-    // Decaid installs anything that needs no new permission on its own; what
-    // survives is a pendingUpdate, which the card renders with its Approve button.
-    getDye2VersionInfo()
-        .then(renderDye2VersionInfo)
-        .catch(() => renderDye2VersionInfo({ reachable: false, installed: null, loaded: false, source: null, pending: null }));
-    checkDye2UpdatesIfDue()
-        .then(renderDye2VersionInfo)
-        .catch((e) => logger.error('DYE2 update check failed', e));
+// Default version-info source: the plugins array the card list already
+// fetched, mapped through pluginViewModel into the {reachable, installed,
+// loaded, source, pending} shape renderPluginVersionInfo expects. A
+// plugin-specific override (DYE2) can supply its own async getVersionInfo
+// instead.
+async function fetchPluginVersionInfo(pluginId, override) {
+    if (override?.getVersionInfo) {
+        try { return await override.getVersionInfo(); }
+        catch (e) { return { reachable: false, installed: null, loaded: false, source: null, pending: null }; }
+    }
+    const plugins = await getPlugins();
+    const vm = pluginViewModel(plugins, pluginId);
+    return { reachable: vm.reachable, installed: vm.version, loaded: vm.loaded, source: vm.source, pending: vm.pending };
+}
 
-    const toggle = document.getElementById('dye2-enabled');
-    if (!toggle) return;
-    const KEY = 'streamline.dye2Enabled';
-    let enabled = false;
-    try { enabled = localStorage.getItem(KEY) === 'true'; } catch (e) { /* private mode */ }
-    toggle.checked = enabled;
-    toggle.addEventListener('change', async function () {
-        const on = this.checked;
-        // Turning on requires the plugin installed, loaded, and >= its minimum
-        // version — ensureDye2PluginReady prompts with a download link and
-        // returns false if not, in which case we revert the toggle.
-        if (on) {
-            const ready = await ensureDye2PluginReady();
-            if (!ready) { this.checked = false; return; }
-        }
-        try { localStorage.setItem(KEY, on ? 'true' : 'false'); } catch (e) { /* private mode */ }
-        if (typeof window.applyDye2Enabled === 'function') window.applyDye2Enabled(on);
-        try { ui.showToast(`DYE2 ${on ? 'enabled' : 'disabled'}`, 1500, 'success'); } catch (e) { /* ui not ready */ }
-        // Switching on is the moment the user cares whether the plugin is current.
-        // Deliberately not awaited before the toggle is saved: an update check is a
-        // network round-trip and DYE2 is already usable without it.
-        if (on) {
-            offerDye2Update()
-                .then((changed) => {
-                    if (changed) ui.showToast(getTranslation('DYE2 plugin updated'), 2500, 'success');
-                    return getDye2VersionInfo().then(renderDye2VersionInfo);
-                })
-                .catch((e) => logger.error('DYE2 update offer failed', e));
+// One card per plugin, built entirely from GET /plugins (plus, for the rare
+// plugin that needs one, PLUGIN_CARD_OVERRIDES). `plugins` is the array the
+// caller already fetched once for the whole list -- see window.loadPluginList
+// -- so N cards cost one network round trip, not N. Manifest text (name,
+// description) is untrusted and always goes through escapeHtml.
+// A plugin's settings, in three tiers: who it is (name, description), what
+// state it is in (enabled, version, source, the actions that change those), and
+// what it lets you configure (its manifest settings). Tiers are separated by
+// hairline rules rather than by headings -- a "Plugin Version" heading in the
+// same blue and weight as the plugin's own name made the two read as equals,
+// which is how the old page lost its hierarchy.
+//
+// `asPage` is the per-plugin page, where the settings shell has already printed
+// the plugin's name as the page title; the list fallback renders the name
+// inline instead so its cards stay self-identifying.
+function renderPluginCard(pluginId, plugins, { asPage = false } = {}) {
+    const override = pluginCardOverride(pluginId);
+    const vm = pluginViewModel(plugins, pluginId);
+    const titleKey = vm.name || override.fallbackTitle || pluginId;
+    const title = getTranslation(titleKey);
+    const description = vm.plugin ? pluginDescription(vm.plugin) : (override.fallbackDescription ? getTranslation(override.fallbackDescription) : '');
+    const uiUrl = vm.plugin ? pluginUiUrl(vm.plugin) : null;
+
+    const rule = `<div class="h-px w-full bg-[var(--profile-button-outline-color)] opacity-40"></div>`;
+
+    const heading = asPage ? '' : `
+        <div class="flex items-center gap-[12px] flex-wrap font-['Inter:Bold',sans-serif] font-bold text-[#385a92] text-[30px] leading-[1.2]">
+            <span data-i18n-key="${escapeHtml(titleKey)}">${escapeHtml(title)}</span>
+        </div>`;
+
+    // Reads at arm's length on a tablet, so it is capped near 70 characters
+    // rather than run the full width of the settings pane.
+    const descriptionHtml = description ? `
+        <p class="font-['Inter:Regular',sans-serif] leading-[1.45] text-[var(--text-primary)] opacity-80 text-[24px] max-w-[62ch]"
+           data-i18n-key="${escapeHtml(description)}">${escapeHtml(getTranslation(description))}</p>` : '';
+
+    // Sits on the description's own line, right-aligned in the same column as
+    // the enable toggle and every other control -- the actions keep one edge,
+    // and the button does not cost a row of its own.
+    const openHtml = uiUrl ? `
+        <a href="${escapeHtml(uiUrl)}" class="bg-[#385a92] h-[56px] px-[32px] rounded-[64px] text-white text-[22px] font-bold inline-flex items-center justify-center flex-shrink-0"
+           data-i18n-key="Open">Open</a>` : '';
+
+    // The generic on/off row. DYE2 replaces it with its own master switch
+    // (PLUGIN_CARD_OVERRIDES.replacesToggle), which gates the dashboard header
+    // rather than the plugin's loaded state.
+    const toggleRow = override.replacesToggle ? '' : `
+        <div class="flex items-center justify-between gap-[24px] w-full">
+            <span class="font-['Inter:SemiBold',sans-serif] font-semibold text-[var(--text-primary)] text-[26px]" data-i18n-key="Enabled">${getTranslation('Enabled')}</span>
+            <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
+                <input type="checkbox" class="sr-only peer plugin-enable-toggle" ${vm.loaded ? 'checked' : ''}>
+                <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[#385a92] peer-checked:border-[#385a92]"></div>
+                <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
+            </label>
+        </div>`;
+
+    const schemaControls = vm.settingsKeys.map(key => {
+        const html = renderPluginSettingControl(key, vm.settingsSchema[key], `plugin-${pluginId}`);
+        if (!html) logger.warn(`${pluginId}: no control for setting ${key} of type ${vm.settingsSchema[key]?.type}`);
+        return html;
+    }).join('');
+
+    return `
+        <div class="flex flex-col gap-[30px] w-full py-[10px]" data-plugin-card="${escapeHtml(pluginId)}">
+            ${heading || descriptionHtml || openHtml ? `
+            <div class="flex flex-col gap-[16px] w-full">
+                ${heading}
+                <div class="flex items-start justify-between gap-[24px] w-full">
+                    ${descriptionHtml || '<span></span>'}
+                    ${openHtml}
+                </div>
+            </div>` : ''}
+
+            ${rule}
+
+            <div class="flex flex-col gap-[24px] w-full">
+                ${toggleRow}
+                ${override.renderExtra ? override.renderExtra() : ''}
+                <div data-role="plugin-version-info" class="w-full text-[22px] text-[var(--text-secondary)]">${getTranslation('Checking')}…</div>
+            </div>
+
+            ${schemaControls ? `
+            ${rule}
+            <div class="flex flex-col gap-[30px] w-full">${schemaControls}</div>` : ''}
+        </div>`;
+}
+
+// Wire the listeners a freshly-rendered card needs: the version-info fetch
+// and its install/approve-update buttons, the generic enable toggle (unless
+// an override replaces it), and the manifest's own settings schema, using the
+// same read-once/cache-locally pattern Shot Uploader's controls use.
+function setupPluginCard(cardEl, pluginId, plugins) {
+    const override = pluginCardOverride(pluginId);
+    const vm = pluginViewModel(plugins, pluginId);
+
+    const versionEl = cardEl.querySelector('[data-role="plugin-version-info"]');
+    let refreshVersion = () => {};
+    fetchPluginVersionInfo(pluginId, override).then(info => {
+        if (!cardEl.isConnected) return;
+        const refresh = renderPluginVersionInfo(versionEl, pluginId, info, override);
+        if (refresh) refreshVersion = refresh;
+    }).catch(() => {
+        if (cardEl.isConnected) {
+            renderPluginVersionInfo(versionEl, pluginId, { reachable: false, installed: null, loaded: false, source: null, pending: null }, override);
         }
     });
+
+    if (override.setupExtra) override.setupExtra(cardEl, () => refreshVersion());
+
+    cardEl.querySelector('.plugin-enable-toggle')?.addEventListener('change', function () {
+        window.togglePlugin(pluginId, this.checked, this);
+    });
+
+    const schema = vm.settingsSchema;
+    const keys = vm.settingsKeys;
+    if (keys.length === 0) return;
+
+    (async () => {
+        let settings;
+        try {
+            settings = await getPluginSettings(pluginId, { strict: true }) || {};
+        } catch (e) {
+            logger.warn(`Plugin settings unavailable for ${pluginId}:`, e);
+            return;
+        }
+        if (!cardEl.isConnected) return;
+
+        bindPluginSettingControls(cardEl, {
+            pluginId,
+            idPrefix: `plugin-${pluginId}`,
+            schema, keys, settings,
+            ensureLoaded: async () => {
+                if (vm.loaded) return;
+                await enablePlugin(pluginId);
+                vm.loaded = true;
+            },
+        });
+    })();
 }
+
 
 // Whether the visualizer plugin currently has a stored (secure) password.
 // PR #588: secure values are returned as { isSet } state, never plaintext.
@@ -7323,25 +7489,60 @@ export function renderGeneralSettings() {
     `;
 }
 
+// Which main category the subcategory panel currently shows. Only the panel
+// itself knows, and an async repaint (ensurePluginNav) that lands after the user
+// has moved on must not overwrite another category's rows.
+let lastRenderedMainCategory = null;
+
+// The rows a main category shows: its static subcategories, plus -- for
+// Extensions -- one row per plugin the connected Decaid reports. Dynamic rows
+// are appended here rather than written into settings-tree.js, which stays the
+// single source of truth for the structure that does not depend on what is
+// installed.
+export function subcategoriesFor(mainCategoryKey) {
+    const category = settingsTree[mainCategoryKey];
+    const statics = (category?.subcategories || []).filter(subcat => !subcat.bengleOnly || isBengleMachine());
+    if (mainCategoryKey !== 'extensions') return statics;
+
+    // Visualizer and Shot Uploader already have hand-built pages of their own
+    // (credentials, account linking) that the generic card cannot replace, so
+    // they must not also appear as a second, poorer row for the same plugin.
+    const dedicated = new Set(Object.values(PLUGIN_BACKED_SUBCATEGORIES));
+    const pluginRows = extensionPluginNavEntries().filter(row => !dedicated.has(row.pluginId));
+    // The aggregate Plugins page is the fallback for "no plugins, or the bridge
+    // could not be reached" -- once there are per-plugin rows it is one more row
+    // that says nothing the others do not.
+    const keepAggregate = pluginRows.length === 0;
+    return [
+        ...statics.filter(subcat => keepAggregate || subcat.settingsCategory !== 'plugins'),
+        ...pluginRows,
+    ];
+}
+
 // Render subcategories for a selected main category
 export function renderSubcategories(mainCategoryKey) {
-    const category = settingsTree[mainCategoryKey];
-    if (!category || !category.subcategories || category.subcategories.length === 0) {
+    lastRenderedMainCategory = mainCategoryKey;
+    // Refreshed on every visit to Extensions: a plugin installed from the Decaid
+    // dashboard since the last visit appears without reloading the skin.
+    if (mainCategoryKey === 'extensions') ensurePluginNav();
+
+    const subcategories = subcategoriesFor(mainCategoryKey);
+    if (subcategories.length === 0) {
         return `<div class="p-4 text-center text-gray-500" data-i18n-key="No sub-categories.">No sub-categories.</div>`;
     }
 
     let subcategoryItems = '';
-    category.subcategories
-        .filter((subcat) => !subcat.bengleOnly || isBengleMachine())
-        .forEach((subcat) => {
+    subcategories.forEach((subcat) => {
         const prefixMatch = subcat.name.match(/^(\d+\.\s*)/);
         const prefix = prefixMatch ? prefixMatch[1] : '';
         const label = prefix ? subcat.name.slice(prefix.length) : subcat.name;
+        // A plugin row's label is its manifest name -- third-party text, so it is
+        // escaped here like every other manifest string that reaches innerHTML.
         subcategoryItems += `
             <li>
                 <button class="settings-subnav-btn w-full text-left px-4 py-3 rounded-lg text-[24px] text-[#959595] hover:text-white hover:bg-[#2c4a7a] flex items-center"
-                        data-category="${subcat.settingsCategory}">
-                    ${prefix}<span data-i18n-key="${subcat.i18nKey || label}">${label}</span>
+                        data-category="${escapeHtml(subcat.settingsCategory)}">
+                    ${prefix}<span data-i18n-key="${escapeHtml(subcat.i18nKey || label)}">${escapeHtml(label)}</span>
                 </button>
             </li>
         `;
@@ -7817,59 +8018,79 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     // declaration, so anything else 404s. Built off API_BASE_URL, not a literal
     // localhost, so it stays right when the bridge hostname is configured.
 
-    // Plugin manager
+    // Plugin manager — the single dynamic Extensions node (settings-tree.js
+    // 'plugins'). Every installed plugin gets a full generic settings card
+    // (renderPluginCard/setupPluginCard) built from this one getPlugins() call,
+    // so a future plugin needs zero skin code to get a page: it just has to be
+    // installed and reported by the bridge. PLUGIN_CARD_OVERRIDES adds a card
+    // for a self-installable plugin (currently only DYE2) even when it is not
+    // yet in the list — see that const's own comment for why the manifest alone
+    // cannot support that generically.
+    // One plugin's page. Same card, same setup path as the list used to use --
+    // only the container differs, so a plugin's controls behave identically
+    // whether it is reached from its own nav row or (with none installed) from
+    // the aggregate page.
+    window.loadPluginPage = async function(pluginId) {
+        const container = document.getElementById('plugin-page-container');
+        if (!container || container.dataset.pluginPage !== pluginId) return;
+        try {
+            const { getPlugins } = await import('../modules/api.js');
+            const plugins = await getPlugins();
+            // Navigated away while the bridge was answering.
+            if (container.dataset.pluginPage !== pluginId || !container.isConnected) return;
+            if (!plugins) {
+                container.innerHTML = `<p class="text-[24px] text-[var(--text-primary)] opacity-60" data-i18n-key="Could not check">${getTranslation('Could not check')}</p>`;
+                return;
+            }
+            pluginNavCache = plugins;
+            const name = plugins.find(p => p?.id === pluginId)?.name
+                || pluginCardOverride(pluginId).fallbackTitle || pluginId;
+            container.innerHTML = renderPluginPageTitle(name) + renderPluginCard(pluginId, plugins, { asPage: true });
+            translatePage();
+            container.querySelectorAll('[data-plugin-card]').forEach(cardEl => {
+                setupPluginCard(cardEl, cardEl.dataset.pluginCard, plugins);
+            });
+        } catch (err) {
+            logger.error(`Failed to load plugin ${pluginId}:`, err);
+            container.innerHTML = `<p class="text-[22px] text-red-500">Failed to load plugin: ${escapeHtml(err.message)}</p>`;
+        }
+    };
+
     window.loadPluginList = async function() {
         const container = document.getElementById('plugin-list-container');
         if (!container) return;
         try {
             const { getPlugins } = await import('../modules/api.js');
             const plugins = await getPlugins();
-            if (!plugins || plugins.length === 0) {
+            if (!plugins) {
+                container.innerHTML = `<p class="text-[24px] text-[var(--text-primary)] opacity-60" data-i18n-key="Could not check">${getTranslation('Could not check')}</p>`;
+                return;
+            }
+            const installedIds = plugins.map(p => p?.id).filter(Boolean);
+            const selfInstallableIds = Object.keys(PLUGIN_CARD_OVERRIDES)
+                .filter(id => PLUGIN_CARD_OVERRIDES[id].onInstall && !installedIds.includes(id));
+            const ids = [...installedIds, ...selfInstallableIds];
+
+            if (ids.length === 0) {
                 container.innerHTML = `<p class="text-[24px] text-[var(--text-primary)] opacity-60" data-i18n-key="No plugins installed.">No plugins installed.</p>`;
                 return;
             }
-            // Manifest text is third-party content -- plugins install from arbitrary
-            // GitHub repos -- so every field is escaped before it reaches innerHTML.
-            container.innerHTML = plugins.map((p, i) => {
-                const uiUrl = pluginUiUrl(p);
-                const description = pluginDescription(p);
-                return `
-                ${i > 0 ? '<div class="h-0 relative w-full"><hr class="border-t border-[#c9c9c9] w-full" /></div>' : ''}
-                <div class="flex items-center justify-between w-full py-[30px] gap-[24px]">
-                    <div class="flex flex-col gap-[8px] flex-1 min-w-0">
-                        <div class="flex items-center gap-[12px] flex-wrap">
-                            <span class="font-bold text-[#385a92] text-[28px] leading-tight">${escapeHtml(p.name || p.id)}</span>
-                            <span class="text-[20px] text-[var(--text-primary)] opacity-50">v${escapeHtml(p.version || '?')}</span>
-                            ${uiUrl ? `<a href="${escapeHtml(uiUrl)}" class="bg-[#385a92] h-[54px] px-[40px] rounded-[54px] text-white text-[22px] font-bold flex items-center justify-center" data-i18n-key="Open">Open</a>` : ''}
-                        </div>
-                        ${description ? `<p class="text-[22px] text-[var(--text-primary)] leading-[1.4] opacity-75">${escapeHtml(description)}</p>` : ''}
-                    </div>
-                    <div class="flex flex-col items-center gap-[6px] flex-shrink-0">
-                        <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                            <input type="checkbox"
-                                   class="sr-only peer"
-                                   ${p.loaded ? 'checked' : ''}
-                                   data-plugin-id="${escapeHtml(p.id)}">
-                            <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[#385a92] peer-checked:border-[#385a92]"></div>
-                            <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-                        </label>
-                        <span class="text-[18px] text-[var(--text-primary)] opacity-60">${p.loaded ? 'Enabled' : 'Disabled'}</span>
-                    </div>
-                </div>
-            `;
-            }).join('');
 
-            // Listener rather than an inline onchange: the id is manifest text, and
-            // Decaid's id rule allows an apostrophe, which would end the JS string
-            // in an inline handler. Nothing about an id can escape a data attribute.
-            container.querySelectorAll('input[data-plugin-id]').forEach(input => {
-                input.addEventListener('change', function () {
-                    window.togglePlugin(this.dataset.pluginId, this.checked, this);
-                });
+            // Manifest text is third-party content -- plugins install from arbitrary
+            // GitHub repos -- so every field renderPluginCard shows is escaped
+            // before it reaches innerHTML.
+            container.innerHTML = ids.map((id, i) => `
+                ${i > 0 ? '<div class="h-0 relative w-full"><hr class="border-t border-[#c9c9c9] w-full" /></div>' : ''}
+                ${renderPluginCard(id, plugins)}
+            `).join('');
+            translatePage();
+
+            container.querySelectorAll('[data-plugin-card]').forEach(cardEl => {
+                setupPluginCard(cardEl, cardEl.dataset.pluginCard, plugins);
             });
         } catch (err) {
             logger.error('Failed to load plugins:', err);
-            container.innerHTML = `<p class="text-[22px] text-red-500">Failed to load plugins: ${err.message}</p>`;
+            container.innerHTML = `<p class="text-[22px] text-red-500">Failed to load plugins: ${escapeHtml(err.message)}</p>`;
         }
     };
 
@@ -9188,7 +9409,6 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
 const PLUGIN_BACKED_SUBCATEGORIES = {
     extention1: 'visualizer.reaplugin',
     shotupload: 'shot-upload.reaplugin',
-    dye2: 'dye2.reaplugin',
 };
 
 let pluginKeywordsLoaded = false;
@@ -9294,8 +9514,7 @@ function setupSettingsSearch(activateResult) {
         Object.entries(settingsTree).forEach(([mainCategory, category]) => {
             const mainLabel = getTranslation(category.i18nKey || category.name);
             const mainMatches = mainLabel.toLowerCase().includes(searchTerm);
-            category.subcategories
-                .filter(subcategory => !subcategory.bengleOnly || isBengleMachine())
+            subcategoriesFor(mainCategory)
                 .filter(subcategory => {
                     const label = getTranslation(subcategory.i18nKey || subcategory.name.replace(/^\d+\.\s*/, ''));
                     return mainMatches
