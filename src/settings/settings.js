@@ -21,7 +21,7 @@ import { APP_VERSION, SKIN_ID } from '../version.js';
 import { openNotesModal } from '../modules/notes-modal.js';
 import { openDB, getSetting, setSetting, addEmails, getAllEmails, getLatestEmailTimestamp } from '../modules/idb.js';
 import { openModal, shouldUseNumpad, initializeNumpadModal } from '../modules/numpad-modal.js';
-import { ensureDye2PluginReady, getDye2VersionInfo, installDye2Plugin, offerDye2Update, checkDye2UpdatesIfDue } from '../modules/dyeStrip.js';
+import { ensureDye2PluginReady, getDye2VersionInfo, installDye2Plugin, offerDye2Update, checkDye2UpdatesIfDue, clearDyeWorkflowContext } from '../modules/dyeStrip.js';
 import { pluginKeywords, pluginListKeywords, subcategoryMatches, textFromHtml, tokenPattern, HIGHLIGHT_CLASS } from '../modules/settings-search.js';
 import { haYamlBlocks } from '../modules/home-assistant.js';
 import { loadIro } from '../modules/vendor-loader.js';
@@ -682,18 +682,17 @@ async function saveSettingsBackup() {
 
 // ── Restore the user's own machine settings ────────────────────────────────
 //
-// Two halves: remember what the user saved here (recordSavedMachineSettings),
-// and, when the machine later reports something else, ask whether to put the
-// user's values back (checkMachineSettingsDrift). Nothing is written to the
-// machine without the user answering -- see settings-restore.js for why a
-// difference cannot be read as a lost setting.
+// Two halves: remember what the user saved here (syncMachineSettingsRecord),
+// and, when the machine later reports something else, put the user's values
+// straight back (checkMachineSettingsDrift). What the user chose in this skin
+// always wins, so the difference is applied rather than queried -- see
+// settings-restore.js for what is tracked and what is left alone.
 
 const USER_MACHINE_SETTINGS_KEY = 'userMachineSettings';
 
-// Asked at most once per visit to the settings page, so declining is not
-// undone by the next background refresh landing.
+// Applied at most once per visit to the settings page, so a background refresh
+// landing later does not re-apply on top of an edit in progress.
 let machineDriftChecked = false;
-let machineDriftPending = null;
 
 async function readUserMachineSettings() {
     try {
@@ -738,8 +737,8 @@ async function syncMachineSettingsRecord(written = {}) {
 async function checkMachineSettingsDrift() {
     if (machineDriftChecked) return;
     if (!settingsCache.de1 && !settingsCache.de1Advanced) return;
-    // An edit in flight is the user's current intent; comparing against it
-    // would report their own unsaved change as machine drift.
+    // An edit in flight is the user's current intent; writing the record over
+    // it would undo their own unsaved change.
     if (hasPendingChanges()) return;
     machineDriftChecked = true;
 
@@ -751,101 +750,22 @@ async function checkMachineSettingsDrift() {
     });
     if (!differences.length) return;
 
-    machineDriftPending = { record, differences };
-    // Appended to the body rather than to a category's markup: the content area
-    // is rebuilt on every navigation, which would destroy an open dialog.
-    if (!document.getElementById('machine-drift-modal')) {
-        document.body.insertAdjacentHTML('beforeend', machineDriftModal());
-    }
-    const dlg = document.getElementById('machine-drift-modal');
-    if (dlg) {
-        dlg.querySelector('[data-role="machine-drift-list"]').innerHTML = differences
-            .map(d => `<li class="flex items-center justify-between gap-[24px] w-full">
-                    <span>${escapeHtml(getTranslation(machineSettingLabel(d.key)))}</span>
-                    <span class="font-bold text-[var(--text-primary)] whitespace-nowrap">
-                        ${escapeHtml(String(d.actual))} → ${escapeHtml(String(d.saved))}
-                    </span>
-                </li>`)
-            .join('');
-        translatePage();
-        if (!dlg.open) dlg.showModal();
-    }
-}
-
-// Put the user's values back. Only the keys that differ are written, and the
-// caches are refreshed from the machine afterwards so the page shows what the
-// machine actually took rather than what was asked for.
-async function machineDriftRestore() {
-    const pending = machineDriftPending;
-    document.getElementById('machine-drift-modal')?.close();
-    machineDriftPending = null;
-    if (!pending) return;
-    const patches = restorePatches(pending.differences);
+    // Only the keys that differ are written, and the caches are refreshed from
+    // the machine afterwards so the page shows what the machine actually took
+    // rather than what was asked for.
+    const patches = restorePatches(differences);
     try {
         const tasks = [];
         if (patches.de1) tasks.push(setDe1Settings(patches.de1));
         if (patches.de1Advanced) tasks.push(setDe1AdvancedSettings(patches.de1Advanced));
         await Promise.all(tasks);
         await syncMachineSettingsRecord();
-        ui.showToast(getTranslation('Settings restored'), 3000, 'success');
+        // Silent on success: putting the user's own values back is not news.
         if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
     } catch (e) {
         logger.error('Failed to restore machine settings', e);
         ui.showToast(`${getTranslation('Failed')}: ${e.message || e}`, 5000, 'error');
     }
-}
-
-// Keeping the machine's values makes them the user's values: without this the
-// same question is asked on every visit to the page.
-async function machineDriftKeep() {
-    const pending = machineDriftPending;
-    document.getElementById('machine-drift-modal')?.close();
-    machineDriftPending = null;
-    if (!pending) return;
-    // The outside change becomes the known state, so it is not queried again.
-    await writeUserMachineSettings(adoptFromMachine(pending.record, {
-        de1: settingsCache.de1,
-        de1Advanced: settingsCache.de1Advanced,
-    }));
-}
-
-// The keys are the API's own field names; these are what the settings pages
-// already call them on screen.
-const MACHINE_SETTING_LABELS = {
-    fan: 'Fan Threshold',
-    flushTemp: 'Flush Temperature',
-    flushFlow: 'Flush Flow',
-    flushTimeout: 'Flush Timeout',
-    hotWaterFlow: 'Hot Water Flow',
-    steamFlow: 'Steam Flow',
-    tankTemp: 'Water Tank Temperature',
-    steamPurgeMode: 'Steam Purge Mode',
-    usb: 'USB Charger Mode',
-};
-
-function machineSettingLabel(key) {
-    return MACHINE_SETTING_LABELS[key] || pluginSettingLabel(key);
-}
-
-function machineDriftModal() {
-    return `
-        <dialog id="machine-drift-modal" class="modal">
-            <div class="modal-box bg-[var(--box-color)] max-w-2xl">
-                <h3 class="font-bold text-[28px] text-[var(--text-primary)] mb-2" data-i18n-key="Machine settings differ">Machine settings differ</h3>
-                <p class="text-[24px] text-[var(--text-primary)] leading-[1.4] mb-[20px]" data-i18n-key="The machine reports different values than the ones you saved. Restore your saved settings?">The machine reports different values than the ones you saved. Restore your saved settings?</p>
-                <ul data-role="machine-drift-list" class="flex flex-col gap-[10px] w-full text-[22px] text-[var(--text-secondary)]"></ul>
-                <div class="modal-action">
-                    <button class="border-[var(--mimoja-blue)] text-[var(--mimoja-blue)] h-[62px] rounded-[67.5px] border px-[32px] text-[24px] font-bold transition-colors duration-200 hover:bg-[var(--mimoja-blue)] hover:text-white"
-                            onclick="window.machineDriftKeep()" data-i18n-key="Keep machine values">
-                        Keep machine values
-                    </button>
-                    <button class="bg-[#385a92] h-[62px] px-[32px] rounded-[67.5px] text-white text-[24px] font-bold"
-                            onclick="window.machineDriftRestore()" data-i18n-key="Restore">
-                        Restore
-                    </button>
-                </div>
-            </div>
-        </dialog>`;
 }
 
 // NOTE: the settingsBackup written by saveSettingsBackup() is consumed ONLY by
@@ -8323,31 +8243,10 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     // user's explicit intent -- unlike a reload, upgrade, removal, failed load,
     // or app shutdown, which all also unload plugins but must keep the selection.
     //
-    // Cleared: everything DYE2 alone writes as bean/equipment identity, including
-    // the basket, grinder RPM, and auto-favourite note it stores under extras.
-    // extras.note is the auto-favourite's "Note" field, copied forward under the
-    // same copyMask as beans and basket -- recipe payload, not the user's tasting
-    // notes, which live in the shot annotation's espressoNotes and are untouched.
-    //
-    // Left alone on purpose: targetDoseWeight/targetYield, core shot params with
-    // app defaults that other skins rely on and DYE2 does not exclusively own,
-    // and `profile`, which is the espresso profile the machine actually runs
-    // (non-nullable in Decaid's Workflow model, and not stale metadata).
-    async function clearDye2WorkflowContext() {
-        try {
-            await updateWorkflow({
-                context: {
-                    beanBatchId: null, coffeeName: null, coffeeRoaster: null,
-                    grinderId: null, grinderModel: null, grinderSetting: null,
-                    baristaName: null, drinkerName: null,
-                    extras: { basketId: null, basketName: null, rpm: null, note: null },
-                }
-            });
-        } catch (err) {
-            // Turning the plugin off matters more than the cleanup succeeding.
-            logger.warn('Failed to clear DYE2 workflow context:', err);
-        }
-    }
+    // The field list and the clear itself live in dyeStrip.js, which runs the same
+    // cleanup after every persisted shot and at boot when DYE2 is not running.
+    // grinderSetting goes too here and only here: turning the plugin off drops the
+    // whole grinder, not just its identity.
 
     window.togglePlugin = async function(pluginId, enable, toggleEl) {
         const toggle = toggleEl || null;
@@ -8364,7 +8263,7 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
                 // ponytail: covers the switch in this skin only -- disabling DYE2
                 // from Decaid's own settings page bypasses it. Move to
                 // PluginLoaderService.disablePlugin upstream if that path matters.
-                if (pluginId === DYE2_PLUGIN_ID) await clearDye2WorkflowContext();
+                if (pluginId === DYE2_PLUGIN_ID) await clearDyeWorkflowContext({ includeGrinderSetting: true });
                 await disablePlugin(pluginId);
             }
             if (label) label.textContent = enable ? 'Enabled' : 'Disabled';
@@ -8713,8 +8612,6 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
 
     // Acknowledging is per visit, not per session -- sensorCalWarningAck is
     // re-armed on leaving the page.
-    window.machineDriftRestore = machineDriftRestore;
-    window.machineDriftKeep = machineDriftKeep;
     window.sensorCalWarningProceed = function() {
         ({ shown: sensorCalWarningShown, ack: sensorCalWarningAck } = sensorCalWarningNextState(
             { shown: sensorCalWarningShown, ack: sensorCalWarningAck }, 'ack').state);

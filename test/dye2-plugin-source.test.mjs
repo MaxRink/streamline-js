@@ -276,3 +276,86 @@ function lift(module, patterns) {
         assert.equal(calls.prompts.length, 0);
     });
 }
+
+// ── Workflow context cleanup (dyeStrip.js) ──────────────────────────────────
+// DYE2 stamps bean/barista identity onto the workflow context and Decaid copies
+// the workflow into every persisted ShotRecord, so anything left there labels
+// later shots nobody meant to label. The clear runs after each persisted shot
+// and at boot when DYE2 isn't running; what matters is that it nulls exactly the
+// plugin-owned fields, leaves the dashboard's own dose/yield/grind alone, and
+// stays silent when there is nothing to clear.
+{
+    const body = lift('dyeStrip.js', [
+        /const DYE_CONTEXT_FIELDS = \{[\s\S]*?\n\};/,
+        /export function hasDyeContext\([\s\S]*?\r?\n\}/,
+        /export async function clearDyeWorkflowContext\([\s\S]*?\r?\n\}/,
+    ]);
+
+    const build = (context) => {
+        const puts = [];
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger',
+            `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
+        const api = fn(
+            async () => ({ context }),
+            async (payload) => { puts.push(payload); return payload; },
+            { info() {}, warn() {} },
+        );
+        return { ...api, puts };
+    };
+
+    const dirty = {
+        targetDoseWeight: 22, targetYield: 44, grinderSetting: '21.00',
+        beanBatchId: 'b1', coffeeName: 'Colombia El Paraiso', coffeeRoaster: 'La Cabra',
+        grinderId: 'g1', baristaName: 'Mark', drinkerName: 'John',
+        extras: { note: 'Well balanced', rpm: 0, basketId: 'k1', basketName: 'ims 18g' },
+    };
+
+    test('clears every plugin-owned field and nothing the dashboard owns', async () => {
+        const { clearDyeWorkflowContext, puts } = build(dirty);
+        assert.equal(await clearDyeWorkflowContext(), true);
+        assert.equal(puts.length, 1);
+        const sent = puts[0].context;
+        for (const key of ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'grinderId',
+            'grinderModel', 'baristaName', 'drinkerName']) {
+            assert.equal(sent[key], null, key);
+        }
+        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null });
+        assert.ok(!('targetDoseWeight' in sent));
+        assert.ok(!('targetYield' in sent));
+        assert.ok(!('grinderSetting' in sent), 'the grind tile is not DYE2-owned');
+        assert.ok(!('profile' in puts[0]));
+    });
+
+    test('grinderSetting goes only when the whole plugin is switched off', async () => {
+        const { clearDyeWorkflowContext, puts } = build(dirty);
+        await clearDyeWorkflowContext({ includeGrinderSetting: true });
+        assert.equal(puts[0].context.grinderSetting, null);
+    });
+
+    test('no PUT when there is nothing to clear -- every shot and every boot calls this', async () => {
+        const { clearDyeWorkflowContext, puts } = build({ targetDoseWeight: 18, targetYield: 36, grinderSetting: '21.00' });
+        assert.equal(await clearDyeWorkflowContext(), false);
+        assert.equal(puts.length, 0);
+    });
+
+    test('rpm 0 and an empty-string note still count as set', async () => {
+        const { hasDyeContext } = build({});
+        assert.equal(hasDyeContext({ extras: { rpm: 0 } }), true);
+        assert.equal(hasDyeContext({ extras: { note: '' } }), true);
+        assert.equal(hasDyeContext({ extras: { note: null } }), false);
+        assert.equal(hasDyeContext(null), false);
+        assert.equal(hasDyeContext({ grinderSetting: '21.00' }), false);
+        assert.equal(hasDyeContext({ grinderSetting: '21.00' }, true), true);
+    });
+
+    test('a failed workflow read never throws at the caller', async () => {
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger',
+            `${body}\nreturn { clearDyeWorkflowContext };`);
+        const { clearDyeWorkflowContext } = fn(
+            async () => { throw new Error('bridge down'); },
+            async () => { throw new Error('should not be reached'); },
+            { info() {}, warn() {} },
+        );
+        assert.equal(await clearDyeWorkflowContext(), false);
+    });
+}

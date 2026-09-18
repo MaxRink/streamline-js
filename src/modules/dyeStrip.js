@@ -766,12 +766,70 @@ export function disableDye2Ui() {
     clearStripBounds();
 }
 
+// ─── Workflow context hygiene ──────────────────────────────────────────────────
+//
+// DYE2 is the only writer of bean/equipment identity on the workflow context, and
+// Decaid copies the whole workflow into every ShotRecord it persists — so
+// whatever is left sitting in the context silently labels every later shot. The
+// intent behind those fields belongs to the plugin, one shot at a time, so clear
+// them wherever nobody is expressing it: once a shot is persisted, and at boot
+// when DYE2 is not running (strip off, or the plugin gone/unloaded).
+//
+// Left alone on purpose: targetDoseWeight / targetYield / grinderSetting, which
+// this dashboard owns and writes itself, and `profile`, the espresso profile the
+// machine actually runs (non-nullable in Decaid's Workflow model).
+// `grinderSetting` is cleared only for the Settings toggle, which turns DYE2 off
+// wholesale (includeGrinderSetting).
+const DYE_CONTEXT_FIELDS = {
+    beanBatchId: null, coffeeName: null, coffeeRoaster: null,
+    grinderId: null, grinderModel: null,
+    baristaName: null, drinkerName: null,
+    extras: { basketId: null, basketName: null, rpm: null, note: null },
+};
+
+// Is there anything to clear? Without this the post-shot and boot hooks would PUT
+// a workflow on every shot and every load for the majority of users who never set
+// any of this.
+export function hasDyeContext(context, includeGrinderSetting = false) {
+    if (!context) return false;
+    const extras = context.extras || {};
+    const top = Object.keys(DYE_CONTEXT_FIELDS).filter(k => k !== 'extras');
+    if (includeGrinderSetting) top.push('grinderSetting');
+    return top.some(k => context[k] != null)
+        || Object.keys(DYE_CONTEXT_FIELDS.extras).some(k => extras[k] != null);
+}
+
+export async function clearDyeWorkflowContext({ includeGrinderSetting = false } = {}) {
+    try {
+        const live = await getWorkflow();
+        if (!hasDyeContext(live?.context, includeGrinderSetting)) return false;
+        const context = { ...DYE_CONTEXT_FIELDS };
+        if (includeGrinderSetting) context.grinderSetting = null;
+        await updateWorkflow({ context });
+        logger.info('dyeStrip: cleared stale DYE2 workflow context');
+        return true;
+    } catch (err) {
+        // Cleanup is hygiene, never the point of the call that triggered it.
+        logger.warn('Failed to clear DYE2 workflow context:', err);
+        return false;
+    }
+}
+
 export async function initDyeStrip() {
     // Bridge for the Extensions-settings toggle to flip the header live (the header
     // stays in the DOM behind the settings overlay); if it isn't present the flag
     // still applies on the next dashboard load.
     window.applyDye2Enabled = (on) => { on ? enableDye2Ui() : disableDye2Ui(); };
 
-    if (isDye2Enabled()) await enableDye2Ui();
-    else disableDye2Ui();
+    if (isDye2Enabled()) {
+        await enableDye2Ui();
+        // Flag on but the plugin missing/unloaded: nothing can restate the
+        // context, so what is in it is stale.
+        checkDye2PluginRequirement()
+            .then(r => { if (!r.ok) clearDyeWorkflowContext(); })
+            .catch(() => {});
+    } else {
+        disableDye2Ui();
+        clearDyeWorkflowContext(); // not awaited — boot does not wait on a PUT
+    }
 }

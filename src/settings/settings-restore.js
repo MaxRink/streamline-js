@@ -1,12 +1,12 @@
 // What Streamline last knows it put on the machine, kept so a value that
 // changes behind its back -- in Decaid's own UI, another skin, on the machine
 // itself, or lost to a reset or a firmware update -- can be spotted and the
-// user offered their value back.
+// user's own value put back.
 //
 // The record is re-read from the machine after every write Streamline makes, so
 // anything it disagrees with afterwards came from outside this skin. That is
-// what makes the question worth asking: a change the user made here is never
-// queried back at them.
+// what makes re-applying safe: a change the user made here is never overwritten
+// by it.
 //
 // Deliberately NOT the settingsBackup written by saveSettingsBackup(): that is a
 // snapshot of everything last fetched, which is chronically stale for fields the
@@ -14,10 +14,9 @@
 // values the user chose here are recorded, key by key, so nothing is ever
 // asserted on the machine that the user did not type.
 //
-// Nothing here writes to the machine. The skin cannot tell a setting the machine
-// lost from one deliberately changed in Decaid, in another skin, or on the
-// machine itself, so a difference is always a question for the user, never a
-// silent correction.
+// Nothing here writes to the machine; it only reports the difference. The caller
+// re-applies it: what the user chose in this skin takes priority over a value
+// changed in Decaid, in another skin, or on the machine itself.
 
 // Scopes map to the two machine-settings endpoints; `usb` and friends live in
 // de1, the MMR-backed values in de1Advanced.

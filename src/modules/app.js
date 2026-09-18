@@ -28,6 +28,7 @@ import { initEcoSteam, noteEcoSteamActivity } from './eco-steam.js';
 import { loadStyle } from './vendor-loader.js';
 import { loadECharts } from './echarts-loader.js';
 import { initHelpLauncher } from './help-launcher.js';
+import { clearDyeWorkflowContext } from './dyeStrip.js';
 import { isVisualizerEnabled, isAutoUploadEnabled } from './visualizer.js';
 
 window.app = { api, ui, chart };
@@ -897,6 +898,12 @@ function handleData(data) {
             // the refresh knows which record is the just-finished one to wait for.
             const previousNewestId = history.getNewestShotId();
             history.refreshToNewestShot(previousNewestId);
+
+            // The shot record has the workflow baked in by now, so the bean /
+            // barista / note identity in the live context has done its job —
+            // leave it there and it stamps every later shot too. DYE2 restates
+            // it per shot when the user means it (see dyeStrip.js).
+            clearDyeWorkflowContext();
         })();
     }
 
@@ -1383,6 +1390,9 @@ function handleShotStateEvent(frame) {
                 }).catch(error => logger.warn('Could not fetch actualYield for finalized shot:', error));
             }
             seqRefreshHistory(frame.shotId);
+            // Record persisted — the context it captured is now history, so clear
+            // it rather than let it label the next shot (see dyeStrip.js).
+            clearDyeWorkflowContext();
             break;
         // advance frames: chart already tracks step changes via profileFrame
     }
