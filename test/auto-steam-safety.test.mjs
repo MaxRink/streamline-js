@@ -8,6 +8,8 @@ test('machine-bound duration and flow are clamped at the final write boundary', 
     assert.deepEqual(clampAutoSteamSettings({ duration: -4, flow: -1, targetTemperature: 0 }),
         { duration: 0, flow: 0, targetTemperature: 0 });
     assert.equal(clampAutoSteamSettings({ duration: 12.6, flow: 1.234, targetTemperature: 145 }).duration, 13);
+    assert.deepEqual(clampAutoSteamSettings({ duration: 0, flow: 0.8, stopAtTemperature: 0 }),
+        { duration: 0, flow: 0.8, stopAtTemperature: 0 });
 });
 
 test('non-finite values and unsafe temperatures are rejected', () => {

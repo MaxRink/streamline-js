@@ -72,7 +72,7 @@ export function createAutoSteamSession({ saved = {}, getContext, getRestoreConte
         if (status.apiVersion !== 4) throw new Error('Update the Auto Steam Calculator extension.');
         updateStatus(status);
         if (status.calibrationActive) throw new Error('Finish or cancel guided calibration in the extension settings first.');
-        const steam = { duration: 0, targetTemperature: 0, stopAtTemperature: 0, flow: current.workflow.steamSettings.flow };
+        const steam = { duration: 0, stopAtTemperature: 0, flow: current.workflow.steamSettings.flow };
         if (Number.isFinite(flow) && flow >= 0.4 && flow <= 2.5) steam.flow = flow;
         ready = false; applied = null;
         if (!Object.entries(steam).every(([key, value]) => (current.workflow.steamSettings[key] ?? (key === 'stopAtTemperature' ? 0 : undefined)) === value)) {
@@ -171,7 +171,7 @@ export function createAutoSteamSession({ saved = {}, getContext, getRestoreConte
                 await context();
                 if (startedAt !== cancellation) return null;
                 if (disabled) throw new Error('Auto Steam Calculator was disabled.');
-                const steamSettings = { ...result.workflowPatch.steamSettings, targetTemperature };
+                const steamSettings = { ...result.workflowPatch.steamSettings, targetTemperature, stopAtTemperature: 0 };
                 offConfirmed = false;
                 await write(steamSettings);
                 if (startedAt !== cancellation) { ready = false; return null; }

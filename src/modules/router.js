@@ -173,7 +173,9 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
             cleanupCurrentPage = cleanupSettingsShell;
         }
 
+        const mainPageWasVisible = mainPage && mainPage.style.display !== 'none';
         if (mainPage) mainPage.style.display = 'none';
+        if (mainPageWasVisible) document.dispatchEvent(new Event('streamline:mainpagehidden'));
         subpageHost.style.display = '';
 
         // Apply current language to freshly injected HTML before page init runs

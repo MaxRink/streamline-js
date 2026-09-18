@@ -44,7 +44,6 @@ export const SYNCED_KEYS = [
     'waterTankUnit',
     'waterRefillLevel',
     'keyboardBindings',
-    'streamline.autoSteamSession',
     'streamline.steamStopMode',
     'streamline.steamStopModeFallback',
     'streamline.cupWarmerTarget',

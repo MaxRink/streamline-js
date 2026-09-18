@@ -13,10 +13,15 @@ function fixture() {
     return { lifecycle, resets, errors, reads: () => reads, changed: () => { changed = true; }, fail: () => { fail = true; } };
 }
 
-test('returning to the main page repaints cached state without refreshing settings', async () => {
+test('leaving the main page invalidates Auto and returning only repaints cached state', async () => {
     const f = fixture(); await f.lifecycle.initialize();
-    for (let i = 0; i < 10; i++) { await f.lifecycle.mainHidden(); f.lifecycle.mainShown(); }
-    assert.equal(f.reads(), 1); assert.deepEqual(f.resets[0], { verify: true });
+    assert.deepEqual(f.resets, [{ verify: true }]);
+    await f.lifecycle.mainHidden();
+    assert.deepEqual(f.resets, [{ verify: true }, undefined]);
+    for (let i = 0; i < 9; i++) { f.lifecycle.mainShown(); await f.lifecycle.mainHidden(); }
+    f.lifecycle.mainShown();
+    assert.equal(f.reads(), 1);
+    assert.equal(f.resets.length, 11);
     assert.equal(f.errors.length, 0);
 });
 

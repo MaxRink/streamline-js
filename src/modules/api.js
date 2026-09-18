@@ -43,6 +43,14 @@ export let currentMachineState = null;
 let previousMachineState = null;
 let scaleWebSocket = null;
 const calibratedSteamSamples = createScaleSampleBuffer();
+let calibratedSteamSamplingEnabled = false;
+
+export function setCalibratedSteamSampling(enabled) {
+    const next = enabled === true;
+    if (calibratedSteamSamplingEnabled === next) return;
+    calibratedSteamSamplingEnabled = next;
+    calibratedSteamSamples.clear();
+}
 
 export function getCalibratedSteamSamples() {
     return calibratedSteamSamples.read();
@@ -539,7 +547,7 @@ export function connectScaleWebSocket(onData, onReconnect, onDisconnect) {
                 logger.info('Scale connected (server status frame).');
                 if (onReconnect) onReconnect();
             } else {
-                calibratedSteamSamples.push(data);
+                if (calibratedSteamSamplingEnabled) calibratedSteamSamples.push(data);
                 onData(data);
             }
         } catch (error) {
@@ -1542,6 +1550,8 @@ export async function readSharedValue(key) {
 export async function resyncIfDrifted(key, fetchedValue, pushFn) {
     if (isAutoSteamActive() && [STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, MILK_STOP_LAST_VALUE_KEY].includes(key)) return null;
     const remembered = await readSharedValue(key);
+    // Auto can become active while the shared value is being read. Re-check
+    // before an old manual target can be pushed over Auto's owned settings.
     if (isAutoSteamActive() && [STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, MILK_STOP_LAST_VALUE_KEY].includes(key)) return null;
     // No record of the user ever setting this -> whatever the machine holds
     // stands. Otherwise the remembered value wins, INCLUDING when the workflow

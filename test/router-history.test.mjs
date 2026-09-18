@@ -13,3 +13,9 @@ test('direct routes replace while user navigation pushes by default', () => {
     assert.match(source, /loadPage\(pageUrl, \{ history: 'replace' \}\)/);
     assert.match(source, /loadPage\(pageUrl, \{ history = 'push' \} = \{\}\)/);
 });
+
+
+test('leaving a visible main page dispatches the hidden lifecycle event', () => {
+    assert.match(source, /const mainPageWasVisible = mainPage && mainPage\.style\.display !== 'none';/);
+    assert.match(source, /mainPage\.style\.display = 'none';\s*if \(mainPageWasVisible\) document\.dispatchEvent\(new Event\('streamline:mainpagehidden'\)\);/);
+});

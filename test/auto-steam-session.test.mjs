@@ -22,13 +22,14 @@ function harness(saved = null, initialHeater = 150, rememberedHeater = null) {
         persist: value => { stored = structuredClone(value); },
         onChange: () => {},
     });
-    return { session, writes, status: value => { status = value; }, stored: () => stored, machine: value => { machine = value; return session.observeMachine(value); }, fail: () => fail = true };
+    return { session, writes, workflow: () => structuredClone(workflow), status: value => { status = value; }, stored: () => stored, machine: value => { machine = value; return session.observeMachine(value); }, fail: () => fail = true };
 }
 
 test('Auto enters Off at calibration flow, remembers manual settings and restores them on exit', async () => {
     const h = harness();
     await h.session.enter();
-    assert.deepEqual(h.writes[0], { duration: 0, targetTemperature: 0, stopAtTemperature: 0, flow: 0.8 });
+    assert.deepEqual(h.writes[0], { duration: 0, stopAtTemperature: 0, flow: 0.8 });
+    assert.equal(h.workflow().steamSettings.targetTemperature, 150);
     assert.equal(h.stored().active, true);
     await h.session.leave();
     assert.deepEqual(h.writes.at(-1), { duration: 45, flow: 0.6, targetTemperature: 150, stopAtTemperature: 0 });
@@ -100,6 +101,8 @@ test('completed steam resets Off only after the machine becomes idle', async () 
     assert.equal(h.writes.length, before);
     await h.machine('idle');
     assert.equal(h.writes.at(-1).duration, 0);
+    assert.equal(Object.hasOwn(h.writes.at(-1), 'targetTemperature'), false);
+    assert.equal(h.workflow().steamSettings.targetTemperature, 150);
     await h.machine('idle');
     assert.equal(h.writes.length, before + 1);
 });
@@ -185,11 +188,12 @@ test('removed saved pitcher falls back to configured default and cannot be calcu
 });
 
 
-test('calculation restores the normal heater without temperature compensation', async () => {
+test('Auto keeps the normal heater hot while waiting and calculating', async () => {
     for (const temperature of [135, 145, 160]) {
         const h = harness(null, temperature);
         await h.session.enter();
-        assert.equal(h.writes.at(-1).targetTemperature, 0);
+        assert.equal(Object.hasOwn(h.writes.at(-1), 'targetTemperature'), false);
+        assert.equal(h.workflow().steamSettings.targetTemperature, temperature);
         await h.session.select('small');
         assert.equal(h.writes.at(-1).targetTemperature, temperature);
         assert.equal(h.writes.at(-1).duration, 30);
@@ -210,7 +214,8 @@ test('missing normal heater setting never invents one or arms the timer', async 
     await h.session.enter();
     await assert.rejects(h.session.select('small'), /normal Steam settings/);
     assert.equal(h.writes.at(-1).duration, 0);
-    assert.equal(h.writes.at(-1).targetTemperature, 0);
+    assert.equal(Object.hasOwn(h.writes.at(-1), 'targetTemperature'), false);
+    assert.equal(h.workflow().steamSettings.targetTemperature, 0);
 });
 
 

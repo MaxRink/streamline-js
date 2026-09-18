@@ -96,11 +96,6 @@ function disposeCalibratedSteamUI() {
     calibratedSteam?.dispose();
     calibratedSteam = null;
     for (const button of document.querySelectorAll('[data-auto-pitcher]')) button.onclick = null;
-    const steamLabel = document.getElementById('steam-label');
-    if (steamLabel) {
-        steamLabel.onclick = null;
-        steamLabel.onkeydown = null;
-    }
 }
 
 async function fallbackToManual(error) {
@@ -2387,24 +2382,14 @@ export function initUI(callbacks) {
             try {
                 const result = await calibratedSteam.select(button.dataset.autoPitcher);
                 if (!result) return;
-                const pitcher = result.pitcherSource === 'tared' ? getTranslation('Milk only') : getTranslation(result.pitcher);
+                const pitcherKey = result.pitcher[0].toUpperCase() + result.pitcher.slice(1);
+                const pitcher = result.pitcherSource === 'tared' ? getTranslation('Milk only') : getTranslation(pitcherKey);
                 showToast(`${pitcher} · ${result.milkGrams} g · ${result.durationSeconds} s`, 4000);
             } catch (error) {
                 await fallbackToManual(error);
             }
         };
     }
-    const steamLabel = document.getElementById('steam-label');
-    if (steamLabel) {
-        steamLabel.style.cursor = 'pointer';
-        steamLabel.setAttribute('role', 'button');
-        steamLabel.setAttribute('tabindex', '0');
-        steamLabel.onclick = toggleSteamMode;
-        steamLabel.onkeydown = event => {
-            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleSteamMode(); }
-        };
-    }
-
     updateDrinkRatio(); // Initial calculation
 }
 

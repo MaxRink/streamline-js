@@ -11,11 +11,12 @@ function finiteNumber(value, name) {
 export function clampAutoSteamSettings(steam) {
     const duration = Math.round(finiteNumber(steam?.duration, 'duration'));
     const flow = finiteNumber(steam?.flow, 'flow');
-    const targetTemperature = finiteNumber(steam?.targetTemperature, 'heater temperature');
+    const targetTemperature = steam?.targetTemperature === undefined
+        ? undefined : finiteNumber(steam.targetTemperature, 'heater temperature');
     const stopAtTemperature = steam?.stopAtTemperature === undefined
         ? undefined : finiteNumber(steam.stopAtTemperature, 'stop temperature');
 
-    if (!Number.isInteger(targetTemperature) || targetTemperature < 0 || targetTemperature > 165 ||
+    if ((targetTemperature !== undefined && (!Number.isInteger(targetTemperature) || targetTemperature < 0 || targetTemperature > 165)) ||
         (stopAtTemperature !== undefined && (stopAtTemperature < 0 || stopAtTemperature > 80))) {
         throw new Error('Invalid Auto steam temperature settings.');
     }
@@ -23,7 +24,7 @@ export function clampAutoSteamSettings(steam) {
     return {
         duration: Math.max(AUTO_STEAM_BOUNDS.duration.minimum, Math.min(AUTO_STEAM_BOUNDS.duration.maximum, duration)),
         flow: Math.max(AUTO_STEAM_BOUNDS.flow.minimum, Math.min(AUTO_STEAM_BOUNDS.flow.maximum, flow)),
-        targetTemperature,
+        ...(targetTemperature === undefined ? {} : { targetTemperature }),
         ...(stopAtTemperature === undefined ? {} : { stopAtTemperature }),
     };
 }

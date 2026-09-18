@@ -409,3 +409,11 @@ function lift(module, patterns) {
         assert.equal(withSavedBrewTemp(null, { brewTemperature: 94 }), null);
     });
 }
+
+
+test('the transient Auto steam session remains device-local', () => {
+    const source = readFileSync(new URL('../src/modules/settingsSync.js', import.meta.url), 'utf8');
+    const syncedKeys = source.match(/export const SYNCED_KEYS = \[[\s\S]*?\];/)?.[0];
+    assert.ok(syncedKeys, 'SYNCED_KEYS declaration not found');
+    assert.doesNotMatch(syncedKeys, /streamline\.autoSteamSession/);
+});

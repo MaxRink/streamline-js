@@ -1,4 +1,4 @@
-import { callPluginEndpoint, getPlugins, getWorkflow, getMachineState, getCalibratedSteamSamples, writeAutoSteamSettings, readSharedValue, STEAM_TEMP_LAST_VALUE_KEY, subscribeMachineConnectionChanges } from './api.js';
+import { callPluginEndpoint, getPlugins, getWorkflow, getMachineState, getCalibratedSteamSamples, setCalibratedSteamSampling, writeAutoSteamSettings, readSharedValue, STEAM_TEMP_LAST_VALUE_KEY, subscribeMachineConnectionChanges } from './api.js';
 import { CALIBRATED_STEAM_PLUGIN, createCalibratedSteamController, isCalibratedSteamAvailable } from './calibrated-steam.js';
 import { AUTO_STEAM_SESSION_KEY, createAutoSteamSession, readAutoSteamSession } from './auto-steam-session.js';
 import { createAutoSteamLifecycle } from './auto-steam-lifecycle.js';
@@ -67,7 +67,10 @@ export function initCalibratedSteam({ onAvailability, onChange, onSteamSettings,
             getPlugins,
             getStatus: () => callAutoSteamEndpoint('status'),
             isAvailable: isCalibratedSteamAvailable,
-            onAvailability,
+            onAvailability: available => {
+                setCalibratedSteamSampling(available);
+                onAvailability(available);
+            },
             onChange,
             onError,
             initiallyVisible: visible,
@@ -76,6 +79,7 @@ export function initCalibratedSteam({ onAvailability, onChange, onSteamSettings,
         await lifecycle.initialize();
     }).catch(async error => {
         if (disposed) return;
+        setCalibratedSteamSampling(false);
         onAvailability(false);
         try {
             await session?.disable();
@@ -108,6 +112,7 @@ export function initCalibratedSteam({ onAvailability, onChange, onSteamSettings,
             session?.dispose();
             lifecycle?.dispose();
             unsubscribe();
+            setCalibratedSteamSampling(false);
             document.removeEventListener('streamline:mainpagevisible', shown);
             document.removeEventListener('streamline:mainpagehidden', hidden);
             document.removeEventListener('streamline:plugins-changed', changed);
