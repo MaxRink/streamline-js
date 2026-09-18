@@ -378,9 +378,15 @@ blocked until one is connected — from the Coffee button and the keyboard short
 
 ## 9. Steam, hot water, and flush
 
-**Steam.** Set the value in the left column (tap the *Steam* label to switch between temperature,
-duration and flow). Start from the GHC or the **Steam** button. Steam stops on its duration limit,
-or when you stop it.
+**Steam.** Set the value in the left column (tap the mode text below *Steam* to switch between
+temperature, duration and flow). Start from the GHC or the **Steam** button. Steam stops on its
+duration limit, or when you stop it.
+
+When the Auto Steam Calculator plugin is available, the same mode control also offers **Auto**.
+Choose a configured pitcher to calculate and arm the steam time. While Auto waits for a calculation
+or the next pitcher, it keeps the normal steam-heater target but sets the duration and milk-temperature
+stop to Off. The boiler therefore stays ready between drinks. Physically starting steam while Auto is
+Off can still produce a brief burst during the machine's state transition.
 
 **Hot water.** Tap the *Hot Water* label to choose volume, temperature, duration or flow, then set
 the value. Start with the GHC or the **Water** button.

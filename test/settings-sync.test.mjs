@@ -35,7 +35,7 @@ function lift(module, patterns) {
         const workflowWrites = [];
         const api = new Function(
             'logger', 'persistSharedValue', 'updateWorkflow', 'getValueFromStore', 'openDB', 'getSetting',
-            `${body}\nreturn { setStopAtTemperature, resyncMilkStopIfDrifted, resyncIfDrifted };`,
+             `const isAutoSteamActive = () => false; ${body}\nreturn { setStopAtTemperature, resyncMilkStopIfDrifted, resyncIfDrifted };`,
         )(
             { warn() {}, error() {} },
             async (key, value) => { kvWrites.push([key, value]); },
@@ -146,7 +146,7 @@ function lift(module, patterns) {
         const workflowWrites = [];
         const api = new Function(
             'logger', 'persistSharedValue', 'updateWorkflow', 'getWorkflow', 'getValueFromStore', 'openDB', 'getSetting',
-            `${body}\nreturn { setTargetSteamDuration, setTargetSteamTemp };`,
+            `const isAutoSteamActive = () => false; ${body}\nreturn { setTargetSteamDuration, setTargetSteamTemp };`,
         )(
             { warn() {}, error() {} },
             async (key, value) => { kvWrites.push([key, value]); },
@@ -409,3 +409,11 @@ function lift(module, patterns) {
         assert.equal(withSavedBrewTemp(null, { brewTemperature: 94 }), null);
     });
 }
+
+
+test('the transient Auto steam session remains device-local', () => {
+    const source = readFileSync(new URL('../src/modules/settingsSync.js', import.meta.url), 'utf8');
+    const syncedKeys = source.match(/export const SYNCED_KEYS = \[[\s\S]*?\];/)?.[0];
+    assert.ok(syncedKeys, 'SYNCED_KEYS declaration not found');
+    assert.doesNotMatch(syncedKeys, /streamline\.autoSteamSession/);
+});

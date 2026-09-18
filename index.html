@@ -139,7 +139,7 @@
                 <div class="w-[114px]">
                     <span id="steam-label" class="text-[var(--left-label-text)] text-[26px] font-bold block" data-i18n-key="Steam">Steam</span>
                     <span id="steam-mode-toggle" class="w-[114px] text-[var(--low-contrast-white)] text-[20px] font-semibold text-nowrap block leading-6 cursor-pointer" role="button" tabindex="0" aria-label="Toggle Steam Mode">
-                        <span id="steam-mode-time" data-i18n-key="Time">Time</span><span id="steam-mode-milk" data-i18n-key="Milk" style="display:none">Milk</span> | <span id="steam-mode-flow" data-i18n-key="Flow">Flow</span>
+                        <span id="steam-mode-standard"><span id="steam-mode-time" data-i18n-key="Time">Time</span><span id="steam-mode-milk" data-i18n-key="Milk" style="display:none">Milk</span> | <span id="steam-mode-flow" data-i18n-key="Flow">Flow</span></span><span id="steam-mode-auto" data-fit-text style="display:none;width:114px"><span data-steam-mode="auto">Auto</span> | <span data-steam-mode="flow" title="Flow">F</span> | <span data-steam-mode="time" title="Time">T</span></span>
                     </span>
                 </div>
                 <div class="relative w-[256px] h-[72px]">
@@ -156,6 +156,13 @@
                 <button id="steam-preset-2" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold">30s</button>
                 <button id="steam-preset-3" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold">45s</button>
                 <button id="steam-preset-4" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold">60s</button>
+            </div>
+            <div id="steam-auto-presets" class="w-[398px] h-[42px] flex justify-between items-center hidden" aria-label="Calculate steam time by pitcher">
+                <span id="steam-auto-setup" style="font-size:18px;line-height:20px" data-i18n-key="Set up pitchers in Settings > Extensions">Set up pitchers in Settings &gt; Extensions</span>
+                <button type="button" data-auto-pitcher="small" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold" style="min-width:72px;height:42px" aria-label="Calculate with small pitcher selection" aria-pressed="false">S</button>
+                <button type="button" data-auto-pitcher="medium" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold" style="min-width:72px;height:42px" aria-label="Calculate with medium pitcher selection" aria-pressed="false">M</button>
+                <button type="button" data-auto-pitcher="large" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold" style="min-width:72px;height:42px" aria-label="Calculate with large pitcher selection" aria-pressed="false">L</button>
+                <button type="button" data-auto-pitcher="auto" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold" style="min-width:72px;height:42px" aria-label="Calculate with auto pitcher selection" aria-pressed="false">Auto</button>
             </div>
             <div id="steam-milk-presets" class="w-[398px] h-[42px] flex justify-between items-center hidden" aria-label="Milk stop temperature presets">
                 <button id="steam-milk-preset-1" class="justify-center text-[var(--preset-value-color)] text-[20px] font-semibold">55°c</button>
