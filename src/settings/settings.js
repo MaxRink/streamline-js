@@ -274,11 +274,18 @@ async function flushPendingChanges() {
     const usbPowerSettingsChanged = Object.prototype.hasOwnProperty.call(
         pendingChanges.rea,
         'skalePoweredByUsbByDevice',
-    ) || Object.prototype.hasOwnProperty.call(
-        pendingChanges.rea,
-        'skalePoweredByUsb',
     );
-    if (Object.keys(pendingChanges.rea).length) tasks.push(setReaSettings(pendingChanges.rea));
+    if (Object.keys(pendingChanges.rea).length) {
+        tasks.push(setReaSettings(pendingChanges.rea).then(() => {
+            // The USB write can succeed even when an unrelated settings write fails.
+            if (usbPowerSettingsChanged) {
+                scaleInfoRequestGeneration += 1;
+                scaleInfoByDeviceId.clear();
+                scaleInfoInFlight.clear();
+                renderDeviceListFromCache();
+            }
+        }));
+    }
     if (Object.keys(pendingChanges.de1).length) tasks.push(setDe1Settings(pendingChanges.de1));
     if (Object.keys(pendingChanges.de1Advanced).length) tasks.push(setDe1AdvancedSettings(pendingChanges.de1Advanced));
     // The boot resync (api.resyncIfDrifted) compares Rea's workflow record
@@ -308,11 +315,6 @@ async function flushPendingChanges() {
     }
     const written = { de1: { ...pendingChanges.de1 }, de1Advanced: { ...pendingChanges.de1Advanced } };
     if (tasks.length) await Promise.all(tasks);
-    if (usbPowerSettingsChanged) {
-        scaleInfoRequestGeneration += 1;
-        scaleInfoByDeviceId.clear();
-        scaleInfoInFlight.clear();
-    }
     saveSettingsBackup();
     // Only after the writes resolved: a rejected write never reached the
     // machine, and recording it would make the next visit offer to restore
@@ -10454,11 +10456,11 @@ function renderScalePopupToggle(title, description, enabled, inputAttributes) {
     return `
         <div class="flex items-center justify-between gap-[24px] py-[16px]">
             <div class="flex flex-col gap-[6px]">
-                <p class="font-['Inter:Bold',sans-serif] font-bold text-[#385a92] text-[26px] leading-[1.2]" data-i18n-key="${title}">${title}</p>
-                <p class="font-['Inter:Regular',sans-serif] text-[var(--text-primary)] text-[20px] leading-[1.4]" data-i18n-key="${description}">${description}</p>
+                <p class="font-['Inter:Bold',sans-serif] font-bold text-[#385a92] text-[26px] leading-[1.2]" data-i18n-key="${title}">${escapeHtml(getTranslation(title))}</p>
+                <p class="font-['Inter:Regular',sans-serif] text-[var(--text-primary)] text-[20px] leading-[1.4]" data-i18n-key="${description}">${escapeHtml(getTranslation(description))}</p>
             </div>
             <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                <input type="checkbox" class="sr-only peer" ${enabled ? 'checked' : ''}
+                <input type="checkbox" class="sr-only peer" aria-label="${escapeHtml(getTranslation(title))}" ${enabled ? 'checked' : ''}
                        ${inputAttributes}>
                 <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[#385a92] peer-checked:border-[#385a92]"></div>
                 <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
@@ -10467,26 +10469,18 @@ function renderScalePopupToggle(title, description, enabled, inputAttributes) {
     `;
 }
 
-function getScaleDeviceSetting(settings, key, legacyKey, deviceId) {
+function getScaleDeviceSetting(settings, key, deviceId) {
     if (Object.prototype.hasOwnProperty.call(settings || {}, key)) {
         return settings?.[key]?.[deviceId] === true;
-    }
-    if (Object.prototype.hasOwnProperty.call(settings || {}, legacyKey)) {
-        return settings[legacyKey] === true;
     }
     return undefined;
 }
 
-function renderScaleDeviceToggle(settings, key, legacyKey, deviceId, title, description) {
-    const hasPerDeviceSetting = Object.prototype.hasOwnProperty.call(settings || {}, key);
-    if (!hasPerDeviceSetting && !Object.prototype.hasOwnProperty.call(settings || {}, legacyKey)) return '';
-    return renderScalePopupToggle(
-        title,
-        description,
-        getScaleDeviceSetting(settings, key, legacyKey, deviceId) === true,
-        `data-setting-key="${key}" data-legacy-key="${legacyKey}" data-device-id="${escapeHtml(deviceId)}"
-         onchange="window.updateScaleDeviceSetting(this.dataset.settingKey, this.dataset.legacyKey, this.dataset.deviceId, this.checked)"`,
-    );
+function hasSkaleUsbSetting(settings, device) {
+    const values = settings?.skalePoweredByUsbByDevice;
+    return typeof device?.name === 'string' && device.name.toLowerCase().includes('skale') &&
+        Object.prototype.hasOwnProperty.call(settings || {}, 'skalePoweredByUsbByDevice') &&
+        values !== null && typeof values === 'object' && !Array.isArray(values);
 }
 
 // Render Bluetooth Scale settings
@@ -10608,12 +10602,12 @@ export function renderBluetoothScaleSettings(settings) {
                 </div>
             </dialog>
 
-            <dialog id="scale-device-settings-modal" class="modal">
+            <dialog id="scale-device-settings-modal" class="modal" aria-labelledby="scale-device-settings-title">
                 <div class="modal-box bg-[var(--box-color)] max-w-2xl">
                     <h3 id="scale-device-settings-title" class="font-bold text-[28px] text-[var(--text-primary)] mb-2"></h3>
                     <div id="scale-device-settings-content"></div>
                     <div class="modal-action">
-                        <button class="btn" onclick="document.getElementById('scale-device-settings-modal').close()">Close</button>
+                        <button class="btn" onclick="document.getElementById('scale-device-settings-modal').close()" data-i18n-key="Close">${escapeHtml(getTranslation('Close'))}</button>
                     </div>
                 </div>
             </dialog>
@@ -10680,7 +10674,6 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
             getScaleDeviceSetting(
                 settingsCache.rea,
                 'skalePoweredByUsbByDevice',
-                'skalePoweredByUsb',
                 device.id,
             ) === true;
         const safeId = (device.id || '').replace(/'/g, "\\'");
@@ -10744,11 +10737,12 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
                 <div class="flex items-center gap-[20px] flex-shrink-0 ml-[24px]">
                     ${batteryBadge}
                     ${usbBadge}
-                    ${settingKey && type !== 'Scale' ? `
+                    ${settingKey ? `
                     <div class="flex flex-col items-center gap-[4px]">
                         <span class="text-[16px] text-[var(--text-primary)] opacity-50" data-i18n-key="Preferred">Preferred</span>
                         <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[72px] h-[36px]">
                             <input type="checkbox" class="sr-only peer"
+                                   aria-label="${escapeHtml(getTranslation('Preferred'))}"
                                    ${isPreferred ? 'checked' : ''}
                                    onchange="window.setPreferredDevice('${safeSettingKey}', '${safeId}', this.checked)">
                             <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
@@ -10756,11 +10750,11 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
                         </label>
                     </div>
                     ` : ''}
-                    ${type === 'Scale' ? `
-                    <button aria-label="Configure ${escapeHtml(device.name)}"
+                    ${type === 'Scale' && hasSkaleUsbSetting(settingsCache.rea, device) ? `
+                    <button aria-label="${escapeHtml(getTranslation('Settings'))}: ${escapeHtml(device.name)}"
                             data-device-id="${escapeHtml(device.id || '')}"
                             class="border-2 border-[#385a92] text-[#385a92] hover:bg-[#385a92] hover:text-white h-[62px] px-[24px] rounded-[67.5px] text-[22px] font-bold transition-colors duration-200"
-                            onclick="window.openScaleDeviceSettings(this.dataset.deviceId)">Settings</button>
+                            onclick="window.openScaleDeviceSettings(this.dataset.deviceId)" data-i18n-key="Settings">${escapeHtml(getTranslation('Settings'))}</button>
                     ` : ''}
                     ${badge}
                     ${actions}
@@ -10774,39 +10768,34 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
 
 window.openScaleDeviceSettings = function(deviceId) {
     const device = deviceStateCache.devices.find(item => item.id === deviceId);
+    const settings = settingsCache.rea || {};
+    if (!hasSkaleUsbSetting(settings, device)) return;
     const modal = document.getElementById('scale-device-settings-modal');
     const title = document.getElementById('scale-device-settings-title');
     const content = document.getElementById('scale-device-settings-content');
-    if (!device || !modal || !title || !content) return;
+    if (!modal || !title || !content) return;
 
-    const settings = settingsCache.rea || {};
-    const isPreferred = settings.preferredScaleId === deviceId;
-    title.textContent = `${device.name} settings`;
-    content.innerHTML = `
-        ${renderScalePopupToggle(
-            'Preferred Scale',
-            'Reconnect to this scale automatically.',
-            isPreferred,
-            `data-device-id="${escapeHtml(deviceId)}"
-             onchange="window.setPreferredDevice('preferredScaleId', this.dataset.deviceId, this.checked)"`,
-        )}
-        ${renderScaleDeviceToggle(settings, 'skalePoweredByUsbByDevice', 'skalePoweredByUsb', deviceId, 'Skale USB Power', 'Declare USB power manually and suppress battery reads.')}
-    `;
+    title.textContent = `${getTranslation('Settings')}: ${device.name}`;
+    content.innerHTML = renderScalePopupToggle(
+        'Skale USB Power',
+        'Declare USB power manually and hide the battery level.',
+        getScaleDeviceSetting(settings, 'skalePoweredByUsbByDevice', deviceId) === true,
+        `data-device-id="${escapeHtml(deviceId)}"
+         onchange="window.updateScaleDeviceSetting(this.dataset.deviceId, this.checked)"`,
+    );
+    translatePage();
     modal.showModal();
 };
 
-window.updateScaleDeviceSetting = function(key, legacyKey, deviceId, enabled) {
-    if (Object.prototype.hasOwnProperty.call(settingsCache.rea || {}, key)) {
-        const values = { ...(settingsCache.rea[key] || {}) };
-        if (enabled) values[deviceId] = true;
-        else delete values[deviceId];
-        updateReaSetting(key, values, false);
-    } else {
-        updateReaSetting(legacyKey, enabled, false);
-    }
+window.updateScaleDeviceSetting = function(deviceId, enabled) {
+    const device = deviceStateCache.devices.find(item => item.id === deviceId);
+    if (!hasSkaleUsbSetting(settingsCache.rea, device)) return;
+    const key = 'skalePoweredByUsbByDevice';
+    const values = { ...settingsCache.rea[key] };
+    if (enabled) values[deviceId] = true;
+    else delete values[deviceId];
+    updateReaSetting(key, values, false);
 };
-
-
 
 
 // Function to handle connecting or disconnecting a device
@@ -10895,7 +10884,7 @@ window.handleDeviceRescan = function() {
 window.setPreferredDevice = async function(settingKey, deviceId, isOn) {
     const value = isOn ? deviceId : null;
     try {
-        await window.updateReaSetting(settingKey, value, false);
+        await window.updateReaSetting(settingKey, value);
         // Re-render device lists so only one row shows as preferred
         renderDeviceListFromCache();
     } catch (error) {

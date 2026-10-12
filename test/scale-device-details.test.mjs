@@ -27,7 +27,7 @@ function extractFunction(name) {
 }
 
 function extractAssignedFunction(name) {
-    const start = source.indexOf(`window.${name} = function(`);
+    const start = source.indexOf(`window.${name} = `);
     assert.notEqual(start, -1, `${name} was not found`);
     let depth = 0;
     let bodyStarted = false;
@@ -38,7 +38,7 @@ function extractAssignedFunction(name) {
         } else if (source[index] === '}') {
             depth -= 1;
             if (bodyStarted && depth === 0) {
-                return source.slice(source.indexOf('function', start), index + 1);
+                return (source.slice(start, source.indexOf('function', start)).includes('async') ? 'async ' : '') + source.slice(source.indexOf('function', start), index + 1);
             }
         }
     }
@@ -69,6 +69,7 @@ function loadRenderSingleDeviceList({
     usbPoweredByDevice = undefined,
     legacyUsbPowered = undefined,
     latestBattery = undefined,
+    getTranslation = value => value,
 }) {
     const render = extractFunction('renderSingleDeviceList');
     const getScaleDeviceSetting = loadScaleDeviceSetting();
@@ -81,7 +82,7 @@ function loadRenderSingleDeviceList({
         'renderScalePopupToggle',
         'getScaleDeviceSetting',
         'window',
-        `${render}\nreturn renderSingleDeviceList;`,
+        `${extractFunction('hasSkaleUsbSetting')}\n${render}\nreturn renderSingleDeviceList;`,
     )(
         scaleInfoByDeviceId,
         {
@@ -96,7 +97,7 @@ function loadRenderSingleDeviceList({
         },
         level => `<battery>${level}</battery>`,
         value => String(value),
-        value => value,
+        getTranslation,
         () => '',
         getScaleDeviceSetting,
         { getLatestScaleBattery: () => latestBattery },
@@ -108,16 +109,6 @@ function deferred() {
     const promise = new Promise(result => { resolve = result; });
     return { promise, resolve };
 }
-
-test('scale settings use connected-scale metadata and per-device controls', () => {
-    assert.match(source, /getScaleInfo/);
-    assert.match(source, /scaleInfoByDeviceId/);
-    assert.match(source, /firmwareVersion/);
-    assert.match(source, /batteryLevel/);
-    assert.match(source, /skalePoweredByUsbByDevice/);
-    assert.doesNotMatch(source, /deviceInfo\.powerSource/);
-    assert.doesNotMatch(source, /getDevices\(\)[\s\S]*deviceInfo/);
-});
 
 test('repeated renders share one in-flight scale info request', async () => {
     const pending = deferred();
@@ -230,23 +221,15 @@ test('USB badge and battery return to the live metadata path when the map disabl
     assert.match(html, /<battery>77<\/battery>/);
 });
 
-test('legacy USB power state renders with the same ON and OFF semantics', () => {
-    const metadata = new Map([['A', { firmwareVersion: 'R029', batteryLevel: 77 }]]);
+test('a legacy USB key does not enable controls or suppress battery metadata', () => {
     const render = loadRenderSingleDeviceList({
-        scaleInfoByDeviceId: metadata,
+        scaleInfoByDeviceId: new Map([['A', { batteryLevel: 77 }]]),
         legacyUsbPowered: true,
     });
-    const enabledHtml = render([{ id: 'A', name: 'Scale A', state: 'connected' }], '', '', 'Scale');
-    assert.match(enabledHtml, />USB</);
-    assert.doesNotMatch(enabledHtml, /<battery>77<\/battery>/);
-
-    const disabledRender = loadRenderSingleDeviceList({
-        scaleInfoByDeviceId: metadata,
-        legacyUsbPowered: false,
-    });
-    const disabledHtml = disabledRender([{ id: 'A', name: 'Scale A', state: 'connected' }], '', '', 'Scale');
-    assert.doesNotMatch(disabledHtml, />USB</);
-    assert.match(disabledHtml, /<battery>77<\/battery>/);
+    const html = render([{ id: 'A', name: 'Skale 2', state: 'connected' }], '', 'preferredScaleId', 'Scale');
+    assert.doesNotMatch(html, />USB<|openScaleDeviceSettings/);
+    assert.match(html, /<battery>77<\/battery>/);
+    assert.match(html, /setPreferredDevice/);
 });
 
 test('per-device USB settings remain independent for both enabled and disabled devices', () => {
@@ -275,6 +258,7 @@ function loadUpdateScaleDeviceSetting({
     updateReaSetting,
     renderDeviceListFromCache = () => {},
     scaleInfoByDeviceId = new Map(),
+    devices = [{ id: 'A', name: 'Skale A' }, { id: 'B', name: 'Skale B' }],
 }) {
     const update = extractAssignedFunction('updateScaleDeviceSetting');
     return new Function(
@@ -282,12 +266,15 @@ function loadUpdateScaleDeviceSetting({
         'scaleInfoByDeviceId',
         'renderDeviceListFromCache',
         'updateReaSetting',
-        `const updateScaleDeviceSetting = ${update};\nreturn updateScaleDeviceSetting;`,
+        'deviceStateCache',
+        `${extractFunction('hasSkaleUsbSetting')}
+         const updateScaleDeviceSetting = ${update};\nreturn updateScaleDeviceSetting;`,
     )(
         settingsCache,
         scaleInfoByDeviceId,
         renderDeviceListFromCache,
         updateReaSetting,
+        { devices },
     );
 }
 
@@ -309,7 +296,7 @@ test('staging USB changes updates only the selected device and waits for save be
         },
     });
 
-    update('skalePoweredByUsbByDevice', 'skalePoweredByUsb', 'B', false);
+    update('B', false);
     assert.deepEqual(settingsCache.rea.skalePoweredByUsbByDevice, { A: true });
     assert.equal(renderCount, 0);
     assert.deepEqual(staged, [{
@@ -319,23 +306,20 @@ test('staging USB changes updates only the selected device and waits for save be
     assert.deepEqual(scaleInfoByDeviceId.get('B'), { firmwareVersion: 'R029', batteryLevel: 66 });
 });
 
-test('staging a legacy USB change uses the legacy field without touching device maps', () => {
-    const settingsCache = { rea: { skalePoweredByUsb: false } };
-    const staged = [];
-    const update = loadUpdateScaleDeviceSetting({
-        settingsCache,
-        updateReaSetting: (key, value) => {
-            staged.push({ key, value });
-            settingsCache.rea[key] = value;
-        },
-    });
-
-    update('skalePoweredByUsbByDevice', 'skalePoweredByUsb', 'A', true);
-    assert.equal(settingsCache.rea.skalePoweredByUsb, true);
-    assert.deepEqual(staged, [{
-        key: 'skalePoweredByUsb',
-        value: true,
-    }]);
+test('unsupported hosts and non-Skale devices cannot stage USB changes', () => {
+    for (const [settings, name] of [
+        [{}, 'Skale 2'],
+        [{ skalePoweredByUsb: false }, 'Skale 2'],
+        [{ skalePoweredByUsbByDevice: {} }, 'Acaia'],
+    ]) {
+        const staged = [];
+        const update = loadUpdateScaleDeviceSetting({
+            settingsCache: { rea: settings }, devices: [{ id: 'A', name }],
+            updateReaSetting: (...args) => staged.push(args),
+        });
+        update('A', true);
+        assert.deepEqual(staged, []);
+    }
 });
 
 function loadFlushPendingChanges({
@@ -344,6 +328,8 @@ function loadFlushPendingChanges({
     scaleInfoByDeviceId = new Map(),
     scaleInfoInFlight = new Map(),
     saveSettingsBackup = () => {},
+    setDe1Settings = async () => {},
+    renderDeviceListFromCache = () => {},
 }) {
     const flush = extractFunction('flushPendingChanges');
     return new Function(
@@ -352,6 +338,8 @@ function loadFlushPendingChanges({
         'scaleInfoByDeviceId',
         'scaleInfoInFlight',
         'saveSettingsBackup',
+        'setDe1Settings',
+        'renderDeviceListFromCache',
         `let scaleInfoRequestGeneration = 0;
          function resetPendingChanges() {
              pendingChanges.rea = {};
@@ -370,6 +358,8 @@ function loadFlushPendingChanges({
         scaleInfoByDeviceId,
         scaleInfoInFlight,
         saveSettingsBackup,
+        setDe1Settings,
+        renderDeviceListFromCache,
     );
 }
 
@@ -387,7 +377,8 @@ function loadScaleInfoAndSaveLifecycle({
         'logger',
         'setReaSettings',
         'saveSettingsBackup',
-        `let pendingChanges = { rea: {}, de1: {}, de1Advanced: {}, workflow: {} };
+        `function renderDeviceListFromCache() {}
+         let pendingChanges = { rea: {}, de1: {}, de1Advanced: {}, workflow: {} };
          function resetPendingChanges() {
              pendingChanges = { rea: {}, de1: {}, de1Advanced: {}, workflow: {} };
          }
@@ -410,17 +401,17 @@ function loadScaleInfoAndSaveLifecycle({
     );
 }
 
-test('successful save invalidates stale scale metadata requests for map and legacy USB settings', async () => {
+test('successful USB save invalidates stale scale metadata requests', async () => {
     const scaleInfoByDeviceId = new Map([['A', { firmwareVersion: 'stale' }]]);
     const staleRequest = { marker: true };
     const scaleInfoInFlight = new Map([['A', staleRequest]]);
-    const pendingChanges = { rea: { skalePoweredByUsb: true }, de1: {}, de1Advanced: {}, workflow: {} };
+    const pendingChanges = { rea: { skalePoweredByUsbByDevice: { A: true } }, de1: {}, de1Advanced: {}, workflow: {} };
     const flush = loadFlushPendingChanges({
         pendingChanges,
         scaleInfoByDeviceId,
         scaleInfoInFlight,
         setReaSettings: async changes => {
-            assert.deepEqual(changes, { skalePoweredByUsb: true });
+            assert.deepEqual(changes, { skalePoweredByUsbByDevice: { A: true } });
         },
     });
 
@@ -476,42 +467,108 @@ test('failed save preserves metadata until the setting is actually persisted', a
     assert.deepEqual(pendingChanges.rea, { skalePoweredByUsbByDevice: { A: true } });
 });
 
-test('scale setting helper gives the map precedence over legacy state', () => {
+test('scale setting helper reads only the per-device USB map', () => {
     const getSetting = loadScaleDeviceSetting();
-    assert.equal(getSetting({
-        skalePoweredByUsbByDevice: { A: false },
-        skalePoweredByUsb: true,
-    }, 'skalePoweredByUsbByDevice', 'skalePoweredByUsb', 'A'), false);
-    assert.equal(getSetting({
-        skalePoweredByUsbByDevice: { A: false },
-        skalePoweredByUsb: true,
-    }, 'skalePoweredByUsbByDevice', 'skalePoweredByUsb', 'B'), false);
-    assert.equal(getSetting({
-        skalePoweredByUsb: true,
-    }, 'skalePoweredByUsbByDevice', 'skalePoweredByUsb', 'A'), true);
-    assert.equal(getSetting({}, 'skalePoweredByUsbByDevice', 'skalePoweredByUsb', 'A'), undefined);
+    const settings = { skalePoweredByUsbByDevice: { A: true }, skalePoweredByUsb: true };
+    assert.equal(getSetting(settings, 'skalePoweredByUsbByDevice', 'A'), true);
+    assert.equal(getSetting(settings, 'skalePoweredByUsbByDevice', 'B'), false);
+    assert.equal(getSetting({ skalePoweredByUsb: true }, 'skalePoweredByUsbByDevice', 'A'), undefined);
 });
 
-test('scale setting helper does not fall back from a declared empty map to legacy state', () => {
-    const getSetting = loadScaleDeviceSetting();
-    assert.equal(getSetting({
-        skalePoweredByUsbByDevice: {},
-        skalePoweredByUsb: true,
-    }, 'skalePoweredByUsbByDevice', 'skalePoweredByUsb', 'A'), false);
+for (const reaFinishesFirst of [true, false]) {
+    test(`successful USB write invalidates metadata despite DE1 failure (REA first: ${reaFinishesFirst})`, async () => {
+        const rea = deferred();
+        let rejectDe1;
+        const de1 = new Promise((_, reject) => { rejectDe1 = reject; });
+        const metadata = new Map([['A', { batteryLevel: 77 }]]);
+        const inFlight = new Map([['A', {}]]);
+        let renders = 0;
+        const pendingChanges = { rea: { skalePoweredByUsbByDevice: { A: true } }, de1: { steamTemp: 130 }, de1Advanced: {}, workflow: {} };
+        const flush = loadFlushPendingChanges({
+            pendingChanges, scaleInfoByDeviceId: metadata, scaleInfoInFlight: inFlight,
+            setReaSettings: () => rea.promise, setDe1Settings: () => de1,
+            renderDeviceListFromCache: () => { renders += 1; },
+        });
+        const saved = flush.flushPendingChanges();
+        const rejected = assert.rejects(saved, /DE1 unavailable/);
+        if (reaFinishesFirst) { rea.resolve(); await rea.promise; }
+        rejectDe1(new Error('DE1 unavailable'));
+        await rejected;
+        if (!reaFinishesFirst) {
+            assert.equal(metadata.size, 1);
+            rea.resolve(); await rea.promise;
+        }
+        assert.equal(metadata.size, 0);
+        assert.equal(inFlight.size, 0);
+        assert.equal(flush.generation, 1);
+        assert.equal(renders, 1);
+        assert.deepEqual(pendingChanges.de1, { steamTemp: 130 });
+    });
+}
+
+test('every scale keeps inline Preferred while only supported Skale devices show Settings', () => {
+    for (const usbPoweredByDevice of [undefined, {}, null, []]) {
+        const render = loadRenderSingleDeviceList({ scaleInfoByDeviceId: new Map(), usbPoweredByDevice });
+        for (const [id, name] of [['A', 'Skale 2'], ['B', 'Acaia Lunar']]) {
+            const html = render([{ id, name, state: 'connected' }], id, 'preferredScaleId', 'Scale');
+            assert.match(html, /onchange="window.setPreferredDevice/);
+            assert.match(html, /aria-label="Preferred"/);
+            assert.match(html, /checked/);
+            assert.equal(html.includes('openScaleDeviceSettings'), name === 'Skale 2' && usbPoweredByDevice !== undefined && usbPoweredByDevice !== null && !Array.isArray(usbPoweredByDevice));
+        }
+    }
 });
 
-test('scale settings put supported controls in a device popup', () => {
-    assert.match(source, /openScaleDeviceSettings/);
-    assert.match(source, /scale-device-settings-modal/);
-    assert.match(source, /skalePoweredByUsbByDevice/);
-    assert.match(source, /'skalePoweredByUsb'/);
-    assert.match(source, /data-device-id=/);
-    assert.doesNotMatch(source, /scaleButtonStartsEspresso/);
-    assert.doesNotMatch(source, /renderScaleToggle\(settings/);
+test('Preferred preserves the existing updateReaSetting call behavior', async () => {
+    const calls = [];
+    let renders = 0;
+    const setPreferred = new Function('window', 'renderDeviceListFromCache', 'logger',
+        `return (${extractAssignedFunction('setPreferredDevice')});`)(
+        { updateReaSetting: (...args) => calls.push(args) }, () => { renders += 1; }, { error() {} });
+    await setPreferred('preferredScaleId', 'A', true);
+    await setPreferred('preferredMachineId', 'B', false);
+    assert.deepEqual(calls, [['preferredScaleId', 'A'], ['preferredMachineId', null]]);
+    assert.equal(renders, 2);
 });
 
-test('device settings are indexed and updated by the selected device ID', () => {
-    assert.match(source, /settings\?\.\[key\]\?\.\[deviceId\] === true/);
-    assert.match(source, /values\[deviceId\] = true/);
-    assert.match(source, /delete values\[deviceId\]/);
+function loadPopup({ settings, device, getTranslation }) {
+    const title = { textContent: '' };
+    const content = { innerHTML: '' };
+    let shown = 0;
+    let translated = 0;
+    const nodes = { 'scale-device-settings-title': title, 'scale-device-settings-content': content,
+        'scale-device-settings-modal': { showModal() { shown += 1; } } };
+    const open = new Function('settingsCache', 'deviceStateCache', 'document', 'getTranslation', 'escapeHtml', 'translatePage',
+        `${extractFunction('getScaleDeviceSetting')}
+${extractFunction('hasSkaleUsbSetting')}
+${extractFunction('renderScalePopupToggle')}
+return (${extractAssignedFunction('openScaleDeviceSettings')});`)(
+        { rea: settings }, { devices: [device] }, { getElementById: id => nodes[id] }, getTranslation,
+        value => String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;'),
+        () => { translated += 1; });
+    return { open, title, content, get shown() { return shown; }, get translated() { return translated; } };
+}
+
+test('Skale popup translates title and USB control and gives the checkbox an accessible name', () => {
+    const translations = { Settings: 'Einstellungen', 'Skale USB Power': 'Skale-USB-Stromversorgung',
+        'Declare USB power manually and hide the battery level.': 'Akkustand ausblenden.' };
+    const popup = loadPopup({ settings: { skalePoweredByUsbByDevice: { A: true } },
+        device: { id: 'A', name: 'Skale 2' }, getTranslation: key => translations[key] || key });
+    popup.open('A');
+    assert.equal(popup.title.textContent, 'Einstellungen: Skale 2');
+    assert.match(popup.content.innerHTML, /aria-label="Skale-USB-Stromversorgung"/);
+    assert.match(popup.content.innerHTML, /Akkustand ausblenden/);
+    assert.match(popup.content.innerHTML, /checked/);
+    assert.doesNotMatch(popup.content.innerHTML, /Preferred|suppress battery reads/);
+    assert.equal(popup.shown, 1);
+    assert.equal(popup.translated, 1);
+});
+
+test('unsupported device popups stay closed even if invoked directly', () => {
+    for (const [settings, name] of [[{}, 'Skale 2'], [{ skalePoweredByUsb: true }, 'Skale 2'], [{ skalePoweredByUsbByDevice: {} }, 'Acaia']]) {
+        const popup = loadPopup({ settings, device: { id: 'A', name }, getTranslation: key => key });
+        popup.open('A');
+        assert.equal(popup.shown, 0);
+        assert.equal(popup.content.innerHTML, '');
+    }
 });
