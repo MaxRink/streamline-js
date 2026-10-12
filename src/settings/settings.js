@@ -2045,6 +2045,7 @@ export function renderScreenSaverSettings() {
     const hasCustom = screensaverImagesCache.length > 0;
     const cycleSeconds = parseInt(localStorage.getItem('screensaverCycleSeconds'), 10) || 10;
     const blackSaver = isBlackScreenSaver();
+    const showClock = localStorage.getItem('screensaverShowClock') !== 'false';
     // Hide the control where REA says the platform cannot set brightness --
     // DisplayState.platformSupported.brightness. Assume supported until the first
     // snapshot lands, so the row does not flicker in on load.
@@ -2098,6 +2099,24 @@ export function renderScreenSaverSettings() {
                         <input type="checkbox" class="sr-only peer"
                                ${enabled && !blackSaver ? 'checked' : ''}
                                onchange="window.setScreensaverEnabled(this.checked)">
+                        <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
+                        <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
+
+            <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
+                <div class="content-stretch flex items-center justify-between relative w-full">
+                    <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--text-primary)] text-[30px]">
+                        <p class="leading-[1.2]" data-i18n-key="Show date and time">Show date and time</p>
+                    </div>
+                    <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
+                        <input type="checkbox" class="sr-only peer"
+                               id="screensaver-show-clock"
+                               ${showClock ? 'checked' : ''}
+                               onchange="window.setScreensaverShowClock(this.checked)">
                         <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
                         <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
                     </label>
@@ -8131,6 +8150,10 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
         if (enabled) apiSetBlackScreenSaver(false);
         ui.showToast(`${getTranslation('Screen saver')} ${enabled ? getTranslation('Enabled') : getTranslation('Disabled')}`, 2000, 'success');
         if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
+    };
+
+    window.setScreensaverShowClock = function(enabled) {
+        ui.setScreensaverClockEnabled(enabled);
     };
 
     window.handleScreensaverCycleChange = function(value) {
