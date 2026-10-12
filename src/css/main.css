@@ -193,6 +193,7 @@ body {
     --low-contrast-white: #959595;
     --text-primary: #121212; /* Renamed from --dark-gray */
     --text-primary-disabled: #c8cacc;
+    --text-primary-inactive: #DDDDDD; /* style guide Light Mode/Text/Primary.Inactive: hidden profile rows */
     --preset-value-color: #AAAAAA;
     --preset-value-color-disabled: #e3e4e6;
     --preset-label-selected-color: #777777;
@@ -294,6 +295,7 @@ body {
     --mimoja-blue-v2: #415996;
     --text-primary: #e8e8e8;
     --text-primary-disabled: #4a4a4a;
+    --text-primary-inactive: #707485; /* style guide Dark Primary.Inactive is #232325 (~1.1:1), so Text/Tertiary until the designer fixes it */
     --preset-value-color: #4e5559;
     --preset-value-color-disabled: #262a2c;
     --preset-label-selected-color: #999999;

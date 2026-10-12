@@ -731,7 +731,7 @@ function renderProfiles() {
             }
 
             if (isHidden) {
-                div.classList.add('text-[var(--low-contrast-white)]');
+                div.classList.add('text-[var(--text-primary-inactive)]');
                 const unhideButton = document.createElement('button');
                 unhideButton.className = 'px-1 py-0 -my-[6.75px] hover:bg-[var(--button-grey)] rounded-full text-[var(--button-primary-bg)]';
                 unhideButton.title = 'Show this profile';
@@ -763,12 +763,12 @@ function renderProfiles() {
 
                 const allItems = clickedItem.parentElement.querySelectorAll('[data-profile-key]');
                 for(const item of allItems) {
-                    item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]', 'bg-[var(--button-grey)]', 'text-black');
+                    item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]', 'bg-[var(--button-grey)]', 'text-black', 'text-[var(--text-primary-inactive)]', 'text-[var(--low-contrast-white)]');
                     item.setAttribute('aria-selected', 'false');
                     item.querySelector('.profile-hide-btn')?.remove();
                     const itemKey = item.dataset.profileKey;
                     if (itemKey && availableProfiles[itemKey] && availableProfiles[itemKey].visibility === 'hidden') {
-                        item.classList.add('text-[var(--low-contrast-white)]');
+                        item.classList.add('text-[var(--text-primary-inactive)]');
                     } else {
                         item.classList.add('text-[var(--text-primary)]');
                     }
@@ -777,6 +777,7 @@ function renderProfiles() {
                 if (isHidden) {
                     clickedItem.classList.add('bg-[var(--button-grey)]', 'rounded-[7.5px]');
                     clickedItem.classList.remove('text-[var(--button-primary-text)]');
+                    clickedItem.classList.add('text-[var(--low-contrast-white)]'); // Primary.Inactive vanishes on --button-grey
 
                 } else {
                     clickedItem.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]');
@@ -1470,7 +1471,7 @@ function filterProfiles(searchTerm) {
         div.appendChild(leftSide);
 
         if (isHidden) {
-            div.classList.add('text-[var(--low-contrast-white)]');
+            div.classList.add('text-[var(--text-primary-inactive)]');
             const unhideButton = document.createElement('button');
             unhideButton.className = 'px-1 py-0 -my-[6.75px] hover:bg-[var(--button-grey)] rounded-full text-[var(--button-primary-bg)]';
             unhideButton.title = 'Show this profile';
@@ -1494,11 +1495,11 @@ function filterProfiles(searchTerm) {
 
             const allItems = clickedItem.parentElement.querySelectorAll('[data-profile-key]');
             for(const item of allItems) {
-                item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]', 'bg-[var(--button-grey)]', 'text-black');
+                item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]', 'bg-[var(--button-grey)]', 'text-black', 'text-[var(--text-primary-inactive)]', 'text-[var(--low-contrast-white)]');
                 item.setAttribute('aria-selected', 'false');
                 const itemKey = item.dataset.profileKey;
                 if (itemKey && availableProfiles[itemKey] && availableProfiles[itemKey].visibility === 'hidden') {
-                    item.classList.add('text-[var(--low-contrast-white)]');
+                    item.classList.add('text-[var(--text-primary-inactive)]');
                 } else {
                     item.classList.add('text-[var(--text-primary)]');
                 }
@@ -1507,6 +1508,7 @@ function filterProfiles(searchTerm) {
             if (isHidden) {
                 clickedItem.classList.add('bg-[var(--button-grey)]', 'rounded-[7.5px]');
                 clickedItem.classList.remove('text-[var(--button-primary-text)]');
+                clickedItem.classList.add('text-[var(--low-contrast-white)]'); // Primary.Inactive vanishes on --button-grey
 
             } else {
                 clickedItem.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]');
