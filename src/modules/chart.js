@@ -1395,6 +1395,8 @@ export function plotProfile(profile) {
     // plot 99px in from the left, 39px below the top, 58px above the bottom),
     // distinct from the live chart's baseLayout margins.
     layout.margin = { ...layout.margin, ...PROFILE_PREVIEW_MARGIN };
+    // Axis text 20px in Figma at 0.75.
+    layout.font = { ...layout.font, size: 15 };
     // Same dashed step markers the live chart draws (addStepMarker), so a
     // profile previewed in the selector is read the same way as one being
     // pulled.
@@ -1424,12 +1426,16 @@ export function plotProfile(profile) {
     if (targetPressureTrace) {
         targetPressureTrace.line.dash = 'solid';
         targetPressureTrace.line.width = 5;
+        // The preview draws the target as the line itself, so it takes the
+        // Ongoing token rather than the dotted Goal tint the live chart uses.
+        targetPressureTrace.line.color = theme === 'dark' ? '#00B087' : '#17c29a';
     }
 
     const targetFlowTrace = plotData.find(trace => trace.name === 'Target Flow');
     if (targetFlowTrace) {
         targetFlowTrace.line.dash = 'solid';
         targetFlowTrace.line.width = 5;
+        targetFlowTrace.line.color = '#0358cf'; // no dark Flow.Ongoing token exists
     }
 
     const groupTempTrace = plotData.find(trace => trace.name === '°C');

@@ -115,28 +115,16 @@
     color: var(--button-primary-text);
 }
 
-/* Profile selector — dark palette conformance. Panel/header/chart dividers use
-   border-[var(--border-primary)] in the markup itself, so only the action
-   buttons below still need a dark override. */
-[data-theme="dark"] #add_profile,
-[data-theme="dark"] #view_profile,
-[data-theme="dark"] #search_profile,
-[data-theme="dark"] #delete_profile,
-[data-theme="dark"] #reset_btn,
-[data-theme="dark"] #edit_profile {
-    border-color: var(--border-primary);
-}
+/* Profile selector — dark palette conformance. Panel/header/chart dividers and
+   the action-button borders use border tokens in the markup itself. */
 [data-theme="dark"] #selected_profile_name {
     color: var(--text-primary);
 }
 [data-theme="dark"] #reset-profile-cancel { border-color: var(--border-primary); }
-[data-theme="dark"] [data-notes-toggle] { text-decoration: underline; }
 [data-theme="dark"] #add_profile svg path,
 [data-theme="dark"] #view_profile svg path,
 [data-theme="dark"] #search_profile svg path,
-[data-theme="dark"] #delete_profile svg path,
-[data-theme="dark"] #edit-profile-name-btn svg path,
-[data-theme="dark"] #profile-list button svg path {
+[data-theme="dark"] #delete_profile svg path {
     stroke: var(--text-primary);
 }
 

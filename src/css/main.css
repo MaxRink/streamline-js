@@ -267,17 +267,17 @@ body {
     /* Profile editor CARDS redesign. Step-card fill (--card-bg) is Figma's
        Background.Primary (#101217); the ground behind the cards (--bg-tertiary)
        is Background.Secondary (#17191E) from the style guide, so cards sit darker
-       than their ground. --bg-secondary is still DERIVED (no style-guide value).
+       than their ground. --bg-secondary is Background.Secondary too.
        --tab-text-inactive reuses Figma's FavButton.Text.NotSelected (#5F7BA8)
        per the designer; contrast on dark cards is low by choice. */
     --bg-tertiary: #17191E; /* style guide Dark Mode/Background/Background.Secondary */
     --card-bg: #101217; /* style guide Dark Mode/Background/Background.Primary */
-    --bg-secondary: #1b1e26;
+    --bg-secondary: #17191E; /* style guide Dark Mode/Background/Background.Secondary: selector header + list panel */
     --border-primary: #3d4255; /* style guide Dark Mode/Border/Primary */
     --border-graph-grid: #1E202B;
     --tab-text-inactive: #5F7BA8;
     --box-color: #17191e;
-    --profileselectorbg:#17191e;
+    --profileselectorbg: #101217; /* style guide Dark Mode/Background/Background.Primary: right panel rows */
     --button-grey: #292c38; /* style guide Buttons/Primary.Background.Inactive */
     --stepper-btn-bg: #101115;
     --stepper-btn-bg-disabled: #101115; /* dark keeps its fill; only the glyph mutes */
@@ -700,12 +700,12 @@ body {
      panel border at 793. So the thumb sits 40px clear of the border -- which
      is also the drag separator, so a thumb flush against it (as it once was)
      made finger taps on the thumb land on the separator -- and 35px right of
-     the list. The thumb is 39px wide, hence 40 + 39 + 35 = 114.
+     the list. The thumb is 45px wide, hence 40 + 45 + 35 = 120.
      Margin, not padding, so #left-panel's background shows in the gutter. The
      thumb is absolutely positioned against #left-panel (a sibling of
      #profile-list, not a wrapper -- #profile-list must stay a direct flex
      child for the flex/min-height rule below to size it). */
-  margin-right: 114px;
+  margin-right: 120px;
   /* Figma's row highlight ends 19px inside the list (654 of 673 at x0.75); the
      p-3 on the element would leave 12. */
   padding-right: 19px;
@@ -713,6 +713,11 @@ body {
 }
 #profile-list::-webkit-scrollbar {
   display: none;
+}
+
+/* Search field injected by initSearchButton (profile_selector.js). */
+#profile-search-input::placeholder {
+  color: var(--data-card-title-text-color);
 }
 
 /* Profile editor CARDS icons — SVGs rendered as a CSS mask so the glyph picks

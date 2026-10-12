@@ -59,8 +59,8 @@ function suppressBrowserActions(root) {
     root.addEventListener('dragstart', block);
 }
 
-function getEyeIconSVG(strokeColor, sizeClass = 'w-[49.5px] h-[49.5px]') {
-    return `<svg aria-hidden="true" class="${sizeClass}" viewBox="0 0 66 66" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 33C5.5 33 13.75 13.75 33 13.75C52.25 13.75 60.5 33 60.5 33C60.5 33 52.25 52.25 33 52.25C13.75 52.25 5.5 33 5.5 33Z" stroke="${strokeColor}" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M33 41.25C37.5563 41.25 41.25 37.5563 41.25 33C41.25 28.4437 37.5563 24.75 33 24.75C28.4437 24.75 24.75 28.4437 24.75 33C24.75 37.5563 28.4437 41.25 33 41.25Z" stroke="${strokeColor}" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+function getEyeIconSVG(strokeColor, sizeClass = 'w-[49.5px] h-[49.5px]', strokeWidth = 4) {
+    return `<svg aria-hidden="true" class="${sizeClass}" viewBox="0 0 66 66" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 33C5.5 33 13.75 13.75 33 13.75C52.25 13.75 60.5 33 60.5 33C60.5 33 52.25 52.25 33 52.25C13.75 52.25 5.5 33 5.5 33Z" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/><path d="M33 41.25C37.5563 41.25 41.25 37.5563 41.25 33C41.25 28.4437 37.5563 24.75 33 24.75C28.4437 24.75 24.75 28.4437 24.75 33C24.75 37.5563 28.4437 41.25 33 41.25Z" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
 // lucide:search, the same glyph profile_selector.html draws in #search_profile
@@ -68,12 +68,14 @@ function getEyeIconSVG(strokeColor, sizeClass = 'w-[49.5px] h-[49.5px]') {
 // hand-roll it at w-[36px], leaving the search icon visibly smaller than the
 // plus/eye/trash beside it (Figma 2662-1343 draws all four at 66 in a 110 box).
 function getSearchIconSVG() {
-    return `<svg aria-hidden="true" class="w-[49.5px] h-[49.5px]" viewBox="0 0 66 66" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M30.25 52.25C42.4003 52.25 52.25 42.4003 52.25 30.25C52.25 18.0997 42.4003 8.25 30.25 8.25C18.0997 8.25 8.25 18.0997 8.25 30.25C8.25 42.4003 18.0997 52.25 30.25 52.25Z" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M57.7498 57.7508L45.9248 45.9258" stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    return `<svg aria-hidden="true" class="w-[49.5px] h-[49.5px]" viewBox="0 0 66 66" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M30.25 52.25C42.4003 52.25 52.25 42.4003 52.25 30.25C52.25 18.0997 42.4003 8.25 30.25 8.25C18.0997 8.25 8.25 18.0997 8.25 30.25C8.25 42.4003 18.0997 52.25 30.25 52.25Z" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M57.7498 57.7508L45.9248 45.9258" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
 // Quick-hide affordance on the selected row (Figma: inline eye-off icon).
-function getEyeOffIconSVG(strokeColor, sizeClass = 'w-[30px] h-[30px]') {
-    return `<svg aria-hidden="true" class="${sizeClass}" viewBox="0 0 66 66" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 33C5.5 33 13.75 13.75 33 13.75C52.25 13.75 60.5 33 60.5 33C60.5 33 52.25 52.25 33 52.25C13.75 52.25 5.5 33 5.5 33Z" stroke="${strokeColor}" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M33 41.25C37.5563 41.25 41.25 37.5563 41.25 33C41.25 28.4437 37.5563 24.75 33 24.75C28.4437 24.75 24.75 28.4437 24.75 33C24.75 37.5563 28.4437 41.25 33 41.25Z" stroke="${strokeColor}" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 9L57 57" stroke="${strokeColor}" stroke-width="5.5" stroke-linecap="round"/></svg>`;
+// strokeWidth is in the 66 viewBox: 4 for the action-bar glyph, 5.5 for the
+// white glyph in the selected row (Figma keeps it heavier there).
+function getEyeOffIconSVG(strokeColor, sizeClass = 'w-[49.5px] h-[49.5px]', strokeWidth = 4) {
+    return `<svg aria-hidden="true" class="${sizeClass}" viewBox="0 0 66 66" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 33C5.5 33 13.75 13.75 33 13.75C52.25 13.75 60.5 33 60.5 33C60.5 33 52.25 52.25 33 52.25C13.75 52.25 5.5 33 5.5 33Z" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/><path d="M33 41.25C37.5563 41.25 41.25 37.5563 41.25 33C41.25 28.4437 37.5563 24.75 33 24.75C28.4437 24.75 24.75 28.4437 24.75 33C24.75 37.5563 28.4437 41.25 33 41.25Z" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 9L57 57" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round"/></svg>`;
 }
 
 // Shared by the row context menu's "Hide" item and the selected-row inline
@@ -585,7 +587,7 @@ function renderProfiles() {
         // auto-select logic both skip right over it.
         const renderFamilyHeader = (base) => {
             const h = document.createElement('div');
-            h.className = 'p-3 text-[30px] text-[var(--text-primary)] select-none';
+            h.className = 'px-3 py-[15.75px] leading-[1.2] text-[30px] text-[var(--text-primary)] select-none';
             h.setAttribute('role', 'presentation');
             h.textContent = base;
             container.appendChild(h);
@@ -659,7 +661,7 @@ function renderProfiles() {
             const displayTitle = translateProfileTitle(profile.title) || 'Untitled Profile';
 
             const div = document.createElement('div');
-            div.className = 'p-3 text-[30px] cursor-pointer flex justify-between items-center no-select';
+            div.className = 'px-3 py-[15.75px] leading-[1.2] text-[30px] cursor-pointer flex justify-between items-center no-select';
             div.dataset.profileKey = key;
             div.dataset.profileTitle = displayTitle;
             div.setAttribute('role', 'option');
@@ -710,10 +712,11 @@ function renderProfiles() {
 
             const createHideButton = () => {
                 const hideButton = document.createElement('button');
-                hideButton.className = 'profile-hide-btn p-1 rounded-full flex-shrink-0';
+                // 49.5px glyph (Figma 66 box); -my-[6.75px] keeps the row at its 36px text height (30px * 1.2).
+                hideButton.className = 'profile-hide-btn px-1 py-0 -my-[6.75px] rounded-full flex-shrink-0';
                 hideButton.title = 'Hide this profile';
                 hideButton.setAttribute('aria-label', `Hide profile ${displayTitle}`);
-                hideButton.innerHTML = getEyeOffIconSVG('currentColor');
+                hideButton.innerHTML = getEyeOffIconSVG('currentColor', undefined, 5.5);
                 hideButton.addEventListener('click', async (e) => {
                     e.stopPropagation();
                     await hideOrDeleteProfile(key, profileRecord);
@@ -730,10 +733,10 @@ function renderProfiles() {
             if (isHidden) {
                 div.classList.add('text-[var(--low-contrast-white)]');
                 const unhideButton = document.createElement('button');
-                unhideButton.className = 'p-1 hover:bg-[var(--button-grey)] rounded-full text-[var(--button-primary-bg)]';
+                unhideButton.className = 'px-1 py-0 -my-[6.75px] hover:bg-[var(--button-grey)] rounded-full text-[var(--button-primary-bg)]';
                 unhideButton.title = 'Show this profile';
                 unhideButton.setAttribute('aria-label', `Show profile ${displayTitle}`);
-                unhideButton.innerHTML = getEyeIconSVG('currentColor', 'w-6 h-6');
+                unhideButton.innerHTML = getEyeIconSVG('currentColor');
 
                 unhideButton.addEventListener('click', async (e) => {
                     e.stopPropagation();
@@ -749,7 +752,7 @@ function renderProfiles() {
                 // last, not whichever was added last. Stacking them left the
                 // selected row reading --text-primary, which is only visible in
                 // light mode -- in dark the two tokens are the same #e8e8e8.
-                div.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[8px]');
+                div.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]');
             } else {
                 div.classList.add('text-[var(--text-primary)]');
             }
@@ -760,7 +763,7 @@ function renderProfiles() {
 
                 const allItems = clickedItem.parentElement.querySelectorAll('[data-profile-key]');
                 for(const item of allItems) {
-                    item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[8px]', 'bg-[var(--button-grey)]', 'text-black');
+                    item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]', 'bg-[var(--button-grey)]', 'text-black');
                     item.setAttribute('aria-selected', 'false');
                     item.querySelector('.profile-hide-btn')?.remove();
                     const itemKey = item.dataset.profileKey;
@@ -772,11 +775,11 @@ function renderProfiles() {
                 }
 
                 if (isHidden) {
-                    clickedItem.classList.add('bg-[var(--button-grey)]', 'rounded-[8px]');
+                    clickedItem.classList.add('bg-[var(--button-grey)]', 'rounded-[7.5px]');
                     clickedItem.classList.remove('text-[var(--button-primary-text)]');
 
                 } else {
-                    clickedItem.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[8px]');
+                    clickedItem.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]');
                     clickedItem.classList.remove('text-[var(--text-primary)]');
                     clickedItem.appendChild(createHideButton());
                 }
@@ -1142,7 +1145,6 @@ function initViewButton() {
     button.setAttribute('aria-label', 'Show hidden profiles');
     button.title = 'Show hidden profiles';
     button.classList.remove("bg-[var(--button-primary-bg)]");
-    button.classList.add("bg-[var(--button-grey)]"); // Use CSS variable for background
     console.log('initViewButton: Initial state set');
 
     button.addEventListener('click', () => {
@@ -1159,7 +1161,6 @@ function initViewButton() {
             button.title = 'Hide hidden profiles';
             // Use direct style manipulation instead of Tailwind arbitrary values
             button.style.backgroundColor = 'var(--button-primary-bg)';
-            button.classList.remove("bg-[var(--button-grey)]");
             if (page_title) {
                 page_title.textContent = "All Profiles";
             }
@@ -1172,7 +1173,6 @@ function initViewButton() {
             // Reset to default background
             button.style.color = '';
             button.style.backgroundColor = '';
-            button.classList.add("bg-[var(--button-grey)]");
             if (page_title) {
                 page_title.textContent = "Profiles";
             }
@@ -1239,7 +1239,6 @@ function initSearchButton() {
     // Set initial state on load (default bg, blue icon)
     button.innerHTML = getSearchIconSVG();
     button.classList.remove("bg-[var(--button-primary-bg)]");
-    button.classList.add("bg-[var(--button-grey)]"); // Use CSS variable for background
     console.log('initSearchButton: Initial state set');
 
     let searchInput = null;
@@ -1250,10 +1249,11 @@ function initSearchButton() {
 
         if (isSearching) {
             // Enter search mode
-            button.innerHTML = `<svg aria-hidden="true" class="w-[36px] h-[36px]" viewBox="0 0 66 66" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M30.25 52.25C42.4003 52.25 52.25 42.4003 52.25 30.25C52.25 18.0997 42.4003 8.25 30.25 8.25C18.0997 8.25 8.25 18.0997 8.25 30.25C8.25 42.4003 18.0997 52.25 30.25 52.25Z" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M57.7498 57.7508L45.9248 45.9258" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`; // Blue icon
+            button.innerHTML = getSearchIconSVG();
+            // On the blue fill the glyph switches to the on-primary colour, like the view button.
+            button.style.color = 'var(--button-primary-text)';
             // Use direct style manipulation instead of Tailwind arbitrary values
             button.style.backgroundColor = 'var(--button-primary-bg)';
-            button.classList.remove("bg-[var(--button-grey)]");
 
             // Create search input field between search_profile and delete_profile buttons
             if (button.parentNode && deleteButton) {
@@ -1362,7 +1362,7 @@ function exitSearchMode(originalTitle = null) {
         searchButton.innerHTML = getSearchIconSVG();
         // Reset to default background
         searchButton.style.backgroundColor = '';
-        searchButton.classList.add("bg-[var(--button-grey)]");
+        searchButton.style.color = '';
     }
 
     // Remove the search input if it exists
@@ -1446,7 +1446,7 @@ function filterProfiles(searchTerm) {
         const displayTitle = translateProfileTitle(profile.title) || 'Untitled Profile';
 
         const div = document.createElement('div');
-        div.className = 'p-3 text-[30px] cursor-pointer flex justify-between items-center no-select';
+        div.className = 'px-3 py-[15.75px] leading-[1.2] text-[30px] cursor-pointer flex justify-between items-center no-select';
         div.dataset.profileKey = key;
         div.dataset.profileTitle = displayTitle;
         div.setAttribute('role', 'option');
@@ -1472,10 +1472,10 @@ function filterProfiles(searchTerm) {
         if (isHidden) {
             div.classList.add('text-[var(--low-contrast-white)]');
             const unhideButton = document.createElement('button');
-            unhideButton.className = 'p-1 hover:bg-[var(--button-grey)] rounded-full text-[var(--button-primary-bg)]';
+            unhideButton.className = 'px-1 py-0 -my-[6.75px] hover:bg-[var(--button-grey)] rounded-full text-[var(--button-primary-bg)]';
             unhideButton.title = 'Show this profile';
             unhideButton.setAttribute('aria-label', `Show profile ${displayTitle}`);
-            unhideButton.innerHTML = getEyeIconSVG('currentColor', 'w-6 h-6');
+            unhideButton.innerHTML = getEyeIconSVG('currentColor');
 
             unhideButton.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -1494,7 +1494,7 @@ function filterProfiles(searchTerm) {
 
             const allItems = clickedItem.parentElement.querySelectorAll('[data-profile-key]');
             for(const item of allItems) {
-                item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[8px]', 'bg-[var(--button-grey)]', 'text-black');
+                item.classList.remove('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]', 'bg-[var(--button-grey)]', 'text-black');
                 item.setAttribute('aria-selected', 'false');
                 const itemKey = item.dataset.profileKey;
                 if (itemKey && availableProfiles[itemKey] && availableProfiles[itemKey].visibility === 'hidden') {
@@ -1505,11 +1505,11 @@ function filterProfiles(searchTerm) {
             }
 
             if (isHidden) {
-                clickedItem.classList.add('bg-[var(--button-grey)]', 'rounded-[8px]');
+                clickedItem.classList.add('bg-[var(--button-grey)]', 'rounded-[7.5px]');
                 clickedItem.classList.remove('text-[var(--button-primary-text)]');
 
             } else {
-                clickedItem.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[8px]');
+                clickedItem.classList.add('bg-[var(--button-primary-bg)]', 'text-[var(--button-primary-text)]', 'rounded-[7.5px]');
                 clickedItem.classList.remove('text-[var(--text-primary)]');
             }
 
