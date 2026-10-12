@@ -12,7 +12,7 @@ const PLUS_ICON = '<svg aria-hidden="true" width="36" height="36" viewBox="0 0 5
 
 function multiplierCard({ key, label, description, unit = '', step }) {
     return `
-        <section class="border border-[#c9c9c9] border-solid flex flex-col gap-[20px] items-center px-[60px] py-[20px] w-[590px]">
+        <section class="border border-[var(--border-primary)] border-solid flex flex-col gap-[20px] items-center px-[60px] py-[20px] w-[590px]">
             <p id="${key}-label" class="font-['Inter:Regular',sans-serif] font-normal leading-[1.2] text-[var(--text-primary)] text-[30px]" data-i18n-key="${label}">${label}</p>
             <div class="flex gap-[20px] h-[72px] items-center justify-center w-full">
                 <button type="button" data-adjust="${key}" data-delta="-${step}" aria-label="Decrease ${label.toLowerCase()}" class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center">${MINUS_ICON}</button>
@@ -32,7 +32,7 @@ function render(container) {
             <div class="font-['Inter:Semi_Bold',sans-serif] font-semibold text-[var(--text-primary)] text-[36px] text-center w-full">
                 <p class="leading-[1.2]" data-i18n-key="Flow Multiplier Settings">Flow Multiplier Settings</p>
             </div>
-            <div class="h-0 w-full"><hr class="border-t border-[#c9c9c9] w-full"></div>
+            <div class="h-0 w-full"><hr class="border-t border-[var(--border-primary)] w-full"></div>
             <div class="flex flex-col items-center gap-[30px] w-full">
                 ${multiplierCard({
                     key: 'weightFlowMultiplier',

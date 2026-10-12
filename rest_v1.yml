@@ -4,6 +4,32 @@ info:
   version: 1.0.0
   description: |
     This API provides endpoints to retrieve a list of Bluetooth devices, trigger a scan for new devices, manage DE1 espresso machine state and settings, and interact with a connected scale.
+
+    External sensor IDs are opaque URI path components: clients percent-encode
+    them once and the host decodes them once at the sensor route boundary.
+    Host-assigned UUID resource IDs retain their existing route contracts.
+    Invalid UTF-8 in a percent-encoded sensor ID is rejected with HTTP 400.
+
+    Requests under `/api/` are subject to process-local admission limits. A
+    per-client limit returns 429 and a global limit returns 503; both include
+    `Retry-After: 1`. Saturated requests are rejected rather than queued.
+x-admission-control:
+  windowSeconds: 1
+  globalConcurrent: 128
+  perClientConcurrent: 32
+  globalAcceptedPerSecond: 1024
+  perClientAcceptedPerSecond: 256
+  maxTrackedClients: 256
+x-buffered-request-bodies:
+  timeoutStatus: 408
+  oversizedStatus: 413
+  limits:
+    control:
+      maxBytes: 65536
+      timeoutSeconds: 10
+    ordinary:
+      maxBytes: 1048576
+      timeoutSeconds: 30
 servers:
   - url: http://{tablet-ip}:8080
     variables:
@@ -24,26 +50,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
-                  properties:
-                    name:
-                      type: string
-                    id:
-                      type: string
-                    state:
-                      type: string
-                      enum: [connected, disconnected]
-                    type:
-                      type: string
-                      enum: [machine, scale, sensor]
-                    available:
-                      type: boolean
-                      description: >
-                        true if the device is currently present in discovery;
-                        false for a remembered device that is not present
-                        (reported with state "disconnected"). Remembered devices
-                        are those the user has connected to; they persist across
-                        restarts until forgotten via /api/v1/devices/forget.
+                  $ref: "#/components/schemas/DeviceInventory"
         "500":
           description: Internal Server Error
           content:
@@ -88,7 +95,20 @@ paths:
   /api/v1/devices/scan:
     get:
       summary: Scan for Devices
-      description: Triggers a device scan. When connect=true (default), scans first and automatically fills missing machine and scale slots without replacing connected devices. When connect=false, performs discovery only.
+      description: >
+        Triggers a device scan. When connect=true (default), scans first and
+        automatically fills missing machine and scale slots, then asynchronously
+        attempts the preferred runtime grinder when present after primary
+        machine/scale selection resolves, without replacing connected devices.
+        When connect=false, performs discovery only. During
+        the protected post-wake preferred-scale recovery window, an explicit
+        scan - discovery-only included - is deferred and coalesced with any
+        other pending explicit scan instead of preempting the background
+        preferred-scale watch. At most one scan runs when the window ends. The
+        pending scan is dropped instead when the preferred scale reconnects
+        first, when the machine disconnects, when the preferred scale is
+        cleared, or when Decaid shuts down; the waiting request then completes
+        without a scan.
       tags: [Devices]
       parameters:
         - name: connect
@@ -98,14 +118,22 @@ paths:
             type: boolean
             default: true
         - name: quick
-          description: If true, Decaid returns an empty array immediately while the same scan-first policy continues in the background. Useful when polling for device updates manually.
+          description: If true, Decaid returns an empty array immediately while the same scan-first policy continues in the background, after any post-wake deferral has elapsed. Useful when polling for device updates manually.
           in: query
           schema:
             type: boolean
             default: false
       responses:
         "200":
-          description: Scan started successfully
+          description: >
+            Device inventory after the scan, or immediately when a pending scan
+            is dropped or quick=true is set, before any deferred scan runs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceInventory"
         "500":
           description: Internal Server Error
           content:
@@ -120,6 +148,8 @@ paths:
         Accepts deviceId via JSON body (preferred) or query parameter (backward compatible).
         Device IDs may contain special characters (e.g. colons in BLE MAC addresses,
         slashes in serial port paths), so the JSON body approach avoids URL encoding issues.
+        Controller-owned inventory devices such as Bengle's integrated virtual scale
+        are not independent command targets and return 409.
       tags: [Devices]
       parameters:
         - name: deviceId
@@ -128,6 +158,14 @@ paths:
           required: false
           schema:
             type: string
+        - name: connectionRole
+          description: Optional local role for a scale connection.
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [primary, auxiliary]
+            nullable: false
       requestBody:
         description: JSON object with deviceId
         required: false
@@ -139,6 +177,14 @@ paths:
                 deviceId:
                   type: string
                   description: The id of the device, previously discovered with /api/v1/devices/scan request
+                connectionRole:
+                  type: string
+                  enum: [primary, auxiliary]
+                  nullable: false
+                  default: primary
+                  description: >
+                    Local scale connection role. Omitted is equivalent to primary;
+                    auxiliary is runtime-only and applies only to scale devices.
               required:
                 - deviceId
       responses:
@@ -149,15 +195,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/DeviceConnectResult"
         "400":
-          description: "Missing deviceId"
+          description: Missing deviceId or invalid connectionRole (including explicit null)
         "404":
           description: "Device not found"
         "409":
-          description: "Connection conflicts with another operation or a stale selection"
+          description: "Connection conflicts with another operation, a stale selection, or an inventory-only device"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeviceConnectResult"
+                oneOf:
+                  - $ref: "#/components/schemas/DeviceConnectResult"
+                  - $ref: "#/components/schemas/Error"
         "503":
           description: "Device transport currently unavailable"
           content:
@@ -176,6 +224,8 @@ paths:
       summary: Disconnect a specified device
       description: |
         Accepts deviceId via JSON body (preferred) or query parameter (backward compatible).
+        Controller-owned inventory devices such as Bengle's integrated virtual scale
+        follow their machine lifecycle and return 409.
       tags: [Devices]
       parameters:
         - name: deviceId
@@ -204,6 +254,20 @@ paths:
           description: "Missing deviceId"
         "404":
           description: "Device not found"
+        "409":
+          description: "Device is inventory-only and cannot be disconnected independently"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: >
+            Device disconnect failed. A selected grinder clears local
+            controller state before the failure is reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/v1/devices/wifi:
     get:
@@ -345,6 +409,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MachineStateError"
+        "503":
+          description: Machine write queue is full for non-idle state changes
   /api/v1/machine/profile:
     post:
       summary: Set Machine Profile
@@ -362,9 +428,9 @@ paths:
         "400":
           description: Malformed JSON body
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
   /api/v1/machine/shotSettings:
     post:
       summary: Update Shot Settings
@@ -382,9 +448,9 @@ paths:
         "400":
           description: Malformed JSON body
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
   /api/v1/machine/capabilities:
     get:
       summary: List machine capabilities
@@ -451,9 +517,9 @@ paths:
         "404":
           description: Machine connected but does not support cup warmer (not a Bengle)
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
   /api/v1/machine/cupWarmer/preheat:
     get:
       summary: Get scheduled pre-warm state
@@ -499,9 +565,9 @@ paths:
         "404":
           description: Machine connected but does not support pre-warm
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
   /api/v1/machine/ledStrip:
     get:
       summary: Get LED strip configuration
@@ -535,6 +601,8 @@ paths:
         firmware palette registers and persisted there immediately;
         `frontSwitch` is ignored on write (derived hardware behavior, not
         an independent control). There is no separate commit latch.
+        The 200 body is the canonical palette the machine now holds, not
+        an acknowledgement of the request as sent.
         Returns 404 when the connected machine is not a Bengle.
       tags: [Machine]
       requestBody:
@@ -545,15 +613,34 @@ paths:
               $ref: "#/components/schemas/LedStripState"
       responses:
         "200":
-          description: Configuration accepted and persisted
+          description: |
+            Configuration accepted and persisted. The body is the stored
+            canonical palette, identical to what a following
+            `GET /api/v1/machine/ledStrip` returns: `frontStrip` and
+            `backStrip` quantized to the firmware's 8 bits per channel
+            (low bytes dropped), and `frontSwitch` as the derived switch
+            palette rather than the value sent. The legacy
+            `{"status": "accepted"}` acknowledgement remains as a
+            defensive fallback for a machine implementation that reports
+            no stored palette after the write; no shipped implementation
+            produces it, because the write populates the stored palette.
+            Compatibility: this endpoint previously always answered with
+            that acknowledgement, so a client that reads the 200 body must
+            tolerate a `LedStripState`.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/LedStripState"
+                  - $ref: "#/components/schemas/LedStripAccepted"
         "400":
           description: Invalid request body or malformed JSON
         "404":
           description: Machine connected but does not support LED strip
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/ledStrip/commit:
     post:
@@ -577,9 +664,9 @@ paths:
         "404":
           description: Machine connected but does not support LED strip
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/ledStrip/reset:
     post:
@@ -608,9 +695,9 @@ paths:
         "404":
           description: Machine connected but does not support LED strip
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait, or firmware read failed
+          description: Machine write queue is full, or firmware read failed
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
   /api/v1/machine/scaleCalibration:
     get:
       summary: Get scale-calibration state
@@ -671,9 +758,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScaleCalibrationRejected"
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
   /api/v1/machine/settings:
     get:
       summary: Get machine settings
@@ -702,9 +789,9 @@ paths:
         "400":
           description: Malformed JSON body
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/settings/advanced:
     get:
@@ -734,9 +821,9 @@ paths:
         "400":
           description: Malformed JSON body
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/settings/reset:
     delete:
@@ -750,9 +837,9 @@ paths:
         "202":
           description: Reset accepted (one grouped serialized device write)
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No DE1 connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/calibration:
     get:
@@ -788,9 +875,9 @@ paths:
         "400":
           description: Malformed JSON body
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/calibration/{target}:
     get:
@@ -865,11 +952,11 @@ paths:
         "400":
           description: Malformed JSON body, unknown target, or invalid values
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "504":
           description: Machine did not acknowledge the calibration write within the response timeout
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/waterLevels:
     post:
@@ -887,9 +974,9 @@ paths:
         "400":
           description: Malformed JSON body
         "503":
-          description: Machine disconnected mid-write and no replacement appeared within the bounded wait
+          description: Machine write queue is full
         "500":
-          description: No machine was ever connected
+          description: No machine was connected, the machine changed during the write, or the write failed
 
   /api/v1/machine/firmware:
     get:
@@ -910,8 +997,10 @@ paths:
       summary: Push raw firmware to the machine (developer/recovery)
       description: |
         Send a raw firmware file to the machine. Returns an NDJSON progress
-        stream. Rejects an empty body with 400. Returns 409 if an update is
-        already in progress. Returns 503 if no machine is connected.
+        stream. The body is limited to 16 MiB and must arrive within 60 seconds.
+        Rejects an empty body with 400, a stalled body with 408, and an oversized
+        body with 413. Returns 409 if an update is already in progress. Returns
+        503 if no machine is connected or the machine write queue is full.
 
         A successful stream emits `erasing`, zero or more `uploading` events,
         then `done`. A failed stream emits `erasing`, zero or more `uploading`
@@ -929,6 +1018,10 @@ paths:
         required: true
         content:
           application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              maxLength: 16777216
       responses:
         "200":
           description: NDJSON progress stream (see FirmwareProgressEvent)
@@ -938,10 +1031,14 @@ paths:
                 $ref: "#/components/schemas/FirmwareProgressEvent"
         "400":
           description: Empty request body
+        "408":
+          description: Request body was not received within 60 seconds
         "409":
           description: Firmware update already in progress
+        "413":
+          description: Request body exceeds 16 MiB
         "503":
-          description: No machine connected
+          description: No machine connected or machine write queue full
     delete:
       summary: Cancel an in-progress firmware update
       description: |
@@ -962,6 +1059,7 @@ paths:
       description: |
         Resolves, loads, and validates a bundled firmware artifact before
         starting the upload. Returns an NDJSON progress stream on success.
+        The JSON body is limited to 64 KiB and must arrive within 10 seconds.
         Accepts optional `force: true` to bypass version-newer policy
         (never bypasses integrity or compatibility checks).
       tags: [Machine]
@@ -991,12 +1089,16 @@ paths:
           description: Missing or malformed artifactId
         "404":
           description: Unknown artifact ID
+        "408":
+          description: Request body was not received within 10 seconds
         "409":
           description: Firmware update already in progress
+        "413":
+          description: Request body exceeds 64 KiB
         "422":
           description: Artifact validation, compatibility, or version-policy failure
         "503":
-          description: No machine connected
+          description: No machine connected or machine write queue full
 
   # Scale API
   /api/v1/scale/info:
@@ -1032,6 +1134,7 @@ paths:
     put:
       summary: Tare Scale
       description: |
+        Unsupported plugin Scale tare returns 500 with `code: unsupported_operation`.
         Tares the connected scale. If `blockTareDuringShot` is enabled and an
         app-tracked espresso shot is actively brewing (not idle/finished), the
         request is rejected with `400` rather than tared — see
@@ -1064,39 +1167,224 @@ paths:
                     type: string
         "404":
           description: Scale not found
+        "500":
+          description: Scale command failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScaleCommandError"
+
+  /api/v1/scales/{id}/tare:
+    put:
+      summary: Tare a connected scale by device id
+      description: >
+        Tares the connected primary or auxiliary scale identified by the opaque
+        URI path component. Primary tare retains the shot safety gate above;
+        auxiliary tare is independent of shot state.
+      tags: [Scale]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Scale tared successfully
+        "400":
+          description: >
+            Invalid percent-encoded scale id or primary tare rejected by the
+            active shot safety gate.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ScaleCommandError"
+                  - type: object
+                    required: [details, type]
+                    properties:
+                      details:
+                        type: string
+                      type:
+                        type: string
+                        enum: [block_tare_during_shot]
+        "404":
+          description: Scale not found or not connected
+        "500":
+          description: Scale command failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScaleCommandError"
 
   /api/v1/scale/timer/start:
     put:
       summary: Start Scale Timer
-      description: Starts the timer on the connected scale. No-op if the scale doesn't support hardware timers.
+      description: >
+        Starts the timer on the connected scale. Native scales without timers retain their no-op behavior.
+        Unsupported plugin Scale timers return 500 with `code: unsupported_operation`.
       tags: [Scale]
       responses:
         "200":
           description: Timer started
         "500":
           description: No scale connected or error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScaleCommandError"
 
   /api/v1/scale/timer/stop:
     put:
       summary: Stop Scale Timer
-      description: Stops the timer on the connected scale. No-op if the scale doesn't support hardware timers.
+      description: >
+        Stops the timer on the connected scale. Native scales without timers retain their no-op behavior.
+        Unsupported plugin Scale timers return 500 with `code: unsupported_operation`.
       tags: [Scale]
       responses:
         "200":
           description: Timer stopped
         "500":
           description: No scale connected or error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScaleCommandError"
 
   /api/v1/scale/timer/reset:
     put:
       summary: Reset Scale Timer
-      description: Resets the timer on the connected scale. No-op if the scale doesn't support hardware timers.
+      description: >
+        Resets the timer on the connected scale. Native scales without timers retain their no-op behavior.
+        Unsupported plugin Scale timers return 500 with `code: unsupported_operation`.
       tags: [Scale]
       responses:
         "200":
           description: Timer reset
         "500":
           description: No scale connected or error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScaleCommandError"
+
+  # Connected Grinder API
+  /api/v1/grinder/info:
+    get:
+      summary: Get connected grinder information
+      description: Returns runtime identity, unchanged capabilities, optional effective control descriptors and host-built available plugin surfaces. Runtime identity is separate from persisted grinder records under /api/v1/grinders.
+      tags: [Grinder]
+      responses:
+        "200":
+          description: Connected grinder information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrinderInfo"
+        "503":
+          description: No grinder is connected
+
+  /api/v1/grinder/state:
+    get:
+      summary: Get connected grinder state
+      tags: [Grinder]
+      responses:
+        "200":
+          description: Latest validated grinder snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrinderSnapshot"
+        "503":
+          description: No grinder or snapshot is available
+
+  /api/v1/grinder/state/grinding:
+    put:
+      summary: Start the connected grinder
+      tags: [Grinder]
+      responses:
+        "200":
+          description: Start command accepted
+        "500":
+          description: Command failed or startStop is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrinderCommandError"
+        "503":
+          description: No grinder is connected
+
+  /api/v1/grinder/state/idle:
+    put:
+      summary: Stop the connected grinder
+      tags: [Grinder]
+      responses:
+        "200":
+          description: Stop command accepted
+        "500":
+          description: Command failed or startStop is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrinderCommandError"
+        "503":
+          description: No grinder is connected
+
+  /api/v1/grinder/setting:
+    put:
+      summary: Set the connected grinder setting
+      tags: [Grinder]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrinderSettingRequest"
+      responses:
+        "200":
+          description: Setting command accepted
+        "400":
+          description: setting is missing or is not a string
+        "408":
+          description: Request body was not received within 10 seconds
+        "413":
+          description: Request body exceeds 64 KiB
+        "500":
+          description: Command failed or grindSetting is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrinderCommandError"
+        "503":
+          description: No grinder is connected
+
+  /api/v1/grinder/rpm:
+    put:
+      summary: Set the connected grinder RPM
+      tags: [Grinder]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrinderRpmRequest"
+      responses:
+        "200":
+          description: RPM command accepted
+        "400":
+          description: rpm is missing, is not an integer, or is negative
+        "408":
+          description: Request body was not received within 10 seconds
+        "413":
+          description: Request body exceeds 64 KiB
+        "500":
+          description: Command failed or rpmControl is unsupported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrinderCommandError"
+        "503":
+          description: No grinder is connected
 
   # Sensors API handling
   /api/v1/sensors:
@@ -1129,6 +1417,7 @@ paths:
           required: true
           schema:
             type: string
+          description: External sensor ID as one percent-encoded URI path component.
       responses:
         "200":
           description: Full sensor manifest
@@ -1138,6 +1427,8 @@ paths:
                 $ref: "#/components/schemas/SensorManifest"
         "404":
           description: Sensor not found
+        "400":
+          description: Invalid UTF-8 in a percent-encoded sensor ID
 
   /api/v1/sensors/{id}/execute:
     post:
@@ -1149,6 +1440,7 @@ paths:
           required: true
           schema:
             type: string
+          description: External sensor ID as one percent-encoded URI path component.
       requestBody:
         required: true
         content:
@@ -1176,6 +1468,8 @@ paths:
                     nullable: true
         "404":
           description: Sensor not found
+        "400":
+          description: Invalid UTF-8 in a percent-encoded sensor ID
 
   # REA settings API
   /api/v1/settings:
@@ -1229,7 +1523,11 @@ paths:
         and partial request bodies are deep-merged against the workflow state when that request
         reaches the front of the queue. Omitted steam-setting fields keep their current values;
         supplied values replace them. Steam settings are non-nullable, so explicit `null` for
-        `steamSettings` or any of its fields returns `400`.
+        `steamSettings` or any of its fields returns `400`. The `context` object is likewise
+        non-nullable, and inside it `targetYield` is non-nullable too, because null and `0` both
+        mean stop-at-weight is off: send `0` to turn it off. Every other `context` field still
+        accepts an explicit `null` to clear it, so clearing is per field — there is no
+        whole-object clear.
         The server does not debounce or combine separate requests. Machine side effects from
         workflow PUT requests do not execute concurrently,
         so a request may wait behind an in-flight machine operation. Each response describes
@@ -1241,9 +1539,7 @@ paths:
         the same request re-attempts the requested settings.
 
         Bodies are limited to 1 MiB. At most eight workflow requests may be active or queued,
-        and a request that waits more than 30 seconds for its turn is skipped. A request whose
-        machine writes stall for more than 120 seconds returns `503` and releases the queue, so
-        one stuck operation cannot block later requests indefinitely.
+        and a request that waits more than 30 seconds for its turn is skipped.
 
         You can update the complete workflow or just specific fields:
         - **context**: Set dose, grinder, coffee, and people metadata (recommended)
@@ -1343,15 +1639,24 @@ paths:
         "400":
           description: >
             Invalid request body — the merged JSON failed to parse (e.g. an
-            invalid enum value, a missing required profile field, or an
-            unparseable number). The response body contains an `error` and
-            `message` field describing the validation failure.
+            invalid enum value, a missing required profile field, an
+            unparseable number, a non-numeric `context.targetYield`, or an
+            explicit `null` on a non-nullable patch field such as
+            `steamSettings`, `context` or `context.targetYield`). The
+            response body contains an `error` and `message` field describing
+            the validation failure.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "408":
           description: The client did not finish sending the request body within the timeout
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: A pending DE1 settings write was superseded by a newer value
           content:
             application/json:
               schema:
@@ -1377,9 +1682,9 @@ paths:
         "503":
           description: >
             The request waited more than 30 seconds for its turn and was
-            skipped, or the machine disconnected mid-write and no replacement
-            machine appeared within the bounded wait (10 seconds). In both
-            cases the controller workflow is unchanged.
+            skipped, the machine write queue was full, or a replaceable setting
+            could not reconnect to the same machine within the bounded wait.
+            In each case the controller workflow is unchanged.
           content:
             application/json:
               schema:
@@ -1603,7 +1908,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ShotRecord"
+              $ref: "#/components/schemas/ShotUpdateRequest"
             examples:
               updateNotes:
                 summary: Update only espresso notes
@@ -1625,7 +1930,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ShotRecord"
         "400":
-          description: Bad Request (ID mismatch)
+          description: |
+            Bad Request. Covers an ID in the body that does not match the
+            path ID, a body containing `measurements`, and a body containing
+            the system-managed fields `createdAt` or `updatedAt`.
           content:
             application/json:
               schema:
@@ -2194,6 +2502,40 @@ paths:
                 $ref: "#/components/schemas/BeanBatch"
         "400":
           description: Bad Request
+        "500":
+          description: Internal Server Error
+
+  /api/v1/bean-batches:
+    get:
+      summary: List all bean batches
+      description: Returns batches across all beans, optionally including archived ones.
+      tags: [Beans]
+      parameters:
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Include archived batches
+      responses:
+        "200":
+          description: Array of batches
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: |
+                Strong entity tag derived from the response body. Echo back as
+                `If-None-Match` on subsequent requests for conditional GET.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BeanBatch"
+        "304":
+          description: Not Modified — client's `If-None-Match` matched the current ETag.
         "500":
           description: Internal Server Error
 
@@ -2769,7 +3111,9 @@ paths:
       description: >
         Applies a settings patch. Omitted fields preserve the existing value;
         a null value clears the setting. For secure fields, an isSet state
-        object preserves the stored credential; null clears it. The response
+        object preserves the stored credential; null clears it. If the plugin
+        is loaded, it is reloaded so the running instance picks up the patch;
+        if it is unloaded, the patch is only persisted. The response
         is always redacted and never echoes a submitted credential.
       parameters:
         - name: id
@@ -2964,7 +3308,9 @@ paths:
     get:
       summary: Call a plugin HTTP endpoint
       description: >
-        Routes the request to a loaded plugin's declared HTTP endpoint. The
+        Routes the request to a loaded plugin's declared HTTP endpoint. Plugin
+        and endpoint IDs are opaque URI path components: clients percent-encode
+        each once, and the route decodes each once before lookup. The
         runtime applies this contract to every HTTP method. The plugin manifest
         must declare the api permission; otherwise Decaid rejects the request
         before dispatch.
@@ -3911,6 +4257,7 @@ paths:
                   port:
                     type: integer
                     nullable: true
+                    description: Active per-generation skin origin port
                   ip:
                     type: string
                     nullable: true
@@ -3918,7 +4265,7 @@ paths:
   /api/v1/webui/server/start:
     post:
       summary: Start the WebUI server
-      description: Starts serving the default WebUI skin
+      description: Starts serving the default WebUI skin through the stable port 3000 entry point
       tags: [WebUI]
       responses:
         "200":
@@ -4509,7 +4856,8 @@ paths:
         is not rolled back when another section fails.
 
         The request body is streamed into a temporary file; the whole archive
-        is never buffered in memory. Imports are bounded by the following
+        is never buffered in memory. If no body bytes arrive for 30 seconds,
+        the request is cancelled with 408. Imports are bounded by the following
         limits (exceeding any of them returns 400 with `Invalid backup
         archive`):
 
@@ -4593,6 +4941,11 @@ paths:
                     type: string
                   message:
                     type: string
+                  reason:
+                    type: string
+                    description: Present as `too_many_entries` only when the ZIP entry-count safety limit is exceeded; absent for other 400 errors.
+        "408":
+          description: Import request body stopped arriving for 30 seconds
         "500":
           description: Internal server error
   /api/v1/data/sync:
@@ -4616,8 +4969,9 @@ paths:
 
         Pull responses are streamed to a temporary ZIP before import; push
         requests stream a locally built temporary ZIP with a known content
-        length. The sync request body is limited to 1 MiB, and target
-        responses to 8 MiB. Transfers apply a connection timeout (10 s,
+        length. The sync request body is limited to 1 MiB and must arrive
+        within 30 seconds; target responses are limited to 8 MiB. Transfers
+        apply a connection timeout (10 s,
         connect establishment only), an idle timeout (30 s between stream
         events), and one deadline (10 min) per phase covering the network
         stages (upload/download and response). Timeouts abort the request
@@ -4707,6 +5061,10 @@ paths:
                     type: string
                   message:
                     type: string
+        "408":
+          description: Sync request body was not received within 30 seconds
+        "413":
+          description: Sync request body exceeds 1 MiB
         "502":
           description: Unsuccessful single-direction synchronization or two-way synchronization with no complete or partial phase
           content:
@@ -4756,6 +5114,22 @@ paths:
                   - appStore
                   - fullVersion
                   - localIp
+  /api/v1/diagnostics/ble:
+    get:
+      summary: Read-only BLE reconnect diagnostics
+      description: >
+        Returns adapter, native scan ownership, background watch, reconnect
+        policy, discovery cache, advertisement, and scan-failure state. This
+        endpoint does not start, stop, or otherwise mutate BLE operations.
+      tags: [System]
+      responses:
+        "200":
+          description: Current BLE diagnostics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BleDiagnosticsSnapshot"
+
   /api/v1/update:
     get:
       summary: Get app update state
@@ -5079,6 +5453,22 @@ paths:
         Submits user feedback as a GitHub issue. Logs and system info are
         attached as a private Gist when requested. Requires the app to be
         built with `--dart-define=GITHUB_FEEDBACK_TOKEN=<token>`.
+        Requires an authenticated Decent account. Stored credentials are verified
+        before any Gist upload, GitHub issue creation, or Support message.
+        Verification has a 30-second deadline, including credential reads and
+        the complete upstream response. Missing, rejected, or unverifiable
+        credentials (including timeout) return 400, even without a GitHub token.
+        Trusted-LAN callers use the host's account without separate caller authentication.
+        Support linking is best-effort after issue creation. Only the support
+        message ID, when available, is added to the public issue. The Support
+        response needs only messageId; no user ID is requested or published.
+        The proposed messageId format is a positive JSON integer or an ASCII
+        decimal string (1-256 digits, no leading zeros). The value 1 is reserved
+        for the temporary acknowledgement and is never published as an ID.
+        Invalid IDs skip linking without failing the created issue. The backend
+        maintainer must confirm the numeric format, lookup uniqueness, and public safety.
+        A successful Support delivery without a recognized receipt has no message
+        ID and skips the GitHub update; it does not fail delivery-only callers.
       tags: [System]
       requestBody:
         required: true
@@ -5094,11 +5484,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/FeedbackResponse"
         "400":
-          description: Missing or empty description
+          description: Missing or empty description, or Decent account not currently verified as authenticated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              examples:
+                accountRequired:
+                  value:
+                    success: false
+                    error: Decent account required
+                    message: You must be logged in to your Decent account to submit feedback.
+                verificationUnavailable:
+                  value:
+                    success: false
+                    error: Decent account required
+                    message: Could not verify your Decent account. Check your connection and try again.
         "500":
           description: Submission failed or internal error
           content:
@@ -5106,7 +5507,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "503":
-          description: Feedback service not configured (no GitHub token)
+          description: Account authenticated but feedback service not configured (no GitHub token)
           content:
             application/json:
               schema:
@@ -5114,9 +5515,14 @@ paths:
 
   /api/v1/account/decent:
     get:
-      summary: Decent account link status
+      summary: Decent account auth status
       description: >
-        Reports whether a Decent Espresso account is currently linked.
+        Reports whether the linked Decent Espresso account is currently
+        authenticated. `loggedIn` is true only when the stored credentials
+        have been accepted by the Decent backend (validated via
+        `login_test` on first status read per session); a definitive upstream
+        401 invalidates the state until the next successful login or
+        re-validation. Stored credentials being present is not sufficient.
         Linking and unlinking are performed only through the app's native UI,
         not over the network, so no login/logout routes are exposed here. The
         linked email is deliberately omitted — it is PII and this endpoint is
@@ -5124,7 +5530,7 @@ paths:
       tags: [Account]
       responses:
         "200":
-          description: Current link status
+          description: Current auth status
           content:
             application/json:
               schema:
@@ -5133,7 +5539,7 @@ paths:
                 properties:
                   loggedIn:
                     type: boolean
-                    description: True if a Decent account is linked
+                    description: True if the linked Decent account is authenticated
 
   /api/v1/account/proxy/support/api/{endpoint}:
     get:
@@ -5152,7 +5558,8 @@ paths:
         token (injected into served skin pages) or a user-managed API-client
         token. Unauthenticated/unknown tokens get 401; known but unscoped get
         403; a path outside the allowed prefix gets 403; no linked account gets
-        401.
+        401. A caller's first linked-account request pauses for native consent;
+        denial or a 30-second timeout gets 403 before any upstream request.
       tags: [Account]
       parameters:
         - name: endpoint
@@ -5178,7 +5585,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Token not scoped for account:proxy, or path not allowed
+          description: Token unscoped, path disallowed, or account consent not granted
           content:
             application/json:
               schema:
@@ -5195,7 +5602,8 @@ paths:
         Requires `Authorization: Bearer <token>` scoped
         `account:proxy:write`. The read-only skin token cannot write — it gets
         403. Other rejection rules match the GET form (401 unknown token / no
-        linked account; 403 unscoped or disallowed path).
+        linked account; 403 unscoped, disallowed path, or account consent not
+        granted).
       tags: [Account]
       parameters:
         - name: endpoint
@@ -5229,7 +5637,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Token not scoped for account:proxy:write, or path not allowed
+          description: Token unscoped, path disallowed, or account consent not granted
           content:
             application/json:
               schema:
@@ -5272,7 +5680,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Token not scoped for account:proxy:write, or path not allowed
+          description: Token unscoped, path disallowed, or account consent not granted
           content:
             application/json:
               schema:
@@ -5330,6 +5738,30 @@ paths:
 
 components:
   schemas:
+    ScaleCommandError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          description: Optional plugin error code, including unsupported_operation.
+    BleDiagnosticsSnapshot:
+      type: object
+      required: [timestamp, ble, connection]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        ble:
+          type: object
+          additionalProperties: true
+        connection:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+
     ScaleInfo:
       type: object
       properties:
@@ -5341,7 +5773,146 @@ components:
           nullable: true
           minimum: 0
           maximum: 100
-
+    GrinderCommandError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          description: Optional plugin error code, including unsupported_operation.
+    GrinderInfo:
+      type: object
+      required: [deviceId, capabilities]
+      additionalProperties: false
+      properties:
+        deviceId:
+          type: string
+          description: Runtime GrinderDevice identity, not a persisted Grinder UUID.
+        capabilities:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [startStop, grindSetting, rpmControl]
+        controls:
+          type: object
+          additionalProperties: false
+          description: Effective standard controls for this connected session (session overrides from context.publishInfo({controls, surfaces}), then fixed declaration). Not snapshot fields. Omitted if no descriptors are available.
+          properties:
+            grindSetting:
+              $ref: '#/components/schemas/GrinderSettingDescriptor'
+            rpmControl:
+              $ref: '#/components/schemas/GrinderRpmDescriptor'
+        surfaces:
+          type: array
+          description: Currently available pre-authorized surfaces (availability from context.publishInfo({controls, surfaces})), including an empty array when all declared surfaces are hidden. Omitted if none are declared.
+          items:
+            $ref: '#/components/schemas/PluginDeviceSurface'
+    GrinderSettingDescriptor:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum: [opaque]
+        - type: object
+          additionalProperties: false
+          required: [kind, min, max]
+          properties:
+            kind:
+              type: string
+              enum: [numeric]
+            min:
+              type: number
+            max:
+              type: number
+            step:
+              type: number
+              minimum: 0
+              exclusiveMinimum: true
+              description: Rendering hint; no command rounding or divisibility requirement.
+        - type: object
+          additionalProperties: false
+          required: [kind, values]
+          properties:
+            kind:
+              type: string
+              enum: [enumerated]
+            values:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              items:
+                type: string
+    GrinderRpmDescriptor:
+      type: object
+      additionalProperties: false
+      required: [kind, min, max]
+      properties:
+        kind:
+          type: string
+          enum: [numeric]
+        min:
+          type: integer
+          minimum: 0
+        max:
+          type: integer
+          minimum: 0
+        step:
+          type: integer
+          minimum: 1
+          description: Rendering hint, not an RPM rounding rule.
+    PluginDeviceSurface:
+      type: object
+      additionalProperties: false
+      required: [id, role, href]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [settings, diagnostics]
+        label:
+          type: string
+        href:
+          type: string
+          description: Host-built same-plugin HTTP URL with query-encoded runtime deviceId.
+    GrinderSnapshot:
+      type: object
+      required: [timestamp, state]
+      additionalProperties: false
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Host-owned publication timestamp.
+        state:
+          type: string
+          enum: [idle, grinding, error, unknown]
+        setting:
+          type: string
+          description: Present only when grindSetting is declared and published.
+        rpm:
+          type: integer
+          minimum: 0
+          description: Present only when rpmControl is declared and published.
+    GrinderSettingRequest:
+      type: object
+      required: [setting]
+      properties:
+        setting:
+          type: string
+    GrinderRpmRequest:
+      type: object
+      required: [rpm]
+      properties:
+        rpm:
+          type: integer
+          minimum: 0
     FlowSmoothingConfig:
       type: object
       required: [windowMs, movingAverageSamples]
@@ -5439,6 +6010,34 @@ components:
           type: string
           description: Error message (on failure)
 
+    DeviceInventory:
+      type: object
+      properties:
+        name:
+          type: string
+        id:
+          type: string
+        state:
+          type: string
+          enum: [discovered, connecting, connected, disconnecting, disconnected]
+        type:
+          type: string
+          enum: [machine, scale, sensor, grinder]
+        available:
+          type: boolean
+          description: >
+            true if the device is currently present in discovery or is actively
+            connected; false for a remembered device that is not present
+            (reported with state "disconnected"). Remembered devices persist
+            across restarts until forgotten via /api/v1/devices/forget.
+        connectionRole:
+          type: string
+          enum: [primary, auxiliary]
+          nullable: false
+          description: >
+            Present only for connected scale entries. Disconnected and
+            remembered entries omit this runtime ownership field.
+
     DeviceConnectResult:
       type: object
       required: [deviceId, operation, outcome, state, connectionError]
@@ -5463,6 +6062,11 @@ components:
         error:
           type: string
           nullable: true
+        connectionRole:
+          type: string
+          enum: [primary, auxiliary]
+          nullable: false
+          description: Present for successful scale connections.
 
     ConnectionError:
       type: object
@@ -5525,7 +6129,33 @@ components:
           description: Whether GroupHeadController is present and active
         extra:
           type: object
-          description: various extra information.
+          description: >
+            Machine details read from MMR once at connect. The object stays
+            open — a firmware or model may contribute keys not listed here —
+            but these two are always present for a DE1.
+          additionalProperties: true
+          properties:
+            refillKit:
+              type: boolean
+              description: >
+                Whether an automatic refill kit was detected on this machine.
+                Bit 0 of the refill-kit register as read at connect, before
+                Decaid writes auto back to that register. This is machine
+                detection, not configuration: writing `refillKitSetting` does
+                not change it, and it is fixed for the lifetime of the
+                connection.
+
+                Use this, not `refillKitSetting`, to decide whether a machine
+                refills itself: on a plumbed machine a low-water check against
+                WaterLevels.refillLevel fires more or less continuously, and
+                this is the only field that tells that case apart from a
+                machine with no kit.
+            voltage:
+              type: integer
+              description: Heater supply voltage in volts, as reported by the machine.
+          example:
+            refillKit: true
+            voltage: 220
 
     MachineCapabilities:
       type: object
@@ -5647,6 +6277,14 @@ components:
             independent switch register: the firmware derives these from
             the front strip, substituting product defaults when the strip
             colour is black. Ignored on write.
+
+    LedStripAccepted:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [accepted]
 
     ZoneLedState:
       type: object
@@ -5774,10 +6412,12 @@ components:
         targetPressure:
           type: number
         mixTemperature:
+          description: On classic DE1 machines, this is not a reliable measurement of dispensed hot-water outlet temperature while state is hotWater.
           type: number
         groupTemperature:
           type: number
         targetMixTemperature:
+          description: Requested mix temperature target; during hotWater on classic DE1 this is the requested hot-water temperature, not a measured outlet temperature.
           type: number
         targetGroupTemperature:
           type: number
@@ -5824,6 +6464,8 @@ components:
           cleaingGroup,
           cleanSoaking,
           cleaningSteam,
+          pausedSteam,
+          puffing,
           errorNaN,
           errorInf,
           errorGeneric,
@@ -6106,7 +6748,19 @@ components:
           enum: [120, 230]
         refillKitSetting:
           description: |
-            Refill kit behavior. `2` = auto (default), `1` = force on, `0` = force off.
+            Refill kit override: `2` = auto (default), `1` = force on,
+            `0` = force off.
+
+            Writes the value to the machine's refill-kit register and updates
+            the override Decaid reports back. It does not change
+            `MachineInfo.extra.refillKit`, which is what the machine detected
+            at connect.
+
+            The override is not persisted. Decaid writes `2` (auto) at connect,
+            so a force-on or force-off selection lasts only until the machine is
+            discovered and connected again.
+
+            Any value other than `0`, `1` or `2` is rejected with `400`.
           type: integer
           nullable: true
           enum: [0, 1, 2]
@@ -6134,7 +6788,16 @@ components:
           enum: [120, 230, -1]
         refillKitSetting:
           description: |
-            Refill kit behavior. `2` = auto, `1` = force on, `0` = force off.
+            Refill kit override currently in effect: `2` = auto, `1` = force on,
+            `0` = force off.
+
+            This is the configuration, not a detection result. Decaid writes `2`
+            (auto) at connect, so a machine that has not been written to since
+            reports `2` whether or not it has a kit fitted. For detection, read
+            `MachineInfo.extra.refillKit`.
+
+            The value is served from Decaid's cache of the last override
+            written; the register is not re-read.
           type: integer
           enum: [0, 1, 2]
     De1CalibrationRequest:
@@ -6290,6 +6953,11 @@ components:
           type: string
           nullable: true
           example: "AA:BB:CC:DD:EE:FF"
+        preferredGrinderDeviceId:
+          description: Runtime grinder deviceId to connect when it appears in normal scan results. This is not a persisted grinderId.
+          type: string
+          nullable: true
+          example: "plugin:grinder.example:grinder:one"
         defaultSkinId:
           description: ID of the default WebUI skin to serve
           type: string
@@ -6388,6 +7056,11 @@ components:
           type: string
           nullable: true
           example: "AA:BB:CC:DD:EE:FF"
+        preferredGrinderDeviceId:
+          description: Runtime grinder deviceId preferred during normal scans. This is not a persisted grinderId.
+          type: string
+          nullable: true
+          example: "plugin:grinder.example:grinder:one"
         defaultSkinId:
           description: ID of the default WebUI skin being served
           type: string
@@ -6524,7 +7197,7 @@ components:
                 type: string
                 enum: ["quick", "full"]
             required: ["mode"]
-        resultSchema:
+        resultsSchema:
           type: object
           additionalProperties: true
           example:
@@ -6571,7 +7244,12 @@ components:
       type: object
       description: |
         Partial workflow update. Omitted fields preserve their current values.
-        Fields in `steamSettings` are non-nullable and reject explicit `null`.
+        Nullability here is the PUT-patch contract, not the workflow model: a
+        stored or returned workflow may hold `null` where this schema refuses it.
+        `steamSettings` and every field inside it are non-nullable and reject an
+        explicit `null`. The `context` object is non-nullable as well; inside it,
+        only `targetYield` is non-nullable, and every other context field still
+        accepts an explicit `null` to clear it. See `WorkflowContextPatch`.
       properties:
         name:
           type: string
@@ -6580,7 +7258,7 @@ components:
         profile:
           $ref: "#/components/schemas/Profile"
         context:
-          $ref: "#/components/schemas/WorkflowContext"
+          $ref: "#/components/schemas/WorkflowContextPatch"
         steamSettings:
           $ref: "#/components/schemas/SteamSettingsPatch"
         hotWaterData:
@@ -6594,15 +7272,28 @@ components:
       type: object
       description: >
         Machine-side settings snapshotted onto a shot (the part of the setup that
-        lives on the machine, not the recipe). Extensible; currently just the
-        flow-estimation calibration.
+        lives on the machine, not the recipe), including the capture-time identity
+        required to attribute historical uploads safely.
       properties:
+        provenanceStatus:
+          type: string
+          enum: [captured, unavailable]
+          description: >
+            Capture-time provenance state for newly recorded shots. Absence marks
+            pre-provenance legacy history; unavailable means capture was attempted
+            but failed and automatic upload must not substitute another machine.
         flowCalibration:
           type: number
           nullable: true
           description: >
             The DE1's flow-estimation calibration (calibration_flow_multiplier)
             active when the shot was pulled.
+        serialNumber:
+          type: string
+        model:
+          type: string
+        firmwareVersion:
+          type: string
 
     SteamSettingsPatch:
       type: object
@@ -6728,6 +7419,14 @@ components:
         enjoyment:
           type: number
           nullable: true
+          minimum: 0
+          maximum: 10
+          description: >-
+            Subjective rating on Decaid's 0-10 scale. de1app and Visualizer both
+            use a 0-100 scale; the de1app importer and the Visualizer plugin
+            convert at their boundaries. PUT /shots/{id} rejects a value outside
+            0-10. Unambiguous ratings stored on the old 0-100 scale are repaired
+            by the schema 6 database migration.
         espressoNotes:
           type: string
           nullable: true
@@ -6745,6 +7444,25 @@ components:
           type: string
         timestamp:
           type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: |
+            ISO-8601 UTC instant when the shot entered local storage
+            (always ends in `Z`). System-managed: rejected with 400 if
+            supplied to PUT /api/v1/shots/{id}. Falls back to `timestamp`
+            for legacy records that predate the field.
+        updatedAt:
+          type: string
+          format: date-time
+          description: |
+            ISO-8601 UTC instant of the last meaningful content change
+            (always ends in `Z`). System-managed: rejected with 400 if
+            supplied to PUT /api/v1/shots/{id}. Does not advance for writes
+            confined to the bookkeeping keys `uploaded_to_decent`,
+            `decent_upload_rejected`, and `visualizerId` inside
+            annotations.extras. Falls back to
+            `createdAt`, then `timestamp`, for legacy records.
         measurements:
           type: array
           items:
@@ -6778,6 +7496,35 @@ components:
           deprecated: true
           description: "Deprecated request alias for annotations.extras; response value mirrors the canonical field"
 
+    ShotUpdateRequest:
+      type: object
+      description: |
+        Partial-update payload for PUT /api/v1/shots/{id}. Only the fields
+        included in the body are changed; all other fields are preserved from
+        the existing record. `measurements`, `createdAt`, and `updatedAt` are
+        not editable and are rejected with 400. The `uploaded_to_decent`,
+        `decent_upload_rejected`, and `visualizerId` keys inside
+        annotations.extras are reserved bookkeeping:
+        writes confined to them persist without advancing `updatedAt`.
+      properties:
+        annotations:
+          $ref: "#/components/schemas/ShotAnnotations"
+        stopReason:
+          type: string
+          nullable: true
+          description: Why the shot ended (open set — tolerate unknown values). See ShotRecord.stopReason.
+        shotNotes:
+          type: string
+          nullable: true
+          deprecated: true
+          description: "Deprecated request alias for annotations.espressoNotes; response value mirrors the canonical field"
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+          deprecated: true
+          description: "Deprecated request alias for annotations.extras; response value mirrors the canonical field"
+
     ShotRecordSummary:
       type: object
       description: |
@@ -6788,6 +7535,18 @@ components:
           type: string
         timestamp:
           type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: |
+            ISO-8601 UTC instant when the shot entered local storage
+            (always ends in `Z`). See ShotRecord.createdAt.
+        updatedAt:
+          type: string
+          format: date-time
+          description: |
+            ISO-8601 UTC instant of the last meaningful content change
+            (always ends in `Z`). See ShotRecord.updatedAt.
         workflow:
           $ref: "#/components/schemas/WorkflowRequest"
         annotations:
@@ -6896,15 +7655,124 @@ components:
         version:
           type: string
         apiVersion:
-          type: string
+          type: integer
+          description: Plugin API contract version the plugin targets.
+          example: 1
         permissions:
           type: array
           items:
             type: string
-            enum: [log, api, emit, pluginStorage, events.machine, events.shots, proxy.decent_api, proxy.decent_api.write]
+            enum: [log, api, emit, pluginStorage, events.machine, events.shots, events.workflow, proxy.decent_api, proxy.decent_api.write, network.websocket, network.tcp, network.tls, transport.ble]
+        drivers:
+          type: array
+          maxItems: 8
+          description: Device classes this plugin may register. Driver declarations do not grant transport permissions.
+          items:
+            type: object
+            required: [id, type]
+            properties:
+              id:
+                type: string
+                pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+              type:
+                type: string
+                enum: [sensor, scale, grinder]
+              capabilities:
+                type: array
+                uniqueItems: true
+                description: Scale or Grinder capabilities, interpreted according to driver type. Scale displayControl and disconnectToSleep are mutually exclusive.
+                items:
+                  type: string
+                  enum: [battery, flow, timerTelemetry, tare, timerControl, displayControl, disconnectToSleep, startStop, grindSetting, rpmControl]
+              controls:
+                type: object
+                additionalProperties: false
+                description: Optional fixed descriptors for declared Grinder capabilities only.
+                properties:
+                  grindSetting:
+                    $ref: '#/components/schemas/GrinderSettingDescriptor'
+                  rpmControl:
+                    $ref: '#/components/schemas/GrinderRpmDescriptor'
+              surfaces:
+                type: array
+                maxItems: 8
+                description: Pre-authorized device-type-agnostic surfaces; requires api permission and a declared same-plugin HTTP endpoint. IDs must be unique, with at most one settings role.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id, role, endpoint]
+                  properties:
+                    id:
+                      type: string
+                      description: Unique safe driver-local identifier.
+                    role:
+                      type: string
+                      enum: [settings, diagnostics]
+                    endpoint:
+                      type: string
+                      description: Safe non-reserved same-plugin declared HTTP endpoint ID.
+                    label:
+                      type: string
+              ble:
+                type: object
+                additionalProperties: false
+                required: [match]
+                description: At most one driver per plugin may declare a BLE matcher. A declaration does not grant transport.ble permission.
+                properties:
+                  match:
+                    type: object
+                    additionalProperties: false
+                    minProperties: 1
+                    properties:
+                      name:
+                        type: object
+                        additionalProperties: false
+                        minProperties: 1
+                        maxProperties: 1
+                        description: Case-insensitive predicate; advertised names are not trimmed.
+                        properties:
+                          exact:
+                            type: string
+                            minLength: 1
+                            maxLength: 248
+                          prefix:
+                            type: string
+                            minLength: 1
+                            maxLength: 248
+                          contains:
+                            type: string
+                            minLength: 1
+                            maxLength: 248
+                      serviceUuids:
+                        type: array
+                        minItems: 1
+                        maxItems: 64
+                        description: Any-of services, combined with the name predicate using AND. Unavailable or incomplete metadata remains indeterminate.
+                        items:
+                          type: string
+                          pattern: '^([0-9a-fA-F]{4}|[0-9a-fA-F]{8}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'
         settings:
-          description: Plugin settings schema
           type: object
+          description: >
+            Declared settings for this plugin, keyed by setting name. This is the
+            manifest schema, not the stored values: it carries the type, the
+            human-readable description and the default for each setting, so a
+            client can render a settings form without reading the plugin's
+            repository. Current values come from
+            GET /api/v1/plugins/{id}/settings instead.
+          additionalProperties:
+            $ref: '#/components/schemas/PluginSettingSchema'
+          example:
+            AutoUpload:
+              type: boolean
+              label: Upload shots automatically
+              description: Upload shots automatically when they finish (opt-in; off by default)
+              default: false
+            LengthThreshold:
+              type: number
+              label: Minimum shot length
+              description: Only upload shots longer than this many seconds (skips flushes)
+              default: 5
         api:
           type: array
           description: A list of endpoints this plugin will expose
@@ -6938,6 +7806,60 @@ components:
           description: >
             An update that was found but not installed because it requests
             permissions the installed version does not hold.
+
+    PluginSettingSchema:
+      type: object
+      description: >
+        Declaration of a single plugin setting, taken verbatim from the
+        plugin's manifest.json. Returned inside PluginManifest.settings by
+        GET /api/v1/plugins.
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [string, number, boolean, enum]
+          description: >
+            Value type. `enum` additionally requires `values`, and the API
+            rejects a saved value that is not one of them.
+        label:
+          type: string
+          description: >
+            Human-readable name for the setting, written by the plugin author.
+            Optional: when it is absent, empty or whitespace, clients fall back
+            to the setting's key, so a manifest that omits it renders exactly as
+            before. Use it so a settings form can read "Upload shots
+            automatically" instead of the storage key "AutoUpload".
+        description:
+          type: string
+          description: >
+            Human-readable explanation of what the setting does, written by the
+            plugin author. Optional, and absent when the author did not supply
+            one.
+        default:
+          description: >
+            Value applied when the user has not saved one. Matches `type`.
+            Optional.
+          nullable: true
+        secure:
+          type: boolean
+          default: false
+          description: >
+            When true the value is held in platform credential storage. It is
+            supplied in memory to the plugin's onLoad(settings) but never
+            returned in plaintext by the REST API; GET
+            /api/v1/plugins/{id}/settings reports it as an isSet state object
+            instead.
+        values:
+          type: array
+          items:
+            type: string
+          description: Allowed values. Required when `type` is `enum`, otherwise absent.
+      example:
+        type: boolean
+        label: Upload shots automatically
+        description: Upload shots automatically when they finish (opt-in; off by default)
+        default: false
 
     PluginInstallResult:
       type: object
@@ -7359,12 +8281,115 @@ components:
             push:
               $ref: "#/components/schemas/SyncPhaseResult"
 
+    WorkflowContextPatch:
+      type: object
+      description: |
+        The `context` form accepted by `PUT /api/v1/workflow`. The object itself is
+        non-nullable: `{"context": null}` returns `400`, because dropping the whole
+        context would clear `targetYield` too. Omitted fields keep their current
+        value and an explicit `null` clears that one field, with one exception:
+        `targetYield` is non-nullable here, so an explicit `null` returns `400`.
+        The stored and returned form is `WorkflowContext`, where every field
+        including `targetYield` is nullable.
+      properties:
+        targetDoseWeight:
+          type: number
+          format: double
+          nullable: true
+          description: Input dose weight in grams (dry coffee)
+          example: 18.0
+        targetYield:
+          type: number
+          format: double
+          description: |
+            Target output weight in grams (beverage), and the single source of
+            truth for stop-at-weight. Null and 0 both mean stop-at-weight is
+            off, so an explicit null on this field is ambiguous and returns
+            400, as does a value that is not a number. Omit the field to keep
+            the current value, or send 0 to turn stop-at-weight off
+            deliberately. A stored workflow may still hold null here; see
+            `WorkflowContext.targetYield`.
+          example: 36.0
+        targetWaterVolume:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            DE1-integrated machine water volume in milliliters. Overrides the
+            profile targetVolume only for the existing volumetric fallback when
+            no usable scale stop is available. Null inherits the profile target;
+            0 disables volumetric stopping for this workflow.
+          example: 55.0
+        grinderId:
+          type: string
+          nullable: true
+          description: ID of a managed Grinder entity. When set, links to a grinder in /api/v1/grinders.
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        grinderModel:
+          type: string
+          nullable: true
+          description: Grinder model name (display string)
+          example: "Niche Zero"
+        grinderBurrs:
+          type: string
+          nullable: true
+          description: |
+            Burrs fitted to the grinder, snapshotted when the shot is stored so
+            later edits to the grinder record do not rewrite shot history.
+            Resolved from the linked grinder whenever `grinderId` is set, which
+            replaces a value inherited from a repeated shot; a context with no
+            `grinderId` keeps the value it was given. Send an explicit null to
+            clear it.
+          example: "SSP HU"
+        grinderSetting:
+          type: string
+          nullable: true
+          description: Current grinder setting value
+          example: "5.2"
+        beanBatchId:
+          type: string
+          nullable: true
+          description: ID of a managed BeanBatch entity. When set, links to a batch in /api/v1/bean-batches.
+          example: "660e8400-e29b-41d4-a716-446655440001"
+        coffeeName:
+          type: string
+          nullable: true
+          description: Coffee bean name (display string)
+          example: "Ethiopia Yirgacheffe"
+        coffeeRoaster:
+          type: string
+          nullable: true
+          description: Coffee roaster name (display string)
+          example: "Square Mile"
+        finalBeverageType:
+          type: string
+          nullable: true
+          description: Beverage classification (e.g., espresso, filter, lungo)
+          example: "espresso"
+        baristaName:
+          type: string
+          nullable: true
+          description: Name of the person pulling the shot
+          example: "Alice"
+        drinkerName:
+          type: string
+          nullable: true
+          description: Name of the person drinking the beverage
+          example: "Bob"
+        extras:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Arbitrary key-value pairs for plugin data or custom fields
+
     WorkflowContext:
       type: object
       description: |
         Unified shot metadata containing dose, grinder, coffee, and people information.
-        All fields are nullable for flexible usage — from minimal (dose only) to full
-        (with entity IDs linking to managed beans/grinders).
+        This is the stored and returned form, in which all fields are nullable for
+        flexible usage — from minimal (dose only) to full (with entity IDs linking to
+        managed beans/grinders). `PUT /api/v1/workflow` validates its `context` against
+        the stricter `WorkflowContextPatch`.
       properties:
         targetDoseWeight:
           type: number
@@ -7376,8 +8401,24 @@ components:
           type: number
           format: double
           nullable: true
-          description: Target output weight in grams (beverage)
+          description: |
+            Target output weight in grams (beverage). It is the single source
+            of truth for stop-at-weight. Null means this workflow sets no
+            weight target, which is the same as 0: stop-at-weight is off, and
+            a machine that stops autonomously has its firmware target set to 0.
+            A stored or returned workflow may therefore legitimately hold null
+            here. A PUT patch may not: see `WorkflowContextPatch.targetYield`.
           example: 36.0
+        targetWaterVolume:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            DE1-integrated machine water volume in milliliters. Overrides the
+            profile targetVolume only for the existing volumetric fallback when
+            no usable scale stop is available. Null inherits the profile target;
+            0 disables volumetric stopping for this workflow.
+          example: 55.0
         grinderId:
           type: string
           nullable: true
@@ -7388,6 +8429,17 @@ components:
           nullable: true
           description: Grinder model name (display string)
           example: "Niche Zero"
+        grinderBurrs:
+          type: string
+          nullable: true
+          description: |
+            Burrs fitted to the grinder, snapshotted when the shot is stored so
+            later edits to the grinder record do not rewrite shot history.
+            Resolved from the linked grinder whenever `grinderId` is set, which
+            replaces a value inherited from a repeated shot; a context with no
+            `grinderId` keeps the value it was given. Send an explicit null to
+            clear it.
+          example: "SSP HU"
         grinderSetting:
           type: string
           nullable: true

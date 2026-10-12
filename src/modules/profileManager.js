@@ -849,18 +849,18 @@ export function updateButtonUI() {
             button.textContent = translatedTitle || 'Untitled';
             fitTextToBox(button); // long names wrap past the fixed 98px box
             if (activeProfileId && profileKey === activeProfileId) {
-                button.classList.remove('text-[var(--mimoja-blue)]', 'text-[var(--profile-button-text-color)]', 'bg-[var(--profile-button-background-color)]');
-                button.classList.add('text-white', 'bg-[var(--mimoja-blue-v2)]');
+                button.classList.remove('text-[var(--mimoja-blue-v2)]', 'text-[var(--profile-button-text-color)]', 'bg-[var(--profile-button-background-color)]');
+                button.classList.add('text-[var(--button-primary-text)]', 'bg-[var(--mimoja-blue-v2)]');
             } else {
-                button.classList.remove('text-white', 'bg-[var(--mimoja-blue-v2)]');
-                button.classList.add('text-[var(--mimoja-blue)]', 'text-[var(--profile-button-text-color)]', 'bg-[var(--profile-button-background-color)]');
+                button.classList.remove('text-[var(--button-primary-text)]', 'bg-[var(--mimoja-blue-v2)]');
+                button.classList.add('text-[var(--mimoja-blue-v2)]', 'text-[var(--profile-button-text-color)]', 'bg-[var(--profile-button-background-color)]');
             }
         }
         else if (button) {
             button.textContent = '';
             fitTextToBox(button); // clears any shrink left by a previous long name
-            button.classList.remove('text-white', 'bg-[var(--mimoja-blue-v2)]');
-            button.classList.add('text-[var(--mimoja-blue)]', 'text-[var(--profile-button-text-color)]', 'bg-[var(--profile-button-background-color)]');
+            button.classList.remove('text-[var(--button-primary-text)]', 'bg-[var(--mimoja-blue-v2)]');
+            button.classList.add('text-[var(--mimoja-blue-v2)]', 'text-[var(--profile-button-text-color)]', 'bg-[var(--profile-button-background-color)]');
         }
     }
 }
@@ -982,8 +982,8 @@ async function handleProfileClick(index) {
 
             favoriteButtons.forEach((btn, i) => {
                 const activeBgClass = 'bg-[var(--mimoja-blue-v2)]';
-                const activeTextClass = 'text-white';
-                const inactiveTextClass = 'text-[var(--mimoja-blue)]';
+                const activeTextClass = 'text-[var(--button-primary-text)]';
+                const inactiveTextClass = 'text-[var(--mimoja-blue-v2)]';
                 const defaultTextClass = 'text-[var(--profile-button-text-color)]';
                 const defaultBgClass = 'bg-[var(--profile-button-background-color)]';
 

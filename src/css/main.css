@@ -185,13 +185,15 @@ body {
     --mimoja-blue: #385A92;
 
     --profile-button-outline-color: #c5cdda;
+    --muted-pill-bg: rgba(197, 205, 218, 0.3); /* 30% of --profile-button-outline-color; no color-mix for older WebViews */
     --profile-button-background-color: #FFFFFF;
-    --profile-button-text-color: #7583b0;
+    --profile-button-text-color: #5F7BA8;
     --box-color: #f8f9fb;
     --profileselectorbg: #FFFFFF;
     --low-contrast-white: #959595;
     --text-primary: #121212; /* Renamed from --dark-gray */
     --text-primary-disabled: #c8cacc;
+    --text-primary-inactive: #DDDDDD; /* style guide Light Mode/Text/Primary.Inactive: hidden profile rows */
     --preset-value-color: #AAAAAA;
     --preset-value-color-disabled: #e3e4e6;
     --preset-label-selected-color: #777777;
@@ -203,13 +205,11 @@ body {
        minus greys at the minimum, the plus at the maximum. */
     --stepper-btn-bg: #EDEDED;
     --stepper-btn-bg-disabled: #F3F3F3;
-    --settings-label-color: #385a92; /* left-gutter section labels: Action blue in light */
+    --settings-label-color: var(--mimoja-blue-v2); /* Settings-tab gutter labels: Action.Primary.Active (Figma 2662:1507) */
     /* The "this is a control" label colour: Action/Action.Primary.Active in
-       light. Dark ships no blue text token -- its only Button Text value is
-       FavButton.Text.Selected #E8E8E8 (= Text/Primary.Active), and #415996
-       on the #292C38 card is ~2:1 -- so dark resolves to that instead.
-       Used by the cycle chips, the collapsed chip-backed labels and the
-       bare card-footer glyphs. */
+       both modes (#385A92 light, #415996 dark per designer; the dark value is
+       a known low-contrast choice on the dark card). Used by the cycle chips,
+       the collapsed chip-backed labels and the bare card-footer glyphs. */
     --action-label: #385a92;
     --stepper-icon: #121212;
     --stepper-icon-disabled: #DDDDDD;
@@ -225,13 +225,13 @@ body {
     --bgmain-color : #FFFFFF;
     --data-card-title-text-color:#707485;
     /* left label text colors */
-    --left-label-text : #385992;
+    --left-label-text : var(--mimoja-blue-v2);
     /*status mesg */
     --heatingstatus:#1967d4;
     --status-ready-green:#17c29a;
     --status-green-color: #0CA581;
     --status-red-color: #DA515E;
-    --status-clickable-color: #1967d4;
+    --status-clickable-color: var(--mimoja-blue-v2);
     --fav-button-wait:#e3e4e6;
 
     /* Presence Settings (Light Mode) */
@@ -242,6 +242,7 @@ body {
     --presence-input-text: #121212;
     --presence-input-border: #c5cdda;
     --button-primary-bg: #385a92;
+    --button-primary-tint: rgba(56, 90, 146, 0.15); /* 15% of --button-primary-bg; no color-mix for older WebViews */
     --button-primary-text: #ffffff;
     --button-secondary-bg: #e8e8e8;
     --button-secondary-text: #121212;
@@ -251,6 +252,7 @@ body {
 
     /* Profile editor CARDS redesign (Figma, Light Mode only export) */
     --bg-tertiary: #E9F1F8;
+    --card-bg: #FFFFFF; /* Figma Background.Primary: step-card fill */
     --bg-secondary: #F6F8FA;
     --border-primary: #C9C9C9;
     --border-graph-grid: #E8E8E8;
@@ -259,28 +261,29 @@ body {
 
 [data-theme='dark'] {
     --profile-button-outline-color: #17191e;
+    --muted-pill-bg: rgba(23, 25, 30, 0.3); /* 30% of --profile-button-outline-color; no color-mix for older WebViews */
     --profile-button-background-color: #292c38;
-    --profile-button-text-color: #FFFFFF;
+    --profile-button-text-color: #E8E8E8;
 
-    /* Profile editor CARDS redesign — DERIVED, not specified: the Figma file
-       only ships Light Mode variables. Picked to sit the same way the light
-       values sit relative to a white (#FFFFFF) card: --bg-tertiary/--bg-secondary
-       are the ground behind a card, darker than --profile-button-background-color
-       (#292c38) the same way #E9F1F8/#F6F8FA sit lighter than white; --border-*
-       and --tab-text-inactive are lifted enough off --profile-button-background-color
-       and --mimoja-blue-v2 (#415996) to stay legible on a dark card. */
-    --bg-tertiary: #101217;
-    --bg-secondary: #1b1e26;
+    /* Profile editor CARDS redesign. Step-card fill (--card-bg) is Figma's
+       Background.Primary (#101217); the ground behind the cards (--bg-tertiary)
+       is Background.Secondary (#17191E) from the style guide, so cards sit darker
+       than their ground. --bg-secondary is Background.Secondary too.
+       --tab-text-inactive reuses Figma's FavButton.Text.NotSelected (#5F7BA8)
+       per the designer; contrast on dark cards is low by choice. */
+    --bg-tertiary: #17191E; /* style guide Dark Mode/Background/Background.Secondary */
+    --card-bg: #101217; /* style guide Dark Mode/Background/Background.Primary */
+    --bg-secondary: #17191E; /* style guide Dark Mode/Background/Background.Secondary: selector header + list panel */
     --border-primary: #3d4255; /* style guide Dark Mode/Border/Primary */
     --border-graph-grid: #1E202B;
-    --tab-text-inactive: #8a9ac9;
+    --tab-text-inactive: #5F7BA8;
     --box-color: #17191e;
-    --profileselectorbg:#17191e;
+    --profileselectorbg: #101217; /* style guide Dark Mode/Background/Background.Primary: right panel rows */
     --button-grey: #292c38; /* style guide Buttons/Primary.Background.Inactive */
     --stepper-btn-bg: #101115;
     --stepper-btn-bg-disabled: #101115; /* dark keeps its fill; only the glyph mutes */
-    --settings-label-color: #e8e8e8; /* Text/Primary.Active — the dark blue is ~2.6:1 as text */
-    --action-label: #e8e8e8; /* style guide Dark Mode/Button Text/FavButton.Text.Selected */
+    --settings-label-color: var(--mimoja-blue-v2); /* Action.Primary.Active per designer */
+    --action-label: var(--mimoja-blue-v2); /* Action.Primary.Active per designer */
     --stepper-icon: #959595;
     --stepper-icon-disabled: #272727;
     --secondary-button-bg: #707485; /* scrollbar thumbs only; style guide Text/Tertiary, ~3.8:1 on the dark card */
@@ -292,12 +295,13 @@ body {
     --mimoja-blue-v2: #415996;
     --text-primary: #e8e8e8;
     --text-primary-disabled: #4a4a4a;
+    --text-primary-inactive: #707485; /* style guide Dark Primary.Inactive is #232325 (~1.1:1), so Text/Tertiary until the designer fixes it */
     --preset-value-color: #4e5559;
     --preset-value-color-disabled: #262a2c;
     --preset-label-selected-color: #999999;
     --data-card-title-text-color:#707485;
      /* left label text colors */
-    --left-label-text :#415996;
+    --left-label-text : var(--mimoja-blue-v2);
     --status-green-color: #0CA581; /* Same as light mode */
     --status-red-color: #DA515E;   /* Same as light mode */
     --status-clickable-color: #415996;
@@ -314,6 +318,7 @@ body {
     --presence-input-text: #e8e8e8;
     --presence-input-border: #415996;
     --button-primary-bg: #415996;
+    --button-primary-tint: rgba(65, 89, 150, 0.15); /* 15% of --button-primary-bg; no color-mix for older WebViews */
     --button-primary-text: #e8e8e8;
     --button-secondary-bg: #292c38;
     --button-secondary-text: #e8e8e8;
@@ -458,7 +463,7 @@ body {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #385a92;
+  background: var(--button-primary-bg);
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   border: 2px solid #c5cdda;
@@ -474,7 +479,7 @@ body {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #385a92;
+  background: var(--button-primary-bg);
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   border: 2px solid #c5cdda;
@@ -492,7 +497,7 @@ body {
 }
 
 .brightness-slider::-moz-range-progress {
-  background: #385a92;
+  background: var(--button-primary-bg);
   height: 8px;
   border-radius: 5px;
 }
@@ -507,7 +512,7 @@ body {
   width: 104.8px;
   height: 62.88px;
   background-color: #e8e8e8;
-  border: 2px solid #c9c9c9;
+  border: 2px solid var(--border-primary);
   border-radius: 2617.374px;
   cursor: pointer;
   position: relative;
@@ -528,8 +533,8 @@ body {
 }
 
 .brightness-toggle-checkbox:checked + .brightness-toggle-label {
-  background-color: #385a92;
-  border-color: #385a92;
+  background-color: var(--button-primary-bg);
+  border-color: var(--button-primary-bg);
 }
 
 .brightness-toggle-checkbox:checked + .brightness-toggle-label::after {
@@ -563,7 +568,7 @@ body {
 /* Toggle styling for Wake Lock and Presence Settings */
 .toggle {
   background-color: #e8e8e8;
-  border-color: #c5cdda;
+  border-color: var(--border-primary);
 }
 
 .toggle:checked {
@@ -573,7 +578,7 @@ body {
 
 [data-theme='dark'] .toggle {
   background-color: #292c38;
-  border-color: #415996;
+  border-color: var(--border-primary);
 }
 
 [data-theme='dark'] .toggle:checked {
@@ -697,12 +702,12 @@ body {
      panel border at 793. So the thumb sits 40px clear of the border -- which
      is also the drag separator, so a thumb flush against it (as it once was)
      made finger taps on the thumb land on the separator -- and 35px right of
-     the list. The thumb is 39px wide, hence 40 + 39 + 35 = 114.
+     the list. The thumb is 45px wide, hence 40 + 45 + 35 = 120.
      Margin, not padding, so #left-panel's background shows in the gutter. The
      thumb is absolutely positioned against #left-panel (a sibling of
      #profile-list, not a wrapper -- #profile-list must stay a direct flex
      child for the flex/min-height rule below to size it). */
-  margin-right: 114px;
+  margin-right: 120px;
   /* Figma's row highlight ends 19px inside the list (654 of 673 at x0.75); the
      p-3 on the element would leave 12. */
   padding-right: 19px;
@@ -710,6 +715,11 @@ body {
 }
 #profile-list::-webkit-scrollbar {
   display: none;
+}
+
+/* Search field injected by initSearchButton (profile_selector.js). */
+#profile-search-input::placeholder {
+  color: var(--data-card-title-text-color);
 }
 
 /* Profile editor CARDS icons — SVGs rendered as a CSS mask so the glyph picks
@@ -731,7 +741,7 @@ body {
    size, mask-image and colour specific to this one instance. Colour is pinned
    to --mimoja-blue-v2 (Figma's #385A92 in light mode) rather than
    currentColor: the surrounding --status-clickable-color span is a different
-   blue (#1967D4) used for the plain ">>" text this replaced, and doesn't
+   blue used for the plain ">>" text this replaced, and doesn't
    match the Figma icon's own colour. */
 .skip-step-glyph {
   vertical-align: middle;
@@ -753,7 +763,7 @@ body {
   vertical-align: middle;
   width: 72px;
   height: 45px;
-  border: 2px solid #c9c9c9;
+  border: 2px solid var(--border-primary);
   border-radius: 10px;
 }
 
@@ -809,10 +819,10 @@ body {
   transition: background-color 0.15s ease-out, color 0.15s ease-out;
 }
 .led-tab[aria-selected='true'] {
-  background-color: var(--mimoja-blue);
+  background-color: var(--button-primary-bg);
   color: #fff;
 }
-.led-tab:focus-visible { outline: 3px solid var(--mimoja-blue); outline-offset: 2px; }
+.led-tab:focus-visible { outline: 3px solid var(--mimoja-blue-v2); outline-offset: 2px; }
 
 /* Transport bar -- the one loud element on the Sequence tab. It carries the
    play control, the loop switch, and the colours that are on the strip RIGHT
@@ -833,7 +843,7 @@ body {
   padding: 0 40px;
   border: 0;
   border-radius: 32px;
-  background-color: var(--mimoja-blue);
+  background-color: var(--button-primary-bg);
   color: #fff;
   font-size: 22px;
   font-weight: 700;
@@ -870,8 +880,8 @@ body {
 /* Toggled by the runner directly (ledSeqPaintActiveStep), not a re-render --
    the playback tick must never rebuild the page under the user's fingers. */
 .led-step.led-seq-step-active {
-  border-color: var(--mimoja-blue);
-  border-left-color: var(--mimoja-blue);
+  border-color: var(--mimoja-blue-v2);
+  border-left-color: var(--mimoja-blue-v2);
   background-color: var(--led-tint);
 }
 .led-step-index {
@@ -939,8 +949,8 @@ body {
   transition: background-color 0.15s ease-out, color 0.15s ease-out;
 }
 .led-chip[aria-pressed='true'] {
-  background-color: var(--mimoja-blue);
-  border-color: var(--mimoja-blue);
+  background-color: var(--button-primary-bg);
+  border-color: var(--button-primary-bg);
   color: #fff;
 }
 

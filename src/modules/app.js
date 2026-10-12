@@ -347,7 +347,7 @@ function renderScanIcon() {
     const weightTextEl = document.getElementById('weight-text');
     if (weightTextEl) weightTextEl.classList.add('text-red-600');
     if (weightEl) {
-        weightEl.classList.add('text-[var(--mimoja-blue)]');
+        weightEl.classList.add('text-[var(--mimoja-blue-v2)]');
         weightEl.classList.remove('text-[var(--text-primary)]');
         weightEl.innerHTML = SCAN_ICON_SVG;
     }
@@ -376,7 +376,7 @@ function renderScaleDisconnectedText() {
         // the user accepts it here).
         ui.updateWeight(getTranslation('Retry'), {
             weightText: { add: ['text-red-600'] },
-            dataWeight: { add: ['text-[var(--mimoja-blue)]'], remove: ['text-[var(--text-primary)]'] }
+            dataWeight: { add: ['text-[var(--mimoja-blue-v2)]'], remove: ['text-[var(--text-primary)]'] }
         });
     }
     // Retry text / spinner change the row's width — re-fit so it stays one line.
@@ -1059,7 +1059,7 @@ function handleScaleData(data) {
         // Update the UI with the new weight and reset styles.
         throttledUpdateWeight(currentWeight, {
             weightText: { remove: ['text-red-600'] },
-            dataWeight: { remove: ['text-[var(--mimoja-blue)]'] }
+            dataWeight: { remove: ['text-[var(--mimoja-blue-v2)]'] }
         });
         // Carry settled weight through to the shot total card so it tracks the scale
         // after substate leaves 'pouring' (drip-down).
@@ -1545,8 +1545,8 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
                             assignedProfileRecord.profile.title === profile.title) {
                             // This button has the active profile assigned to it
                             const activeBgClass = 'bg-[var(--mimoja-blue-v2)]';
-                            const activeTextClass = 'text-white';
-                            const inactiveTextClass = 'text-[var(--mimoja-blue)]';
+                            const activeTextClass = 'text-[var(--button-primary-text)]';
+                            const inactiveTextClass = 'text-[var(--mimoja-blue-v2)]';
                             const defaultTextClass = 'text-[var(--profile-button-text-color)]';
                             const defaultBgClass = 'bg-[var(--profile-button-background-color)]';
 
@@ -1557,8 +1557,8 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
                         } else {
                             // This button doesn't have the active profile, ensure it's not highlighted
                             const activeBgClass = 'bg-[var(--mimoja-blue-v2)]';
-                            const activeTextClass = 'text-white';
-                            const inactiveTextClass = 'text-[var(--mimoja-blue)]';
+                            const activeTextClass = 'text-[var(--button-primary-text)]';
+                            const inactiveTextClass = 'text-[var(--mimoja-blue-v2)]';
                             const defaultTextClass = 'text-[var(--profile-button-text-color)]';
                             const defaultBgClass = 'bg-[var(--profile-button-background-color)]';
 
@@ -1570,8 +1570,8 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
                     } else if (button) {
                         // Button exists but no profile assigned, ensure it's not highlighted
                         const activeBgClass = 'bg-[var(--mimoja-blue-v2)]';
-                        const activeTextClass = 'text-white';
-                        const inactiveTextClass = 'text-[var(--mimoja-blue)]';
+                        const activeTextClass = 'text-[var(--button-primary-text)]';
+                        const inactiveTextClass = 'text-[var(--mimoja-blue-v2)]';
                         const defaultTextClass = 'text-[var(--profile-button-text-color)]';
                         const defaultBgClass = 'bg-[var(--profile-button-background-color)]';
 
@@ -1587,8 +1587,8 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
                 // Fallback to the original text matching approach if the assignment mapping isn't available
                 favoriteButtons.forEach((btn, index) => {
                     const activeBgClass = 'bg-[var(--mimoja-blue-v2)]';
-                    const activeTextClass = 'text-white';
-                    const inactiveTextClass = 'text-[var(--mimoja-blue)]';
+                    const activeTextClass = 'text-[var(--button-primary-text)]';
+                    const inactiveTextClass = 'text-[var(--mimoja-blue-v2)]';
                     const defaultTextClass = 'text-[var(--profile-button-text-color)]';
                     const defaultBgClass = 'bg-[var(--profile-button-background-color)]';
                     const buttonText = btn.textContent.trim();
@@ -1597,12 +1597,12 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
                     logger.debug(`Checking button ${index} with text: \"${buttonText}\" against profile: \"${profileTitle}\"`);
 
                     if (buttonText === profileTitle) {
-                        logger.info(`[FALLBACK] Marking button ${index} as active for profile ${profileTitle}. Adding: bg-[var(--mimoja-blue-v2)], text-white. Current classes: ${btn.className}`);
+                        logger.info(`[FALLBACK] Marking button ${index} as active for profile ${profileTitle}. Adding: bg-[var(--mimoja-blue-v2)], text-[var(--button-primary-text)]. Current classes: ${btn.className}`);
                         btn.classList.add(activeBgClass, activeTextClass);
                         btn.classList.remove(inactiveTextClass, defaultTextClass, defaultBgClass);
                         logger.info(`[FALLBACK] Button ${index} classes after change: ${btn.className}`);
                     } else {
-                        logger.info(`[FALLBACK] Marking button ${index} as inactive. Removing: bg-[var(--mimoja-blue-v2)], text-white. Adding: text-[var(--mimoja-blue)]. Current classes: ${btn.className}`);
+                        logger.info(`[FALLBACK] Marking button ${index} as inactive. Removing: bg-[var(--mimoja-blue-v2)], text-[var(--button-primary-text)]. Adding: text-[var(--mimoja-blue-v2)]. Current classes: ${btn.className}`);
                         btn.classList.remove(activeBgClass, activeTextClass);
                         btn.classList.add(inactiveTextClass, defaultTextClass, defaultBgClass);
                         logger.info(`[FALLBACK] Button ${index} classes after change: ${btn.className}`);

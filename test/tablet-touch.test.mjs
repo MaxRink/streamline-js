@@ -90,7 +90,7 @@ test('touch devices get no hover styling: hover utilities are media-guarded', ()
     // named; fail loudly if a rename quietly drops them from the bundle.
     assert.match(css, /\.hover\\:text-white:hover/);
     assert.match(css, /\.hover\\:bg-\\\[\\#2c4a7a\\\]:hover/);
-    assert.match(css, /\.hover\\:border-\\\[\\#385a92\\\]:hover/);
+    assert.match(css, /\.hover\\:border-\\\[var\\\(--mimoja-blue-v2\\\)\\\]:hover/);
 });
 
 // The first attempt at #88 neutralised the nav rows' sticky hover by hand with
