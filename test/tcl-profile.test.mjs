@@ -75,11 +75,11 @@ function buildProfile(topOverrides = {}, steps = [buildStep()]) {
         .join('\n');
 }
 
-// ─── Representative Visualizer-format fixture, end to end ────────────────
+// ─── Real sample file, end to end ──────────────────────────────────────────
 
-test('parses a representative Visualizer .tcl fixture end to end', () => {
+test('parses the bundled real Visualizer .tcl sample end to end', () => {
     const text = readFileSync(
-        new URL('./fixtures/visualizer-profile.tcl', import.meta.url),
+        new URL('../shots/Visualizer_JW ASL 2 from Visualizer.tcl', import.meta.url),
         'utf8',
     );
     const profile = parseTclProfile(text);

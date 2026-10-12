@@ -13,3 +13,10 @@ test('capture requires explicit role and records raw sample provenance', () => {
     assert.equal(buildBeanScaleCapture({ deviceId: 'x', sample: { weight: 18 } }), null);
     assert.equal(buildBeanScaleCapture({ deviceId: 'x', connectionRole: 'auxiliary', sample: { weight: 'unknown' } }), null);
 });
+
+test('capture rejects stale or future receipt timestamps at confirmation', () => {
+    const input = { deviceId: 'aux', connectionRole: 'auxiliary', sample: { weight: 18 }, capturedAt: '2026-10-12T10:00:10Z' };
+    assert.ok(buildBeanScaleCapture({ ...input, receivedAt: '2026-10-12T10:00:00Z' }));
+    assert.equal(buildBeanScaleCapture({ ...input, receivedAt: '2026-10-12T09:59:59.999Z' }), null);
+    assert.equal(buildBeanScaleCapture({ ...input, receivedAt: '2026-10-12T10:00:11Z' }), null);
+});

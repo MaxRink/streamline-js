@@ -345,7 +345,8 @@ function setupHistoryLongPress() {
         beanButton.id = 'current-bean-selection-btn';
         beanButton.type = 'button';
         beanButton.textContent = getTranslation('Select current coffee batch');
-        beanButton.style.cssText = 'font-size:18px;padding:8px 14px;border-radius:12px;margin:8px auto;display:block;';
+        beanButton.className = "settings-button mx-auto my-2 flex items-center justify-center rounded-[22.5px] border-[1.5px] border-solid border-[var(--mimoja-blue-v2)] px-3 py-2 font-['Inter'] text-[18px] font-semibold text-[var(--mimoja-blue-v2)]";
+        beanButton.dataset.i18nKey = 'Select current coffee batch';
         ['pointerdown', 'mousedown', 'touchstart'].forEach(event => beanButton.addEventListener(event, e => e.stopPropagation()));
         beanButton.addEventListener('click', () => openBeanSelectionModal({
             onSaved: () => showToast(getTranslation('Current workflow coffee updated'), 2400, 'success'),

@@ -21,6 +21,8 @@ export function buildBeanScaleCapture({ deviceId, connectionRole, purpose = BEAN
     if (!String(deviceId || '').trim() || connectionRole !== 'auxiliary' || purpose !== BEAN_SCALE_PURPOSE) return null;
     if (!sample || typeof sample !== 'object' || typeof sample.weight !== 'number' || !Number.isFinite(sample.weight) || sample.weight <= 0) return null;
     if (!validIso(capturedAt) || !validIso(receivedAt) || (sample.timestamp != null && !validIso(sample.timestamp))) return null;
+    const age = Date.parse(capturedAt) - Date.parse(receivedAt);
+    if (age < 0 || age > 10000) return null;
     return {
         deviceId: String(deviceId), role: connectionRole, purpose, units: 'g', userConfirmed: true,
         capturedAt, receivedAt, weight: sample.weight,

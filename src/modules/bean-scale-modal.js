@@ -11,8 +11,9 @@ function isConnected(device) {
  * are explicit user choices; this surface never connects or tares a device.
  */
 export async function openBeanScaleCaptureModal({ onCapture } = {}) {
-    const devices = selectableBeanScales(await getScaleDevices());
+    let devices = [];
     const dialog = document.createElement('dialog');
+    dialog.setAttribute('aria-label', getTranslation('Capture bean weight'));
     dialog.className = 'rounded-2xl bg-[var(--background-color)] p-6 text-[var(--text-primary)]';
     dialog.innerHTML = `
       <form method="dialog" class="flex min-w-[420px] flex-col gap-5">
@@ -35,15 +36,10 @@ export async function openBeanScaleCaptureModal({ onCapture } = {}) {
     let socketDeviceId = null;
     let generation = 0;
     let active = true;
-    devices.forEach(device => {
-        const option = document.createElement('option');
-        option.value = device.id;
-        option.textContent = device.name || device.id;
-        option.disabled = !isConnected(device);
-        deviceSelect.append(option);
-    });
     const cleanup = () => {
+        if (!active) return;
         active = false;
+        window.removeEventListener('pagehide', cleanup);
         generation += 1;
         closeAddressedScaleWebSocket();
         dialog.remove();
@@ -81,12 +77,27 @@ export async function openBeanScaleCaptureModal({ onCapture } = {}) {
     deviceSelect.addEventListener('change', refresh);
     window.addEventListener('pagehide', cleanup, { once: true });
     capture.addEventListener('click', () => {
-        const value = buildBeanScaleCapture({ deviceId: deviceSelect.value, connectionRole: role, sample: latestSample, receivedAt: lastReceivedAt });
-        if (!value) { output.textContent = getTranslation('No valid reading available'); return; }
+        const value = buildBeanScaleCapture({ deviceId: deviceSelect.value, connectionRole: role, sample: latestSample, receivedAt: lastReceivedAt, capturedAt: new Date().toISOString() });
+        if (!active || !value) { capture.disabled = true; output.textContent = getTranslation('No fresh reading available'); return; }
         onCapture?.(value);
         dialog.close();
     });
-    if (!devices.length) output.textContent = getTranslation('No connected auxiliary scale found');
+    try {
+        devices = selectableBeanScales(await getScaleDevices());
+        if (!active) return dialog;
+        devices.forEach(device => {
+            const option = document.createElement('option');
+            option.value = device.id;
+            option.textContent = device.name || device.id;
+            option.disabled = !isConnected(device);
+            deviceSelect.append(option);
+        });
+        refresh();
+        if (!devices.length) output.textContent = getTranslation('No connected auxiliary scale found');
+    } catch (_) {
+        if (!active) return dialog;
+        output.textContent = getTranslation('Could not load scales');
+    }
     dialog.showModal();
     return dialog;
 }

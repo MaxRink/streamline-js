@@ -62,7 +62,7 @@ P.rows[1]._l.click();
 assert.ok(!P.ok.classList.contains('hidden'), '2: Confirm shown after selection');
 assert.strictEqual(P.rows[1]._attrs['aria-pressed'], 'true',  '2: picked row pressed');
 assert.strictEqual(P.rows[0]._attrs['aria-pressed'], 'false', '2: other row not pressed');
-assert.ok(P.rows[1].className.includes('border-[var(--mimoja-blue)]'), '2: picked row highlighted');
+assert.ok(P.rows[1].className.includes('border-[var(--mimoja-blue-v2)]'), '2: picked row highlighted');
 
 // 3. Selecting a row does NOT resolve — only Confirm does
 let settled = false; p.then(() => { settled = true; });

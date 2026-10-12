@@ -5,11 +5,11 @@
     <div id="subpage-header" class="flex justify-between items-center p-6 bg-[var(--bg-tertiary)] border-b-[1.5px] border-[var(--border-graph-grid)] h-[150px]">
         <div class="flex items-center gap-4 flex-1">
             <span id="editor-title-display" class="text-[30px] font-semibold text-[var(--text-primary)] cursor-pointer select-none">Untitled Profile</span>
-            <input id="editor-title-input" type="text" class="text-[30px] font-semibold text-[var(--text-primary)] bg-transparent border-b-2 border-[var(--mimoja-blue)] outline-none hidden w-[400px]" />
+            <input id="editor-title-input" type="text" class="text-[30px] font-semibold text-[var(--text-primary)] bg-transparent border-b-2 border-[var(--mimoja-blue-v2)] outline-none hidden w-[400px]" />
         </div>
         <div class="flex items-center gap-[30px]">
             <button id="editor-close-btn" class="uppercase flex justify-center items-center min-h-0 w-[171px] h-[82.5px] whitespace-nowrap bg-transparent text-[var(--text-primary)] font-bold text-[24px]" data-i18n-key="Close" data-fit-text aria-label="Close">CLOSE</button>
-            <button id="editor-save-as-btn" class="uppercase flex justify-center items-center min-h-0 w-[240px] h-[82.5px] whitespace-nowrap bg-[var(--profile-button-background-color)] text-[var(--text-primary)] border-[1.5px] border-[var(--border-primary)] font-bold text-[24px] rounded-[67.5px]" data-i18n-key="Save As New" data-fit-text aria-label="Save As New">SAVE AS NEW</button>
+            <button id="editor-save-as-btn" class="uppercase flex justify-center items-center min-h-0 w-[240px] h-[82.5px] whitespace-nowrap bg-[var(--card-bg)] text-[var(--text-primary)] border-[1.5px] border-[var(--border-primary)] font-bold text-[24px] rounded-[67.5px]" data-i18n-key="Save As New" data-fit-text aria-label="Save As New">SAVE AS NEW</button>
             <button id="editor-save-btn" class="uppercase flex justify-center items-center bg-[var(--button-primary-bg)] text-[var(--button-primary-text)] min-h-0 w-[240px] h-[82.5px] whitespace-nowrap font-bold text-[24px] rounded-[67.5px]" data-i18n-key="Save" data-fit-text aria-label="Save">SAVE</button>
         </div>
     </div>
@@ -19,14 +19,14 @@
          30, putting the tab panels' top edge at 315. At 37.5 the panels start
          at 330 and every tab's card loses 15px of height. -->
     <div class="flex items-center justify-between px-[37.5px] py-[30px] bg-[var(--bg-tertiary)]">
-        <div class="flex items-center gap-[15px] bg-[var(--profile-button-background-color)] border-[1.5px] border-[var(--border-graph-grid)] rounded-[60px] p-[18px] w-[834.75px] h-[105px]">
+        <div class="flex items-center gap-[15px] bg-[var(--card-bg)] border-[1.5px] border-[var(--border-graph-grid)] rounded-[60px] p-[18px] w-[834.75px] h-[105px]">
             <button class="editor-tab-btn font-bold w-[251.25px] h-[75px] rounded-[45px] transition-colors text-[30px] tracking-[2.25px] whitespace-nowrap" data-tab="0" data-i18n-key="CARDS" data-fit-text>CARDS</button>
             <button class="editor-tab-btn font-bold w-[251.25px] h-[75px] rounded-[45px] transition-colors text-[30px] tracking-[2.25px] whitespace-nowrap" data-tab="2" data-i18n-key="SCRIPT" data-fit-text>SCRIPT</button>
             <button class="editor-tab-btn font-bold w-[251.25px] h-[75px] rounded-[45px] transition-colors text-[30px] tracking-[2.25px] whitespace-nowrap" data-tab="1" data-i18n-key="SETTINGS" data-fit-text>SETTINGS</button>
         </div>
         <div id="editor-paging-controls" class="flex items-center gap-[22.5px]">
-            <button id="editor-page-prev-btn" type="button" class="flex items-center justify-center w-[120px] h-[72px] rounded-[15px] bg-[var(--profile-button-background-color)] border-[1.5px] border-[var(--border-graph-grid)] cursor-pointer" aria-label="Previous cards"></button>
-            <button id="editor-page-next-btn" type="button" class="flex items-center justify-center w-[120px] h-[72px] rounded-[15px] bg-[var(--profile-button-background-color)] border-[1.5px] border-[var(--border-graph-grid)] cursor-pointer" aria-label="Next cards"></button>
+            <button id="editor-page-prev-btn" type="button" class="flex items-center justify-center w-[120px] h-[72px] rounded-[15px] bg-[var(--card-bg)] border-[1.5px] border-[var(--border-graph-grid)] cursor-pointer" aria-label="Previous cards"></button>
+            <button id="editor-page-next-btn" type="button" class="flex items-center justify-center w-[120px] h-[72px] rounded-[15px] bg-[var(--card-bg)] border-[1.5px] border-[var(--border-graph-grid)] cursor-pointer" aria-label="Next cards"></button>
         </div>
     </div>
 
@@ -57,12 +57,12 @@
                      keeps it clipped to the card's rounded corners without scrolling away
                      with the content itself. -->
                 <div id="editor-settings-form-card-wrap" class="w-[1070.25px] shrink-0 relative rounded-[15px] border-[1.5px] border-[var(--border-graph-grid)] overflow-hidden">
-                    <div id="editor-settings-form-card" class="w-full h-full bg-[var(--profile-button-background-color)] overflow-y-auto overflow-x-hidden">
+                    <div id="editor-settings-form-card" class="w-full h-full bg-[var(--card-bg)] overflow-y-auto overflow-x-hidden">
                         <!-- Settings fields rendered by JS -->
                     </div>
                     <div id="editor-settings-form-card-thumb" class="absolute right-[3px] w-[39px] rounded-full bg-[var(--secondary-button-bg)] hidden" style="touch-action: none;" aria-hidden="true"></div>
                 </div>
-                <div class="flex-1 min-w-0 relative bg-[var(--profile-button-background-color)] rounded-[15px] border-[1.5px] border-[var(--border-graph-grid)] flex flex-col overflow-hidden">
+                <div class="flex-1 min-w-0 relative bg-[var(--card-bg)] rounded-[15px] border-[1.5px] border-[var(--border-graph-grid)] flex flex-col overflow-hidden">
                     <div class="flex items-center justify-between px-[49.5px] pt-[37.5px] shrink-0">
                         <p class="text-[30px] font-bold text-[var(--text-primary)]" data-i18n-key="Description">Description</p>
                         <div class="w-[48px] h-[48px] rounded-full bg-[var(--button-primary-bg)] flex items-center justify-center text-[24px] font-bold text-white shrink-0 select-none">?</div>
@@ -86,7 +86,7 @@
         <!-- Like the CARDS row, the card stops 31.5px short of the content
              area's bottom edge, leaving a skirt of page ground below it. -->
         <div id="editor-tab-panel-2" class="editor-tab-panel h-full hidden overflow-hidden pb-[31.5px]">
-            <div class="flex h-full bg-[var(--profile-button-background-color)] rounded-[15px] ml-[37.5px] mr-[39px] border-[1.5px] border-[var(--border-graph-grid)] overflow-hidden">
+            <div class="flex h-full bg-[var(--card-bg)] rounded-[15px] ml-[37.5px] mr-[39px] border-[1.5px] border-[var(--border-graph-grid)] overflow-hidden">
                 <!-- Left: Steps Overview. Fixed 912px (Figma 1216) so the
                      divider between the two halves sits where the design puts
                      it rather than following the step text's own width. -->

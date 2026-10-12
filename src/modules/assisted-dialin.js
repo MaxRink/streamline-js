@@ -28,8 +28,8 @@ export function buildAssistedDialInUrl(apiBaseUrl, plugin, {
     const url = new URL(`${String(apiBaseUrl).replace(/\/$/, '')}/plugins/${encodeURIComponent(plugin.id)}/ui`);
     url.searchParams.set('shotId', String(shotId));
     url.searchParams.set('action', action === 'feedback' ? 'feedback' : 'analyze');
-    if (returnUrl) url.searchParams.set('return', String(returnUrl));
-    if (beanCapture?.deviceId && beanCapture.role === 'primary' || beanCapture?.deviceId && beanCapture.role === 'auxiliary') {
+    if (returnUrl) url.searchParams.set('returnTo', String(returnUrl));
+    if (beanCapture?.deviceId && ['primary', 'auxiliary'].includes(beanCapture.role)) {
         url.searchParams.set('beanScaleId', String(beanCapture.deviceId));
         url.searchParams.set('beanScaleRole', String(beanCapture.role));
         url.searchParams.set('beanWeight', String(beanCapture.weight));

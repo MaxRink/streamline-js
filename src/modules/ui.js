@@ -378,7 +378,7 @@ function makeEditable(element, onCommit) {
         input.type = 'number';
         input.value = currentValue;
         // Increased text size and made the input area bigger
-        input.className = 'text-[19px] font-bold text-center w-18 bg-transparent absolute border-2 border-[var(--mimoja-blue)] rounded-lg';
+        input.className = 'text-[19px] font-bold text-center w-18 bg-transparent absolute border-2 border-[var(--mimoja-blue-v2)] rounded-lg';
         input.name = element.id; // Recommended for accessibility and autofill
         input.setAttribute('aria-label', element.getAttribute('data-i18n-key') || element.id);
 
@@ -1518,6 +1518,10 @@ let screensaverDimOverlay = null;
 let screensaverImages = [];
 let screensaverCurrentIndex = 0;
 let screensaverCycleInterval = null;
+let screensaverClockEl = null;
+let screensaverClockTimeEl = null;
+let screensaverClockDateEl = null;
+let screensaverClockTimer = null;
 
 // When we last sent a wake ('idle') the machine has not yet confirmed. 0 = none.
 //
@@ -1594,6 +1598,19 @@ export async function initScreensaver() {
     screensaverDimOverlay.style.display = 'none';
     screensaverElement.appendChild(screensaverDimOverlay);
 
+    // Date/time block, shown only while the saver is up and the setting is on.
+    screensaverClockEl = document.createElement('div');
+    screensaverClockEl.id = 'screensaver-clock';
+    screensaverClockEl.style.cssText = 'position:absolute;left:0;right:0;bottom:8%;display:none;'
+        + 'flex-direction:column;align-items:center;gap:8px;color:#fff;pointer-events:none;'
+        + 'text-shadow:0 2px 12px rgba(0,0,0,0.7);font-family:Inter,sans-serif;';
+    screensaverClockTimeEl = document.createElement('div');
+    screensaverClockTimeEl.style.cssText = 'font-size:120px;font-weight:700;line-height:1;';
+    screensaverClockDateEl = document.createElement('div');
+    screensaverClockDateEl.style.cssText = 'font-size:36px;font-weight:500;';
+    screensaverClockEl.append(screensaverClockTimeEl, screensaverClockDateEl);
+    screensaverElement.appendChild(screensaverClockEl);
+
     // Tapping the overlay is the one place a screensaver interaction may wake the
     // machine. Bind ONCE: a WebView synthesises `click` from a tap, so binding
     // `touchstart` as well (as this did) sent 'idle' twice per tap. The
@@ -1644,6 +1661,34 @@ export function setScreensaverCycleSeconds(seconds) {
     return clamped;
 }
 
+function _updateScreensaverClock() {
+    if (!screensaverClockEl) return;
+    const now = new Date();
+    screensaverClockTimeEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    screensaverClockDateEl.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+// Show/hide the clock to match (active && enabled) and run its ticker only then.
+// Default on: only an explicit 'false' turns it off.
+function _syncScreensaverClock() {
+    if (screensaverClockTimer) {
+        clearInterval(screensaverClockTimer);
+        screensaverClockTimer = null;
+    }
+    if (!screensaverClockEl) return;
+    const show = screensaverActive && localStorage.getItem('screensaverShowClock') !== 'false';
+    screensaverClockEl.style.display = show ? 'flex' : 'none';
+    if (!show) return;
+    _updateScreensaverClock();
+    screensaverClockTimer = setInterval(_updateScreensaverClock, 5000);
+}
+
+// Called by settings UI; applies immediately if the saver is currently up.
+export function setScreensaverClockEnabled(enabled) {
+    localStorage.setItem('screensaverShowClock', enabled ? 'true' : 'false');
+    _syncScreensaverClock();
+}
+
 export function activateScreensaver() {
     if (!screensaverElement) {
         console.error('Screensaver element not initialized');
@@ -1660,6 +1705,7 @@ export function activateScreensaver() {
         if (screensaverDimOverlay) screensaverDimOverlay.style.display = 'none';
         screensaverElement.style.display = 'flex';
         screensaverActive = true;
+        _syncScreensaverClock();
         return;
     }
 
@@ -1671,6 +1717,7 @@ export function activateScreensaver() {
     }
     screensaverElement.style.display = 'flex';
     screensaverActive = true;
+    _syncScreensaverClock();
 
     if (screensaverImages.length > 1) {
         screensaverCycleInterval = setInterval(() => {
@@ -1702,6 +1749,7 @@ export function hideScreensaver() {
         screensaverElement.style.display = 'none';
     }
     screensaverActive = false;
+    _syncScreensaverClock();
 }
 
 /**

@@ -29,7 +29,7 @@ test('builds a safe selected-shot URL with action and return navigation', () => 
     assert.equal(parsed.pathname, `/api/v1/plugins/${ASSISTED_DIALIN_PLUGIN_ID}/ui`);
     assert.equal(parsed.searchParams.get('shotId'), 'shot/42?x=1');
     assert.equal(parsed.searchParams.get('action'), 'feedback');
-    assert.equal(parsed.searchParams.get('return'), 'http://de1.local:8080/?page=history&shot=42');
+    assert.equal(parsed.searchParams.get('returnTo'), 'http://de1.local:8080/?page=history&shot=42');
     assert.equal(parsed.searchParams.get('beanScaleId'), 'plugin:scale/a');
     assert.equal(parsed.searchParams.get('beanScaleRole'), 'auxiliary');
     assert.equal(parsed.searchParams.get('beanWeight'), '18.2');
