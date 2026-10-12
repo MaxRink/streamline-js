@@ -43,15 +43,15 @@
         <div id="main-page">
 
     <!-- Header -->
-    <header class="bg-[var(--box-color)] border-b border-base-400 w-full h-[165px] relative" role="banner">
+    <header class="bg-[var(--box-color)] border-b border-[var(--border-primary)] w-full h-[165px] relative" role="banner">
         <!-- DYE2 strip mode toggle: P (profiles, default) / F (auto-favs) / R (recipes).
              Extends Figma 2386:1116 (F/R) with a P pill on top. See src/modules/dyeStrip.js. -->
         <!-- Hidden via inline display:none (not the `hidden` attr — a Tailwind `flex`
              display utility would override [hidden]). dyeStrip.js reveals it when DYE2 is enabled. -->
         <div id="dye-strip-toggle" class="absolute left-[18px] top-[37.5px] w-[46px] h-[90px] flex flex-col gap-[4px] z-10" role="tablist" aria-label="Header strip mode" style="display:none">
-            <button id="dye-toggle-P" type="button" role="tab" aria-label="Profile favourites" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue)] text-[20px] font-bold">P</button>
-            <button id="dye-toggle-F" type="button" role="tab" aria-label="Auto favourites" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue)] text-[20px] font-bold">F</button>
-            <button id="dye-toggle-R" type="button" role="tab" aria-label="Recipes" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue)] text-[20px] font-bold">R</button>
+            <button id="dye-toggle-P" type="button" role="tab" aria-label="Profile favourites" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] text-[20px] font-bold">P</button>
+            <button id="dye-toggle-F" type="button" role="tab" aria-label="Auto favourites" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] text-[20px] font-bold">F</button>
+            <button id="dye-toggle-R" type="button" role="tab" aria-label="Recipes" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] text-[20px] font-bold">R</button>
         </div>
         <!-- Profile Favorites (P mode — existing behaviour, untouched logic). Stock
              position left-[37.5px]; dyeStrip.js shifts it to left-[80px] only when DYE2 is enabled. -->
@@ -68,10 +68,10 @@
         <!-- Right side controls -->
         <div id="header-right-controls" class="absolute right-[37.5px] top-[57px] flex items-center gap-[22.5px]">
             <!-- DYE: opens the DYE2 plugin dashboard (Figma 2386:893). Wired in dyeStrip.js. -->
-            <button id="dye-open-btn" class="settings-button flex justify-center items-center min-h-0 w-[135px] h-[53.7px] whitespace-nowrap border-[1.5px] border-solid border-[var(--mimoja-blue)] text-[var(--mimoja-blue)] rounded-[22.5px] text-[21px] font-semibold" aria-label="Open DYE" style="display:none">DYE</button>
-            <button id="settings-btn" class="settings-button flex justify-center items-center min-h-0 w-[135px] h-[53.7px] whitespace-nowrap border-[1.5px] border-solid border-[var(--mimoja-blue)] text-[var(--mimoja-blue)] rounded-[22.5px] text-[21px] font-semibold" data-i18n-key="Settings" data-fit-text>Settings</button>
-            <button id="sleep-button" class="flex justify-center items-center min-h-0 w-[135px] h-[53.7px] whitespace-nowrap border-[1.5px] border-[var(--mimoja-blue)] text-[var(--mimoja-blue)] rounded-[22.5px] text-[21px] font-semibold" data-i18n-key="Sleep" data-fit-text>Sleep</button>
-            <button id="fullscreen-toggle-btn" title="Toggle fullscreen" class="  w-[50px] h-[50px] flex items-center justify-center  border border-[var(--mimoja-blue)] rounded-[10px]  text-[var(--mimoja-blue)]" aria-label="Toggle Fullscreen">
+            <button id="dye-open-btn" class="settings-button flex justify-center items-center min-h-0 w-[135px] h-[53.7px] whitespace-nowrap border-[1.5px] border-solid border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] rounded-[22.5px] text-[21px] font-semibold" aria-label="Open DYE" style="display:none">DYE</button>
+            <button id="settings-btn" class="settings-button flex justify-center items-center min-h-0 w-[135px] h-[53.7px] whitespace-nowrap border-[1.5px] border-solid border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] rounded-[22.5px] text-[21px] font-semibold" data-i18n-key="Settings" data-fit-text>Settings</button>
+            <button id="sleep-button" class="flex justify-center items-center min-h-0 w-[135px] h-[53.7px] whitespace-nowrap border-[1.5px] border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] rounded-[22.5px] text-[21px] font-semibold" data-i18n-key="Sleep" data-fit-text>Sleep</button>
+            <button id="fullscreen-toggle-btn" title="Toggle fullscreen" class="  w-[50px] h-[50px] flex items-center justify-center  border border-[var(--mimoja-blue-v2)] rounded-[10px]  text-[var(--mimoja-blue-v2)]" aria-label="Toggle Fullscreen">
                 <svg class="enter-fullscreen-icon w-50 h-50" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
                 <svg class="exit-fullscreen-icon w-6 h-6 " aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
             </button>
@@ -80,7 +80,7 @@
 
     <div class="flex-grow flex">
         <!-- Left Sidebar: Shot Settings -->
-        <aside id="shot-settings" class="bg-[var(--box-color)] pl-[37.5px] pr-3 md:pr-[6px] py-3 flex flex-col justify-around border-r border-base-400 w-[480px] h-[1036px]" aria-label="Shot Settings">
+        <aside id="shot-settings" class="bg-[var(--box-color)] pl-[37.5px] pr-3 md:pr-[6px] py-3 flex flex-col justify-around border-r border-[var(--border-primary)] w-[480px] h-[1036px]" aria-label="Shot Settings">
             <!-- Grind -->
             <div id="grind-section" class="flex justify-start items-center gap-[39px]">
                 <span id="grind-label" class="w-[112.5px] text-[var(--left-label-text)] text-[25.5px] font-bold break-words" data-i18n-key="Grind">Grind</span>
@@ -117,7 +117,7 @@
                 <button id="drink-out-preset-3" class="text-center justify-center text-[var(--preset-value-color)] text-[21px] font-semibold">22:44</button>
                 <button id="drink-out-preset-4" class="text-left justify-center  text-[var(--preset-value-color)] text-[21px] font-semibold">20:46</button>
             </div>
-            <div class="border-t border-base-400 w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
+            <div class="border-t border-[var(--border-primary)] w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
             <!-- Temp -->
              <div id="brew-section" class="flex justify-start items-center gap-[39px]">
                 <span id="brew-label" class="w-[112.5px] text-[var(--left-label-text)] text-[25.5px] font-bold break-words" data-i18n-key="Brew">Brew</span>
@@ -133,7 +133,7 @@
                 <button id="temp-preset-85" class="justify-center text-[var(--preset-value-color)] text-[21px] font-semibold">85°c</button>
                 <button id="temp-preset-92" class="justify-center text-[var(--preset-value-color)] text-[21px] font-semibold">92°c</button>
             </div>
-             <div class="border-t border-base-400 w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
+             <div class="border-t border-[var(--border-primary)] w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
             <!-- Steam -->
             <div id="steam-section" class="flex justify-start items-center gap-[19.5px]">
                 <div class="w-[132px]">
@@ -176,7 +176,7 @@
                 <button id="steam-flow-preset-3" class="justify-center text-[var(--preset-value-color)] text-[21px] font-semibold">1.5ml/s</button>
                 <button id="steam-flow-preset-4" class="justify-center text-[var(--preset-value-color)] text-[21px] font-semibold">2.0ml/s</button>
             </div>
-            <div class="border-t border-base-400 w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
+            <div class="border-t border-[var(--border-primary)] w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
             <!-- Flush -->
             <div id="flush-section" class="flex justify-start items-center gap-[19.5px]">
                 <span id="flush-label" class="w-[132px] text-[var(--left-label-text)] text-[25.5px] font-bold" data-i18n-key="Flush">Flush</span>
@@ -193,7 +193,7 @@
                 <button id="flush-preset-3" class="justify-center text-[var(--preset-value-color)] text-[21px] font-semibold">20s</button>
                 </div>
 
-            <div class="border-t border-base-400 w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
+            <div class="border-t border-[var(--border-primary)] w-[480px] ml-[-36px] mr-[-24px]" role="separator"></div>
             <!-- Hot Water -->
             <!-- The +/- column starts at label width + gap, and every row above puts it
                  at 150px (130+20 for Grind/Dose/Drink/Brew, 114+36 for Steam/Flush).
@@ -242,7 +242,7 @@
                                      let it give way first when the GHC column narrows the band.
                                      textContent is unaffected, so the title-matching lookups in
                                      profileManager/profile_selector still see the full name. -->
-                                <h1 id="profile-name" class="max-w-[556px] min-w-0 shrink truncate py-[6px] -my-[6px] justify-start text-[var(--mimoja-blue)] text-nowrap text-[30px] font-bold font-['Inter'] leading-8 tracking-wide no-select" aria-live="polite">
+                                <h1 id="profile-name" class="max-w-[556px] min-w-0 shrink truncate py-[6px] -my-[6px] justify-start text-[var(--mimoja-blue-v2)] text-nowrap text-[30px] font-bold font-['Inter'] leading-8 tracking-wide no-select" aria-live="polite">
                                     Current Profile
                                 </h1>
                                 <!-- Explicit header affordances for the two actions that are otherwise
@@ -295,22 +295,22 @@
                 </div>
 
                 <!-- GHC column: h = 116 (header) + 675 (chart) = 791px -->
-                <aside id="ghc-controls" class="bg-[var(--box-color)] border-l border-b border-base-400 w-[172px] shrink-0 h-[790px] flex flex-col items-center justify-around py-[20px]" style="display:none" aria-label="Machine Controls">
+                <aside id="ghc-controls" class="bg-[var(--box-color)] border-l border-b border-[var(--border-primary)] w-[172px] shrink-0 h-[790px] flex flex-col items-center justify-around py-[20px]" style="display:none" aria-label="Machine Controls">
                     <button id="ghc-coffee-btn" class="flex flex-col items-center justify-center w-[116px] h-[116px] rounded-[18px]  bg-[var(--profile-button-background-color)]" aria-label="Start Coffee">
                         <img src="src/ui/icons/icon_coffee.svg" alt="" class="w-[52px] h-[52px]" aria-hidden="true">
-                        <span class="text-[var(--mimoja-blue)] text-[24px] font-semibold mt-1" data-i18n-key="Coffee">Coffee</span>
+                        <span class="text-[var(--mimoja-blue-v2)] text-[24px] font-semibold mt-1" data-i18n-key="Coffee">Coffee</span>
                     </button>
                     <button id="ghc-water-btn" class="flex flex-col items-center justify-center w-[116px] h-[116px] rounded-[18px]  bg-[var(--profile-button-background-color)]" aria-label="Dispense Hot Water">
                         <img src="src/ui/icons/icon_water.svg" alt="" class="w-[52px] h-[52px]" aria-hidden="true">
-                        <span class="text-[var(--mimoja-blue)] text-[24px] font-semibold mt-1" data-i18n-key="Water">Water</span>
+                        <span class="text-[var(--mimoja-blue-v2)] text-[24px] font-semibold mt-1" data-i18n-key="Water">Water</span>
                     </button>
                     <button id="ghc-steam-btn" class="flex flex-col items-center justify-center w-[116px] h-[116px] rounded-[18px]  bg-[var(--profile-button-background-color)]" aria-label="Start Steam">
                         <img src="src/ui/icons/icon_steam.svg" alt="" class="w-[52px] h-[52px]" aria-hidden="true">
-                        <span class="text-[var(--mimoja-blue)] text-[24px] font-semibold mt-1" data-i18n-key="Steam">Steam</span>
+                        <span class="text-[var(--mimoja-blue-v2)] text-[24px] font-semibold mt-1" data-i18n-key="Steam">Steam</span>
                     </button>
                     <button id="ghc-flush-btn" class="flex flex-col items-center justify-center w-[116px] h-[116px] rounded-[18px]  bg-[var(--profile-button-background-color)]" aria-label="Flush">
                         <img src="src/ui/icons/icon_flush.svg" alt="" class="w-[52px] h-[52px]" aria-hidden="true">
-                        <span class="text-[var(--mimoja-blue)] text-[24px] font-semibold mt-1" data-i18n-key="Flush">Flush</span>
+                        <span class="text-[var(--mimoja-blue-v2)] text-[24px] font-semibold mt-1" data-i18n-key="Flush">Flush</span>
                     </button>
                     <button id="ghc-stop-btn" class="flex flex-col items-center justify-center w-[116px] h-[116px] rounded-[18px] bg-[#da515e] opacity-20" aria-label="Stop Machine">
                         <img src="src/ui/icons/icon_stop.svg" alt="" class="w-[52px] h-[52px]" aria-hidden="true">
@@ -320,7 +320,7 @@
             </div>
 
             <!-- Footer: Shot History and Data -->
-            <div id="shot-history-panel" class="w-[473px] h-[244.5px] left-[479px] top-[955.5px] absolute bg-[var(--bgmain-color)] border border-b-0 border-base-400" aria-label="Shot History">
+            <div id="shot-history-panel" class="w-[473px] h-[244.5px] left-[479px] top-[955.5px] absolute bg-[var(--bgmain-color)] border border-b-0 border-[var(--border-primary)]" aria-label="Shot History">
                 <div id= 'shot-history-label'class="left-1/2 top-[41px] absolute -translate-x-1/2 text-center text-[var(--data-card-title-text-color)] text-[22.5px] font-bold font-['Inter'] leading-6 whitespace-nowrap tracking-wider" data-i18n-key="SHOT HISTORY">SHOT HISTORY</div>
                 <button id="history-prev-btn" class="absolute left-[32px] top-[77px]" aria-label="Previous Shot"><svg class="w-[40.5px] h-[40.5px] rotate-180" aria-hidden="true" viewBox="0 0 54 54" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.25 27L42.75 27M42.75 27L27 11.25M42.75 27L27 42.75" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 <button id="history-next-btn" class="absolute right-[33px] top-[77px] invisible" aria-label="Next Shot"><svg class="w-[40.5px] h-[40.5px]" aria-hidden="true" viewBox="0 0 54 54" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.25 27L42.75 27M42.75 27L27 11.25M42.75 27L27 42.75" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -336,7 +336,7 @@
                     </div>
                 </div>
             </div>
-            <div id="shot-data-panel" class="w-[968px] h-[244.5px] left-[952px] top-[955.5px] border-r-0 border-b-0 absolute bg-[var(--bgmain-color)] border border-base-400" role="grid" aria-label="Detailed Shot Data">
+            <div id="shot-data-panel" class="w-[968px] h-[244.5px] left-[952px] top-[955.5px] border-r-0 border-b-0 absolute bg-[var(--bgmain-color)] border border-[var(--border-primary)]" role="grid" aria-label="Detailed Shot Data">
                 <div class="shot-data-cols grid grid-cols-7 w-full left-[187px] top-[35px] absolute" style="grid-template-columns: 90px 112.5px 97.5px 112.5px 172.5px 157.5px;" role="row">
                     <div class="h-9 text-[var(--data-card-title-text-color)] text-[22.5px] font-bold font-['Inter'] leading-6 text-left flex items-center justify-start whitespace-nowrap" data-i18n-key="Time" role="columnheader">Time</div>
                     <div class="h-9 text-[var(--data-card-title-text-color)] text-[22.5px] font-bold font-['Inter'] leading-6 text-left flex items-center justify-start whitespace-nowrap" data-i18n-key="Grams" role="columnheader">Grams</div>
@@ -394,7 +394,7 @@
         <div id="expanded-chart-overlay" style="display:none; position:absolute; top:0; left:0; width:1920px; height:100%; z-index:60; background:var(--bgmain-color); flex-direction:column;" role="dialog" aria-modal="true" aria-label="Expanded live charts">
             <div style="height:96px; flex:0 0 96px; display:flex; align-items:center; justify-content:space-between; padding:0 44px; border-bottom:1px solid var(--border-color);">
                 <button id="expanded-chart-back" aria-label="Back to main screen" style="display:flex; align-items:center; gap:16px; background:transparent; border:none; cursor:pointer; padding:10px 14px; margin-left:-14px; border-radius:14px;">
-                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--mimoja-blue)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--mimoja-blue-v2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
                 </button>
                 <div style="color:var(--text-primary); font-size:30px; font-weight:600; font-family:'Inter',sans-serif;">Live Charts</div>
                 <div style="width:140px;" aria-hidden="true"></div>

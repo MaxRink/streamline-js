@@ -125,7 +125,7 @@ function buildModal() {
                 height: 56px;
                 padding: 0 20px;
                 border-radius: 12px;
-                border: 2px solid #385a92;
+                border: 2px solid var(--mimoja-blue-v2);
                 background: var(--box-color, #fff);
                 color: var(--text-primary, #000);
                 font-size: 22px;

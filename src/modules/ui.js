@@ -378,7 +378,7 @@ function makeEditable(element, onCommit) {
         input.type = 'number';
         input.value = currentValue;
         // Increased text size and made the input area bigger
-        input.className = 'text-[19px] font-bold text-center w-18 bg-transparent absolute border-2 border-[var(--mimoja-blue)] rounded-lg';
+        input.className = 'text-[19px] font-bold text-center w-18 bg-transparent absolute border-2 border-[var(--mimoja-blue-v2)] rounded-lg';
         input.name = element.id; // Recommended for accessibility and autofill
         input.setAttribute('aria-label', element.getAttribute('data-i18n-key') || element.id);
 

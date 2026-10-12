@@ -136,8 +136,8 @@ function summarizeProfileDiff(current, other) {
 function promptVersionRestore(versions, currentProfile) {
     return new Promise((resolve) => {
         const ROW_BASE     = 'text-left px-[16px] py-[14px] rounded-[10px] border-2 bg-[var(--box-color)] cursor-pointer';
-        const ROW_IDLE     = `${ROW_BASE} border-[var(--border-color)] hover:border-[var(--mimoja-blue)]`;
-        const ROW_SELECTED = `${ROW_BASE} border-[var(--mimoja-blue)]`;
+        const ROW_IDLE     = `${ROW_BASE} border-[var(--border-color)] hover:border-[var(--mimoja-blue-v2)]`;
+        const ROW_SELECTED = `${ROW_BASE} border-[var(--mimoja-blue-v2)]`;
 
         const dlg = document.createElement('dialog');
         dlg.className = 'pe-history-dialog rounded-[16px] bg-[var(--box-color)] p-0 border border-[var(--border-color)] max-w-[560px] w-[90vw] shadow-2xl';
@@ -150,7 +150,7 @@ function promptVersionRestore(versions, currentProfile) {
                 <div data-rows class="flex flex-col gap-[10px] max-h-[46vh] overflow-y-auto"></div>
                 <div class="flex flex-wrap justify-end gap-[12px] mt-[8px]">
                     <button type="button" data-act="cancel" class="px-[18px] py-[10px] rounded-[10px] bg-[var(--button-grey)] text-[var(--text-primary)] text-[20px] font-semibold cursor-pointer">${getTranslation('Cancel')}</button>
-                    <button type="button" data-act="ok" class="hidden px-[18px] py-[10px] rounded-[10px] bg-[var(--mimoja-blue)] text-white text-[20px] font-semibold cursor-pointer">${getTranslation('Confirm')}</button>
+                    <button type="button" data-act="ok" class="hidden px-[18px] py-[10px] rounded-[10px] bg-[var(--button-primary-bg)] text-white text-[20px] font-semibold cursor-pointer">${getTranslation('Confirm')}</button>
                 </div>
             </div>`;
 
@@ -1141,7 +1141,7 @@ function initViewButton() {
     button.innerHTML = getEyeOffIconSVG('currentColor', BIG_ICON);
     button.setAttribute('aria-label', 'Show hidden profiles');
     button.title = 'Show hidden profiles';
-    button.classList.remove("bg-[var(--mimoja-blue)]");
+    button.classList.remove("bg-[var(--button-primary-bg)]");
     button.classList.add("bg-[var(--button-grey)]"); // Use CSS variable for background
     console.log('initViewButton: Initial state set');
 
@@ -1238,7 +1238,7 @@ function initSearchButton() {
 
     // Set initial state on load (default bg, blue icon)
     button.innerHTML = getSearchIconSVG();
-    button.classList.remove("bg-[var(--mimoja-blue)]");
+    button.classList.remove("bg-[var(--button-primary-bg)]");
     button.classList.add("bg-[var(--button-grey)]"); // Use CSS variable for background
     console.log('initSearchButton: Initial state set');
 

@@ -45,8 +45,8 @@ const CELL_BASE =
     'overflow-hidden [overflow-wrap:anywhere] w-[225px] h-[90px] text-[21px] rounded-[15px] ' +
     'border-2 font-semibold cursor-pointer';
 const CELL_IDLE = ' border-[var(--profile-button-outline-color)] bg-[var(--profile-button-background-color)] text-[var(--profile-button-text-color)]';
-const CELL_ACTIVE = ' border-[var(--mimoja-blue)] bg-[var(--mimoja-blue-v2)] text-white';
-const CELL_ACCENT = ' border-[var(--mimoja-blue)] bg-[var(--box-color)] text-[var(--mimoja-blue)]'; // VIEW ALL
+const CELL_ACTIVE = ' border-[var(--mimoja-blue-v2)] bg-[var(--mimoja-blue-v2)] text-[var(--button-primary-text)]';
+const CELL_ACCENT = ' border-[var(--mimoja-blue-v2)] bg-[var(--box-color)] text-[var(--mimoja-blue-v2)]'; // VIEW ALL
 // Empty-state hint. Carries the cell height explicitly: in R mode it is the only
 // child, so without it the strip collapses to one line of text and the hint sits
 // at the top of the band instead of centred against where the cells would be.
@@ -455,7 +455,7 @@ export function openPluginOverlay(page) {
         const close = document.createElement('button');
         close.textContent = 'Close';
         close.style.cssText =
-            'padding:8px 22px;border:2px solid var(--mimoja-blue);color:var(--mimoja-blue);border-radius:20px;font-weight:600;font-size:20px;cursor:pointer;';
+            'padding:8px 22px;border:2px solid var(--mimoja-blue-v2);color:var(--mimoja-blue-v2);border-radius:20px;font-weight:600;font-size:20px;cursor:pointer;';
         close.addEventListener('click', closePluginOverlay);
         bar.appendChild(close);
         const frame = document.createElement('iframe');
@@ -582,11 +582,11 @@ function promptPluginRequired(reason, installed) {
         const canInstall = reason === 'missing' || reason === 'outdated';
         dlg.innerHTML = `
             <div style="background:var(--bgmain-color,#fff);border-radius:24px;padding:36px 40px;max-width:640px;display:flex;flex-direction:column;gap:18px;">
-                <div style="font-size:30px;font-weight:700;color:var(--mimoja-blue);">DYE2 plugin required</div>
+                <div style="font-size:30px;font-weight:700;color:var(--mimoja-blue-v2);">DYE2 plugin required</div>
                 <div id="dye2-required-body" style="font-size:23px;line-height:1.4;">${body}</div>
                 <div style="display:flex;justify-content:flex-end;gap:14px;padding-top:6px;">
-                    <button id="dye2-required-cancel" style="padding:10px 26px;border:2px solid var(--mimoja-blue);background:transparent;color:var(--mimoja-blue);border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">${canInstall ? 'Cancel' : 'OK'}</button>
-                    ${canInstall ? `<button id="dye2-required-install" style="padding:10px 26px;border:0;background:var(--mimoja-blue);color:#fff;border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">Install</button>` : ''}
+                    <button id="dye2-required-cancel" style="padding:10px 26px;border:2px solid var(--mimoja-blue-v2);background:transparent;color:var(--mimoja-blue-v2);border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">${canInstall ? 'Cancel' : 'OK'}</button>
+                    ${canInstall ? `<button id="dye2-required-install" style="padding:10px 26px;border:0;background:var(--button-primary-bg);color:#fff;border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">Install</button>` : ''}
                 </div>
             </div>`;
         document.body.appendChild(dlg);
@@ -729,15 +729,15 @@ function promptPluginUpdate(info) {
         const permissions = (info.pending.addedPermissions || []).join(', ') || 'none listed';
         dlg.innerHTML = `
             <div style="background:var(--bgmain-color,#fff);border-radius:24px;padding:36px 40px;max-width:640px;display:flex;flex-direction:column;gap:18px;">
-                <div style="font-size:30px;font-weight:700;color:var(--mimoja-blue);">DYE2 update available</div>
+                <div style="font-size:30px;font-weight:700;color:var(--mimoja-blue-v2);">DYE2 update available</div>
                 <div id="dye2-update-body" style="font-size:23px;line-height:1.4;">
                     Installed <b>v${info.installed}</b>, available <b>v${info.pending.version}</b>.
                     It asks for permissions the installed version does not have:
                     <b>${permissions}</b>. Update only if you trust this.
                 </div>
                 <div style="display:flex;justify-content:flex-end;gap:14px;padding-top:6px;">
-                    <button id="dye2-update-later" style="padding:10px 26px;border:2px solid var(--mimoja-blue);background:transparent;color:var(--mimoja-blue);border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">Later</button>
-                    <button id="dye2-update-now" style="padding:10px 26px;border:0;background:var(--mimoja-blue);color:#fff;border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">Update</button>
+                    <button id="dye2-update-later" style="padding:10px 26px;border:2px solid var(--mimoja-blue-v2);background:transparent;color:var(--mimoja-blue-v2);border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">Later</button>
+                    <button id="dye2-update-now" style="padding:10px 26px;border:0;background:var(--button-primary-bg);color:#fff;border-radius:20px;font-size:22px;font-weight:600;cursor:pointer;">Update</button>
                 </div>
             </div>`;
         document.body.appendChild(dlg);
@@ -782,8 +782,8 @@ export function setStripMode(mode) {
         if (!pill) return;
         const active = m === mode;
         pill.classList.toggle('bg-[var(--mimoja-blue-v2)]', active);
-        pill.classList.toggle('text-white', active);
-        pill.classList.toggle('text-[var(--mimoja-blue)]', !active);
+        pill.classList.toggle('text-[var(--button-primary-text)]', active);
+        pill.classList.toggle('text-[var(--mimoja-blue-v2)]', !active);
         pill.classList.toggle('bg-[var(--box-color)]', !active);
     });
 

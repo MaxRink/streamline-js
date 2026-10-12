@@ -156,7 +156,7 @@ button.has-context-menu.long-press-active,
        against any button background, active or not; the scale adds a
        non-color cue on top. Buttons have overflow-hidden for text truncation,
        but that only clips content, not the element's own box-shadow/outline. */
-    box-shadow: 0 0 0 2px #fff, 0 0 0 5px var(--mimoja-blue, #3b82f6);
+    box-shadow: 0 0 0 2px #fff, 0 0 0 5px var(--mimoja-blue-v2);
     transform: scale(0.97);
     transition: box-shadow 600ms ease-out, transform 600ms ease-out;
 }

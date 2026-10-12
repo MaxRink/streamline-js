@@ -1,6 +1,6 @@
 :root {
     --text-primary: #121212;
-    --border-color: #eaeaea; /* stone-300 */
+    --border-color: var(--border-primary); /* defined in main.css; its dark value is set there too */
     --toggle-off-bg: #e8e8e8;
     --toggle-off-border: #c9c9c9;
     --toggle-off-knob: #c9c9c9;
@@ -16,9 +16,8 @@
    if it worked and do nothing. */
 [data-theme="dark"] {
     --preset-active-color: #e8e8e8;
-    --border-color: #374151; /* gray-700 */
     --mimoja-blue-v2: #415996;
-    --mimoja-blue: #292c38;
+    --mimoja-blue: #415996; /* legacy alias of --mimoja-blue-v2; no remaining callers */
     --low-contrast-white: #959595;
     --dark-gray: #101217;
     --green: #0CA581;
@@ -34,26 +33,26 @@
 
 [data-theme="dark"] header {
     background-color: #17191e;
-    border-bottom-color: black;
+    border-bottom-color: var(--border-primary);
 }
 
 [data-theme="dark"] aside {
-    background-color: #181a21;
-    border-right-color: black;
+    background-color: var(--box-color); /* #17191E, Figma dark column */
+    border-right-color: var(--border-primary);
 }
 
 [data-theme="dark"] aside [role="separator"] {
-    border-color: black;
+    border-color: var(--border-primary);
 }
 
 [data-theme="dark"] #shot-history-panel,
 [data-theme="dark"] #shot-data-panel {
-    border-color: black;
+    border-color: var(--border-primary);
 }
 
 /* GHC column: match shot-history-panel border, recolor buttons + icons for dark mode */
 [data-theme="dark"] #ghc-controls {
-    border-left-color: black;
+    border-left-color: var(--border-primary);
 }
 
 [data-theme="dark"] #ghc-controls button:not(#ghc-stop-btn) {
@@ -65,7 +64,7 @@
 }
 
 [data-theme="dark"] #ghc-controls button:not(#ghc-stop-btn) span {
-    color: white;
+    color: var(--text-primary); /* Figma dark #E8E8E8 */
 }
 
 /* Header profile actions: the Figma exports are near-black line art, so flip them
@@ -75,20 +74,9 @@
     filter: brightness(0) invert(1);
 }
 
-/* These three boxes hardcode Figma's light-mode border (#C9C9C9) inline since
-   --border-color's light value (#EAEAEA) is too low-contrast to match the
-   design. Restore the existing dark-mode border token here instead of also
-   hardcoding a dark hex, so this stays in sync with --border-color's dark
-   value everywhere else. */
-[data-theme="dark"] #profile-select-btn,
-[data-theme="dark"] #profile-edit-btn,
-[data-theme="dark"] .skip-step-icon-box {
-    border-color: var(--border-color);
-}
-
 [data-theme="dark"] footer {
     background-color: #101117;
-    border-top-color: black;
+    border-top-color: var(--border-primary);
 }
 
 [data-theme="dark"] .btn-outline {
@@ -102,12 +90,23 @@
 }
 
 [data-theme="dark"] .btn:hover {
-    background-color: #415996;
+    background-color: var(--button-primary-bg);
 }
 
+/* Colour is intentionally not set here: the cancel buttons set
+   text-[var(--text-primary)] themselves; the header buttons are handled below. */
 [data-theme="dark"] #sleep-button, [data-theme="dark"] .settings-button {
     background-color: #101117; /* Buttons/Background.Secondary */
+}
+
+/* Header DYE / Settings / Sleep, dark: Figma 104:1591 (251:2217) has no stroke,
+   fill #101117 and Text/Primary #E8E8E8 labels. Border matches the fill so the
+   box size stays identical to light mode. */
+[data-theme="dark"] #dye-open-btn,
+[data-theme="dark"] #settings-btn,
+[data-theme="dark"] #sleep-button {
     color: var(--text-primary);
+    border-color: #101117;
 }
 
 [data-theme="dark"] #confirm-profile-btn,
@@ -116,15 +115,9 @@
     color: var(--button-primary-text);
 }
 
-/* Profile selector — dark palette conformance. Light mode keeps its own look:
-   blue text / hardcoded blue strokes read fine on white but sit at ~2.6:1 on
-   the dark cards, and daisyUI's base-300 / #e5e7eb dividers are near-white. */
-[data-theme="dark"] #subpage-header:has(#confirm-profile-btn),
-[data-theme="dark"] #left-panel,
-[data-theme="dark"] #left-panel > div,
-[data-theme="dark"] #profile-chart-wrap {
-    border-color: var(--border-primary);
-}
+/* Profile selector — dark palette conformance. Panel/header/chart dividers use
+   border-[var(--border-primary)] in the markup itself, so only the action
+   buttons below still need a dark override. */
 [data-theme="dark"] #add_profile,
 [data-theme="dark"] #view_profile,
 [data-theme="dark"] #search_profile,
@@ -133,11 +126,7 @@
 [data-theme="dark"] #edit_profile {
     border-color: var(--border-primary);
 }
-[data-theme="dark"] #reset_btn,
-[data-theme="dark"] #edit_profile,
-[data-theme="dark"] #selected_profile_name,
-[data-theme="dark"] #reset-profile-cancel,
-[data-theme="dark"] [data-notes-toggle] {
+[data-theme="dark"] #selected_profile_name {
     color: var(--text-primary);
 }
 [data-theme="dark"] #reset-profile-cancel { border-color: var(--border-primary); }
@@ -168,4 +157,9 @@
 }
 [data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
     background-color: #8a8fa3;
+}
+
+/* Header profile name: Figma dark (251:2245) is Text/Primary; light stays action blue. */
+[data-theme="dark"] #profile-name {
+    color: var(--text-primary);
 }

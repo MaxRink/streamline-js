@@ -8,7 +8,7 @@
     width: 56px;
     height: 56px;
     border-radius: 9999px;
-    background: var(--mimoja-blue);
+    background: var(--button-primary-bg);
     color: #fff;
     font-size: 30px;
     font-weight: 700;
@@ -43,13 +43,13 @@
     height: 50px;
     border-radius: 10px;
     background: transparent;
-    color: var(--mimoja-blue);
-    border: 1px solid var(--mimoja-blue);
+    color: var(--mimoja-blue-v2);
+    border: 1px solid var(--mimoja-blue-v2);
     box-shadow: none;
     font-size: 30px;
 }
 #help-overlay-btn.help-btn--webview[aria-pressed="true"] {
-    background: var(--mimoja-blue);
+    background: var(--button-primary-bg);
     color: #fff;
 }
 
@@ -63,9 +63,9 @@
 
 .help-ring {
     position: fixed;
-    border: 3px solid var(--mimoja-blue);
+    border: 3px solid var(--mimoja-blue-v2);
     border-radius: 12px;
-    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.45), 0 0 14px var(--mimoja-blue);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.45), 0 0 14px var(--mimoja-blue-v2);
     pointer-events: none;
     animation: help-pulse 1.6s ease-in-out infinite;
 }
@@ -81,7 +81,7 @@
     max-width: 260px;
     background: var(--box-color, #fff);
     color: var(--text-primary, #111);
-    border: 1px solid var(--mimoja-blue);
+    border: 1px solid var(--mimoja-blue-v2);
     border-radius: 10px;
     padding: 8px 12px;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
@@ -92,7 +92,7 @@
     display: block;
     font-size: 17px;
     font-weight: 700;
-    color: var(--mimoja-blue);
+    color: var(--mimoja-blue-v2);
     margin-bottom: 2px;
 }
 .help-label span {

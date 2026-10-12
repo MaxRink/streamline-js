@@ -70,7 +70,7 @@ function createSettingPill({ value, step, unit, min, max, fieldType, title, form
     // py + matching -my expands the tap/hover box for tablet fingers without
     // pushing wrapped script lines further apart (negative margin cancels the
     // padding's contribution to layout, only the hit area grows).
-    const PILL_CLASS = 'text-[var(--button-primary-bg)] font-semibold cursor-pointer select-none inline-flex px-[4px] py-[10px] -my-[10px] rounded-[4px]';
+    const PILL_CLASS = 'text-[var(--action-label)] font-semibold cursor-pointer select-none inline-flex px-[4px] py-[10px] -my-[10px] rounded-[4px]';
     const fmt = format || ((v) => unit ? `${roundTo(v, step || 1)} ${unit}` : `${roundTo(v, step || 1)}`);
 
     const pill = document.createElement('span');
@@ -526,7 +526,7 @@ function createCycleChip({ states, index, labelFor, onChange }) {
     // --action-label as label. Only those tokens' values differ between light
     // and dark; the shape never does. The fill matches the card behind it in
     // both themes -- the stroke is what draws the box, as designed.
-    chip.className = 'w-[114px] h-[72px] rounded-[15px] bg-[var(--profile-button-background-color)] border-[1.5px] border-[var(--border-primary)] text-[var(--action-label)] font-bold text-[19.5px] leading-[23.25px] px-[2.25px] flex items-center justify-center text-center shrink-0 cursor-pointer select-none';
+    chip.className = 'w-[114px] h-[72px] rounded-[15px] bg-[var(--card-bg)] border-[1.5px] border-[var(--border-primary)] text-[var(--action-label)] font-bold text-[19.5px] leading-[23.25px] px-[2.25px] flex items-center justify-center text-center shrink-0 cursor-pointer select-none';
     // pre-line, not normal: honour the explicit breaks labelFor hands back,
     // and still wrap a line too long for the box on its own.
     chip.style.whiteSpace = 'pre-line';
@@ -1080,7 +1080,7 @@ function renderStepCards() {
     // per-row grid cells that share a background/side-border so the row reads
     // as one continuous card. The row's own border-top is the hairline between
     // fields — it bleeds the full 450px card width, past the 390px content col.
-    const CARD_BG = 'bg-[var(--profile-button-background-color)]';
+    const CARD_BG = 'bg-[var(--card-bg)]';
     // No side strokes: Figma 2662-936 separates cards by their fill against the
     // page ground, and draws rules only BETWEEN a card's own rows.
     const SIDE = '';
@@ -1126,7 +1126,7 @@ function renderStepCards() {
             chevLeft.className = `w-[45px] h-[45px] flex items-center justify-center shrink-0 ${chevLeftDisabled ? 'pointer-events-none' : 'cursor-pointer'}`;
             chevLeft.setAttribute('aria-label', 'Move step earlier');
             chevLeft.setAttribute('aria-disabled', String(chevLeftDisabled));
-            chevLeft.appendChild(maskIcon(ICON_CHEVRON_LEFT, 45, chevLeftDisabled ? 'var(--profile-button-outline-color)' : 'var(--button-primary-bg)'));
+            chevLeft.appendChild(maskIcon(ICON_CHEVRON_LEFT, 45, chevLeftDisabled ? 'var(--profile-button-outline-color)' : 'var(--action-label)'));
             chevLeft.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (moveStep(index, index - 1)) { editorState.editingStep = index - 1; renderStepCards(); }
@@ -1140,7 +1140,7 @@ function renderStepCards() {
             const nameInput = document.createElement('input');
             nameInput.type = 'text';
             nameInput.value = step.name || '';
-            nameInput.className = 'text-[24px] font-bold text-[var(--text-primary)] bg-transparent outline-none min-w-0 max-w-full';
+            nameInput.className = 'text-[24px] font-bold text-[var(--action-label)] bg-transparent outline-none min-w-0 max-w-full';
             // field-sizing hugs the real text width, so the centred "N. Name"
             // group lands on the card's midline (Figma 2662-936 centres it).
             // `size` below stays as the fallback for engines without it, where
@@ -1166,7 +1166,7 @@ function renderStepCards() {
             chevRight.className = `w-[45px] h-[45px] flex items-center justify-center shrink-0 ${chevRightDisabled ? 'pointer-events-none' : 'cursor-pointer'}`;
             chevRight.setAttribute('aria-label', 'Move step later');
             chevRight.setAttribute('aria-disabled', String(chevRightDisabled));
-            chevRight.appendChild(maskIcon(ICON_CHEVRON_RIGHT, 45, chevRightDisabled ? 'var(--profile-button-outline-color)' : 'var(--button-primary-bg)'));
+            chevRight.appendChild(maskIcon(ICON_CHEVRON_RIGHT, 45, chevRightDisabled ? 'var(--profile-button-outline-color)' : 'var(--action-label)'));
             chevRight.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (moveStep(index, index + 1)) { editorState.editingStep = index + 1; renderStepCards(); }
@@ -1182,7 +1182,7 @@ function renderStepCards() {
             numSpan.className = 'font-semibold text-[var(--text-primary)]';
             numSpan.textContent = `${index + 1}. `;
             const nameSpan = document.createElement('span');
-            nameSpan.className = 'font-bold text-[var(--text-primary)]';
+            nameSpan.className = 'font-bold text-[var(--action-label)]';
             nameSpan.textContent = step.name || '';
             label.appendChild(numSpan);
             label.appendChild(nameSpan);
@@ -1627,7 +1627,7 @@ function renderFlowCalibrationFields(col) {
         toggle.type = 'checkbox';
         toggle.className = 'sr-only peer';
         const switchTrack = document.createElement('span');
-        switchTrack.className = 'absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[#385a92] peer-checked:border-[#385a92]';
+        switchTrack.className = 'absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]';
         const switchKnob = document.createElement('span');
         switchKnob.className = 'absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white';
         switchEl.append(toggle, switchTrack, switchKnob);
@@ -2087,7 +2087,7 @@ function renderSettingsTab() {
         // this card's pr-[30px] edge, which the absolutely-positioned custom
         // scrollbar thumb (editor-settings-form-card-thumb, right-[3px]
         // w-[39px] on the wrap) overlaps by 12px — clipping the button.
-        uploadBtn.className = 'w-fit h-[56px] px-[24px] bg-[var(--mimoja-blue)] text-white text-[20px] font-semibold rounded-[12px] flex items-center justify-center gap-[10px] hover:opacity-90 transition-opacity';
+        uploadBtn.className = 'w-fit h-[56px] px-[24px] bg-[var(--button-primary-bg)] text-white text-[20px] font-semibold rounded-[12px] flex items-center justify-center gap-[10px] hover:opacity-90 transition-opacity';
         const uploadIcon = document.createElement('span');
         uploadIcon.innerHTML = `<svg class="w-[22px] h-[22px]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>`;
         const uploadText = document.createElement('span');
@@ -2168,12 +2168,12 @@ function renderSettingsTab() {
         // of the Notes column. size=4 matches maxLength so the intrinsic width is honest
         // even if the flex context changes later.
         shareInput.size = 4;
-        shareInput.className = 'flex-1 min-w-0 h-[56px] text-[22px] font-bold text-center tracking-[6px] bg-[var(--box-color)] border-2 border-[var(--border-color)] rounded-[12px] outline-none focus:border-[var(--mimoja-blue)]';
+        shareInput.className = 'flex-1 min-w-0 h-[56px] text-[22px] font-bold text-center tracking-[6px] bg-[var(--box-color)] border-2 border-[var(--border-color)] rounded-[12px] outline-none focus:border-[var(--mimoja-blue-v2)]';
         shareInput.addEventListener('input', () => { shareInput.value = shareInput.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
 
         const shareImportBtn = document.createElement('button');
         shareImportBtn.textContent = getTranslation('Import');
-        shareImportBtn.className = 'h-[56px] px-[24px] bg-[var(--mimoja-blue)] text-white text-[20px] font-semibold rounded-[12px] hover:opacity-90 transition-opacity shrink-0';
+        shareImportBtn.className = 'h-[56px] px-[24px] bg-[var(--button-primary-bg)] text-white text-[20px] font-semibold rounded-[12px] hover:opacity-90 transition-opacity shrink-0';
 
         const shareStatus = document.createElement('p');
         shareStatus.className = 'text-[18px] text-[var(--low-contrast-white)] min-h-[24px]';
@@ -2281,14 +2281,14 @@ function renderSettingsTab() {
     authorSection.className = 'flex items-center gap-[15px] mt-auto pt-[36px] border-t-[1.5px] border-[var(--border-graph-grid)] shrink-0';
 
     const authorLabel = document.createElement('div');
-    authorLabel.className = 'text-[24px] font-semibold text-[var(--button-primary-bg)] shrink-0';
+    authorLabel.className = 'text-[24px] font-semibold text-[var(--mimoja-blue-v2)] shrink-0';
     authorLabel.textContent = getTranslation('Author');
     authorSection.appendChild(authorLabel);
 
     const authorInput = document.createElement('input');
     authorInput.type = 'text';
     authorInput.value = editorState.profile.author || '';
-    authorInput.className = 'text-[24px] text-[var(--text-primary)] bg-[var(--box-color)] border-2 border-[var(--border-color)] rounded-[12px] px-[16px] py-[12px] outline-none focus:border-[var(--mimoja-blue)] flex-1 min-w-0';
+    authorInput.className = 'text-[24px] text-[var(--text-primary)] bg-[var(--box-color)] border-2 border-[var(--border-color)] rounded-[12px] px-[16px] py-[12px] outline-none focus:border-[var(--mimoja-blue-v2)] flex-1 min-w-0';
     authorInput.addEventListener('change', () => { editorState.profile.author = authorInput.value; });
     authorSection.appendChild(authorInput);
 
@@ -2408,7 +2408,7 @@ function createScriptChip({ states, index, labelFor, onChange }) {
     // actually hold the box open, centered so a shorter label (e.g. "Mix"
     // against "Group"'s reserved width) sits in the middle of its tap target
     // instead of flush against one edge.
-    chip.className = 'text-[var(--button-primary-bg)] font-semibold cursor-pointer select-none px-[4px] py-[10px] -my-[10px] rounded-[4px] inline-block text-center';
+    chip.className = 'text-[var(--action-label)] font-semibold cursor-pointer select-none px-[4px] py-[10px] -my-[10px] rounded-[4px] inline-block text-center';
 
     function render() { chip.textContent = labelFor(states[i], i); }
     render();
@@ -2724,7 +2724,7 @@ function renderScriptGraph() {
         { x: tempX,     y: tempY,     name: '\u00b0C',  mode: 'lines', line: { color: tempLineColor, smooth: true }, hoverinfo: 'name' },
     ];
 
-    const cardColor = getComputedStyle(document.documentElement).getPropertyValue('--profile-button-background-color').trim() || '#292c38';
+    const cardColor = getComputedStyle(document.documentElement).getPropertyValue('--card-bg').trim() || '#101217';
     const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--border-graph-grid').trim() || (isDark ? '#1E202B' : '#E8E8E8');
     const layout = isDark ? {
         plot_bgcolor: cardColor,
@@ -3347,7 +3347,7 @@ function promptConfirm({ title, message, confirmLabel, cancelLabel }) {
                 <p class="text-[20px] text-[var(--text-primary)]">${message}</p>
                 <div class="flex flex-wrap justify-end gap-[12px] mt-[8px]">
                     <button type="button" data-act="cancel" class="px-[18px] py-[10px] rounded-[10px] bg-[var(--button-grey)] text-[var(--text-primary)] text-[20px] font-semibold cursor-pointer">${cancelLabel}</button>
-                    <button type="button" data-act="ok" class="px-[18px] py-[10px] rounded-[10px] bg-[var(--mimoja-blue)] text-white text-[20px] font-semibold cursor-pointer">${confirmLabel}</button>
+                    <button type="button" data-act="ok" class="px-[18px] py-[10px] rounded-[10px] bg-[var(--button-primary-bg)] text-white text-[20px] font-semibold cursor-pointer">${confirmLabel}</button>
                 </div>
             </div>`;
 
@@ -3436,8 +3436,8 @@ function normalizeLegacySteps(profile) {
 function promptVersionRestore(versions) {
     return new Promise((resolve) => {
         const ROW_BASE     = 'text-left px-[16px] py-[14px] rounded-[10px] border-2 bg-[var(--box-color)] cursor-pointer';
-        const ROW_IDLE     = `${ROW_BASE} border-[var(--border-color)] hover:border-[var(--mimoja-blue)]`;
-        const ROW_SELECTED = `${ROW_BASE} border-[var(--mimoja-blue)]`;
+        const ROW_IDLE     = `${ROW_BASE} border-[var(--border-color)] hover:border-[var(--mimoja-blue-v2)]`;
+        const ROW_SELECTED = `${ROW_BASE} border-[var(--mimoja-blue-v2)]`;
 
         const dlg = document.createElement('dialog');
         dlg.className = 'pe-history-dialog rounded-[16px] bg-[var(--box-color)] p-0 border border-[var(--border-color)] max-w-[560px] w-[90vw] shadow-2xl';
@@ -3450,7 +3450,7 @@ function promptVersionRestore(versions) {
                 <div data-rows class="flex flex-col gap-[10px] max-h-[46vh] overflow-y-auto"></div>
                 <div class="flex flex-wrap justify-end gap-[12px] mt-[8px]">
                     <button type="button" data-act="cancel" class="px-[18px] py-[10px] rounded-[10px] bg-[var(--button-grey)] text-[var(--text-primary)] text-[20px] font-semibold cursor-pointer">${getTranslation('Cancel')}</button>
-                    <button type="button" data-act="ok" class="hidden px-[18px] py-[10px] rounded-[10px] bg-[var(--mimoja-blue)] text-white text-[20px] font-semibold cursor-pointer">${getTranslation('Confirm')}</button>
+                    <button type="button" data-act="ok" class="hidden px-[18px] py-[10px] rounded-[10px] bg-[var(--button-primary-bg)] text-white text-[20px] font-semibold cursor-pointer">${getTranslation('Confirm')}</button>
                 </div>
             </div>`;
 

@@ -1,22 +1,22 @@
 <div id="scaled-content">
 <div class="bg-base-200 overflow-hidden flex-grow flex flex-col w-[1920px] h-full" role="dialog" aria-labelledby="page_title">
-    <div id="subpage-header" class="flex justify-between items-center p-6 border-b border-base-300 bg-[var(--box-color)] h-[150px]">
+    <div id="subpage-header" class="flex justify-between items-center p-6 border-b border-[var(--border-primary)] bg-[var(--box-color)] h-[150px]">
         <h1 id="page_title" class="text-[37.5px] font-bold text-[var(--text-primary)] no-select" data-i18n-key="Settings">Settings</h1>
         <div class="flex items-center gap-[22.5px]">
             <button id="cancel-settings-btn" class="settings-button flex justify-center items-center min-h-0 w-[171px] h-[82.5px] whitespace-nowrap text-[var(--text-primary)] rounded-[67.5px] font-bold text-[24px] uppercase" data-i18n-key="Cancel" data-fit-text>CANCEL</button>
-            <button id="save-settings-btn" class="flex justify-center items-center bg-[var(--mimoja-blue)] text-white min-h-0 w-[240px] h-[82.5px] whitespace-nowrap font-bold text-[24px] rounded-[67.5px] uppercase" data-i18n-key="Save" data-fit-text>SAVE</button>
+            <button id="save-settings-btn" class="flex justify-center items-center bg-[var(--button-primary-bg)] text-white min-h-0 w-[240px] h-[82.5px] whitespace-nowrap font-bold text-[24px] rounded-[67.5px] uppercase" data-i18n-key="Save" data-fit-text>SAVE</button>
         </div>
-        <button id="fullscreen-toggle-btn" title="Toggle fullscreen" class="absolute -top-1 -right-1 w-12 h-12 flex items-center justify-center text-[var(--mimoja-blue)]" aria-label="Toggle Fullscreen">
+        <button id="fullscreen-toggle-btn" title="Toggle fullscreen" class="absolute -top-1 -right-1 w-12 h-12 flex items-center justify-center text-[var(--mimoja-blue-v2)]" aria-label="Toggle Fullscreen">
             <svg class="enter-fullscreen-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
             <svg class="exit-fullscreen-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
         </button>
     </div>
 
     <div id="settings-body" class="flex h-[1088px]">
-        <div id="left-panel" class="h-full flex flex-col border-r border-base-300 bg-[var(--box-color)]" style="width: 796px; flex-shrink: 0;">
-            <div class="p-6 border-b border-base-300">
+        <div id="left-panel" class="h-full flex flex-col border-r border-[var(--border-primary)] bg-[var(--box-color)]" style="width: 796px; flex-shrink: 0;">
+            <div class="p-6 border-b border-[var(--border-primary)]">
                 <div class="relative">
-                    <input type="search" enterkeyhint="search" id="settings-search" placeholder="Search settings..." class="w-full p-3 pl-12 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue)]" aria-label="Search settings">
+                    <input type="search" enterkeyhint="search" id="settings-search" placeholder="Search settings..." class="w-full p-3 pl-12 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" aria-label="Search settings">
                     <svg class="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-[var(--text-primary)]" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>

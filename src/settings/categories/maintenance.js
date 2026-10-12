@@ -29,7 +29,7 @@ import * as ui from '../../modules/ui.js';
 // in the legacy settings module), so every multi-step machine procedure reads
 // as one design.
 const STEP_DONE = '#0ca581';
-const STEP_ACTIVE = '#385a92';
+const STEP_ACTIVE = 'var(--button-primary-bg)';
 const STEP_PENDING = 'var(--button-grey)';
 
 const CAPTION_TONES = {
@@ -39,9 +39,9 @@ const CAPTION_TONES = {
     error: 'text-red-500 font-bold',
 };
 
-const PRIMARY_BTN = 'bg-[#385a92] h-[72px] px-[48px] rounded-[72px] text-white text-[24px] font-bold';
-const DIALOG_BTN = 'bg-[#385a92] h-[62px] px-[32px] rounded-[67.5px] text-white text-[24px] font-bold';
-const DIALOG_CANCEL_BTN = 'border-[var(--mimoja-blue)] text-[var(--mimoja-blue)] h-[62px] rounded-[67.5px] border px-[32px] text-[24px] font-bold';
+const PRIMARY_BTN = 'bg-[var(--button-primary-bg)] h-[72px] px-[48px] rounded-[72px] text-white text-[24px] font-bold';
+const DIALOG_BTN = 'bg-[var(--button-primary-bg)] h-[62px] px-[32px] rounded-[67.5px] text-white text-[24px] font-bold';
+const DIALOG_CANCEL_BTN = 'border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] h-[62px] rounded-[67.5px] border px-[32px] text-[24px] font-bold';
 
 /** Dots + connectors, mirroring calStepIndicator() in the legacy settings module. */
 function stepDots(milestone, labels) {
@@ -67,10 +67,10 @@ function procedureView({ title, action, description, confirmation, extra = '' })
     return `
         <div class="flex flex-col gap-[60px] items-start w-full">
             <h2 class="font-semibold text-[var(--text-primary)] text-[36px] text-center w-full" data-i18n-key="${title}">${title}</h2>
-            <hr class="border-t border-[#c9c9c9] w-full">
+            <hr class="border-t border-[var(--border-primary)] w-full">
             <div class="flex flex-col gap-[30px] w-full">
                 <div class="flex items-center justify-between w-full">
-                    <p class="font-bold text-[#385a92] text-[30px]" data-i18n-key="${title}">${title}</p>
+                    <p class="font-bold text-[var(--mimoja-blue-v2)] text-[30px]" data-i18n-key="${title}">${title}</p>
                     <button type="button" data-action="${action}" class="${PRIMARY_BTN}" data-i18n-key="Start">Start</button>
                 </div>
                 <p class="text-[var(--text-primary)] text-[24px] pr-[220px]" data-i18n-key="${description}">${description}</p>
@@ -108,7 +108,7 @@ function descaling() {
         action: 'descale',
         description: 'Run a descaling cycle to remove mineral buildup',
         confirmation: 'Prepare to descale',
-        extra: `<a href="https://decentespresso.com/docs/de1_descaling_instructions" class="font-semibold text-[#385a92] underline text-[24px]" data-i18n-key="Descaling Instruction">Descaling Instruction</a>`,
+        extra: `<a href="https://decentespresso.com/docs/de1_descaling_instructions" class="font-semibold text-[var(--mimoja-blue-v2)] underline text-[24px]" data-i18n-key="Descaling Instruction">Descaling Instruction</a>`,
     });
 }
 
@@ -116,10 +116,10 @@ function airPurge() {
     return `
         <div class="flex flex-col gap-[60px] items-start w-full">
             <h2 class="font-semibold text-[var(--text-primary)] text-[36px] text-center w-full" data-i18n-key="Transport Mode">Transport Mode</h2>
-            <hr class="border-t border-[#c9c9c9] w-full">
+            <hr class="border-t border-[var(--border-primary)] w-full">
             <div class="flex flex-col gap-[30px] w-full">
                 <div class="flex items-center justify-between w-full">
-                    <p class="font-bold text-[#385a92] text-[30px]" data-i18n-key="Transport Mode">Transport Mode</p>
+                    <p class="font-bold text-[var(--mimoja-blue-v2)] text-[30px]" data-i18n-key="Transport Mode">Transport Mode</p>
                     <button type="button" data-action="air-purge" class="${PRIMARY_BTN}" data-i18n-key="Start">Start</button>
                 </div>
                 <p class="text-[var(--text-primary)] text-[24px] pr-[220px]" data-i18n-key="Purges remaining water from inside the machine. Run before packing the machine to prevent leaks during transport.">Purges remaining water from inside the machine. Run before packing the machine to prevent leaks during transport.</p>
