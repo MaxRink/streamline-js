@@ -75,14 +75,11 @@ function buildProfile(topOverrides = {}, steps = [buildStep()]) {
         .join('\n');
 }
 
-// ─── Tracked Visualizer-style sample, end to end ───────────────────────────
-// The historical test named a local, untracked profile dump. Keep this
-// representative fixture in the repository so CI exercises the parser without
-// depending on a developer's private shots directory.
+// ─── Real sample file, end to end ──────────────────────────────────────────
 
-test('parses a tracked Visualizer-style .tcl sample end to end', () => {
+test('parses the bundled real Visualizer .tcl sample end to end', () => {
     const text = readFileSync(
-        new URL('./fixtures/visualizer-jw-asl-2.tcl', import.meta.url),
+        new URL('../shots/Visualizer_JW ASL 2 from Visualizer.tcl', import.meta.url),
         'utf8',
     );
     const profile = parseTclProfile(text);
