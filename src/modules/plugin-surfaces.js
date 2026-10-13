@@ -36,6 +36,10 @@ export const MODE_LIMITS = {
     bound: 9999,     // |min|, |max|
     decimals: 2,
 };
+// Endpoint ids Decaid serves itself: it registers `POST /api/v1/plugins/<id>/settings`,
+// `/enable`, `/disable` and the plugin-management routes before the generic
+// `<endpoint>` route, so a plugin endpoint with one of these ids is never reached.
+export const RESERVED_ENDPOINTS = ['skin', 'settings', 'enable', 'disable', 'source', 'update', 'install'];
 const FIELD_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
@@ -77,6 +81,7 @@ function toNumber(value) {
 }
 
 const round2 = n => Math.round(n * 100) / 100;
+const roundTo = (n, decimals) => Math.round(n * 10 ** decimals) / 10 ** decimals;
 
 // A finite number (or numeric string) clamped to the field's range, to
 // hundredths; null when it is not a number or the field is not settable.
@@ -95,17 +100,18 @@ function parseSet(action) {
 
 // `call` POSTs `{ [field]: <number> }` to one of the plugin's own http endpoints.
 // Whether `endpoint` is one the plugin declares is checked against its manifest by
-// callableEndpoint(); `skin` is the read side and is never callable.
+// callableEndpoint(); `skin` is the read side and the other RESERVED_ENDPOINTS are
+// Decaid's own routes, so none of those is callable.
 function parseCall(action) {
     const { endpoint, field } = action;
-    if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || endpoint === 'skin') return null;
+    if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
     if (typeof field !== 'string' || !FIELD_RE.test(field)) return null;
     return { type: 'call', endpoint, field };
 }
 
 // True when `plugin` declares an http endpoint with this id that a `call` may use.
 export function callableEndpoint(plugin, endpoint) {
-    if (typeof endpoint !== 'string' || endpoint === 'skin') return false;
+    if (typeof endpoint !== 'string' || RESERVED_ENDPOINTS.includes(endpoint)) return false;
     return Array.isArray(plugin?.api) && plugin.api.some(e => e?.type === 'http' && e?.id === endpoint);
 }
 
@@ -119,26 +125,33 @@ function parseAction(raw, kind) {
     return null;
 }
 
-// A mode the user steps through with the tile's -/+ and numpad. Every number is
-// clamped into [min, max]; a mode that cannot be stepped or called is dropped.
+// A mode the user steps through with the tile's -/+ and numpad. `value` and the
+// presets are clamped into [min, max] and rounded to `decimals`; a mode that cannot
+// be stepped (min/max/step finer than `decimals`) or called is dropped.
 function parseMode(raw, id, action) {
     if (!MODE_TILES.includes(raw.tile) || action?.type !== 'call') return null;
     const label = cleanText(raw.label, MODE_LIMITS.label);
     if (!label) return null;
     const unit = cleanText(raw.unit, MODE_LIMITS.unit);
 
+    const decimals = raw.decimals == null ? 0 : raw.decimals;
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > MODE_LIMITS.decimals) return null;
+
     const bound = MODE_LIMITS.bound;
     const min = toNumber(raw.min);
     const max = toNumber(raw.max);
     if (min === null || max === null || min >= max || min < -bound || max > bound) return null;
-    const clamp = n => round2(Math.min(max, Math.max(min, n)));
+    // A bound that does not fit `decimals` would let out-of-range values through.
+    if (roundTo(min, decimals) !== min || roundTo(max, decimals) !== max) return null;
+    const clamp = n => roundTo(Math.min(max, Math.max(min, n)), decimals);
 
     const value = toNumber(raw.value);
     if (value === null) return null;
     const rawStep = raw.step == null ? 1 : toNumber(raw.step);
-    if (rawStep === null || rawStep <= 0 || rawStep > max - min) return null;
-    const decimals = raw.decimals == null ? 0 : raw.decimals;
-    if (!Number.isInteger(decimals) || decimals < 0 || decimals > MODE_LIMITS.decimals) return null;
+    if (rawStep === null) return null;
+    // A step finer than `decimals` rounds to 0 (or never moves the shown value).
+    const step = roundTo(rawStep, decimals);
+    if (step <= 0 || step < 10 ** -decimals || step > max - min) return null;
 
     const presets = [];
     if (Array.isArray(raw.presets)) {
@@ -148,7 +161,7 @@ function parseMode(raw, id, action) {
         }
     }
     return { id, kind: 'tile-mode', tile: raw.tile, label, ...(unit && { unit }),
-        value: clamp(value), min, max, step: round2(rawStep), decimals, presets, action };
+        value: clamp(value), min, max, step, decimals, presets, action };
 }
 
 function parseSurface(raw) {

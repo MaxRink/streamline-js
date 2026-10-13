@@ -7,7 +7,7 @@
 // -/+ are caught before the tile's own handlers. Every change goes to the plugin
 // through callMode(); nothing is written to the profile or workflow from here.
 
-import { callMode } from './plugin-surfaces-ui.js';
+import { callMode, isModeCallBusy } from './plugin-surfaces-ui.js';
 import { clampModeValue, stepModeValue, formatModeValue } from './plugin-modes.js';
 
 const TILE_DOM = {
@@ -45,12 +45,13 @@ function apply(tile, number, { immediate }) {
 async function openNumpad(tile) {
     const state = active[tile];
     if (!state) return;
-    const { surface } = state;
+    const { plugin, surface } = state;
     const module = await import('./numpad-modal.js');
     module.initNumpadModal();
     const input = { value: String(state.value), setAttribute() {}, getAttribute() { return null; }, dispatchEvent() {} };
     module.openModal(input, {
-        fieldType: `plugin-mode-${tile}`,
+        // Per plugin and mode, so two plugins on one tile keep their own previous-value pills.
+        fieldType: `plugin-mode-${String(plugin.id)}:${surface.id}`.replace(/[^A-Za-z0-9_.:-]/g, '_'),
         config: {
             title: `${TILE_DOM[tile].title} ${surface.label}`,
             unit: surface.unit || '',
@@ -68,7 +69,9 @@ function paint(tile) {
     const state = active[tile];
     if (!state) return;
     const { surface } = state;
-    state.valueEl.textContent = formatModeValue(surface, state.value);
+    const text = formatModeValue(surface, state.value);
+    state.valueEl.textContent = text;
+    state.valueEl.setAttribute('aria-label', `${surface.label} ${text}`);
     for (const button of state.presetButtons) {
         button.classList.toggle('preset-active', Number(button.dataset.modeValue) === state.value);
     }
@@ -79,9 +82,14 @@ function draw(tile, plugin, surface) {
     const valueEl = dom && document.getElementById(dom.value);
     if (!valueEl || !document.getElementById(dom.minus)) return;
 
+    // Redrawn for the same mode while a call is still going out: the user's value is
+    // newer than the plugin's answer, so keep it instead of snapping back.
+    const before = active[tile];
+    const keep = before && before.plugin.id === plugin.id && before.surface.id === surface.id
+        && isModeCallBusy(plugin, surface);
     clearTile(tile);
-    const state = { plugin, surface, value: clampModeValue(surface, surface.value), overlay: [], restore: [],
-        presetButtons: [], valueEl: null };
+    const state = { plugin, surface, value: clampModeValue(surface, keep ? before.value : surface.value),
+        overlay: [], restore: [], presetButtons: [], valueEl: null };
     active[tile] = state;
     const hideEl = el => {
         const before = el.style.visibility;
@@ -100,8 +108,13 @@ function draw(tile, plugin, surface) {
     mine.dataset.pluginSurface = `mode-value:${tile}`;
     mine.dataset.agentId = `plugin-tile:${tile}:tile-mode-value`;
     mine.setAttribute('role', 'button');
-    mine.setAttribute('aria-label', `${surface.label} ${surface.unit || ''}`.trim());
+    mine.tabIndex = 0; // aria-label is set by paint() with the current value
     mine.addEventListener('click', () => openNumpad(tile));
+    mine.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        openNumpad(tile);
+    });
     hideEl(hidden);
     hidden.parentElement.appendChild(mine);
     state.overlay.push(mine);

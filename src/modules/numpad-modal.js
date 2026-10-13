@@ -246,8 +246,13 @@ function updateDisplay() {
     // Prefer the live config set by openModal — covers caller-supplied fieldTypes
     // (e.g. 'pe-temp', 'pe-pump') that aren't keys in the static fieldConfig dict.
     const config = currentConfig || fieldConfig[currentFieldType] || fieldConfig['dose-in'];
-    displayElement.innerHTML =
-        `${currentValue}<span class="numpad-modal-input-cursor"></span><span class="numpad-unit-text">${config.unit}</span>`;
+    // Built from nodes, never markup: config.unit can come from a plugin.
+    const cursor = document.createElement('span');
+    cursor.className = 'numpad-modal-input-cursor';
+    const unit = document.createElement('span');
+    unit.className = 'numpad-unit-text';
+    unit.textContent = config.unit || '';
+    displayElement.replaceChildren(document.createTextNode(currentValue), cursor, unit);
 }
 
 function handleNumberClick(num) {
@@ -391,7 +396,7 @@ async function openModal(inputElement, options = {}) {
     const decimalKey = document.querySelector('.numpad-modal-numpad-btn[data-action="decimal"]');
     if (decimalKey) {
         decimalKey.textContent = config.signed ? '±' : '.';
-        decimalKey.setAttribute('aria-label', config.signed ? 'Plus or minus' : 'Decimal point');
+        decimalKey.setAttribute('aria-label', getTranslation(config.signed ? 'Plus or minus' : 'Decimal point'));
     }
     const inputValue = inputElement.value || inputElement.getAttribute('data-default') || config.defaultValue;
     // Remove any existing units for editing

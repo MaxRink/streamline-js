@@ -12,10 +12,11 @@ import { parseSkinAnswer, skinPlugins, callableEndpoint } from './plugin-surface
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSet } from './ui.js';
+import { applyPluginSet, isAutoSteamMode } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
+const CALL_TIMEOUT_MS = 5000; // a hung plugin must not hold a tile's call lane
 const MIN_GAP_MS = 2000; // focus + visibilitychange can both fire
 const MAX_PLUGIN_HEADER_BUTTONS = 1; // across all plugins
 
@@ -47,6 +48,7 @@ let drawnModes = {}; // tile -> [{ key, plugin, surface }] as last drawn
 const selectedMode = {}; // tile -> `${plugin.id}:${surface.id}`; absent = the built-in mode
 let lastRun = 0;
 let lastKey = '';
+let lastEntries = null; // the answer as last drawn, to re-evaluate without a read
 
 function withTimeout(promise, ms) {
     let timer;
@@ -209,8 +211,10 @@ function paintToggle(tile) {
 }
 
 // The `Auto | F | T` style toggle in the label slot. The visible text is 17px
-// high like a tile-line; the buttons are taller and grow upward over the label,
-// which is not interactive, to give a touch target.
+// high like a tile-line; the 24px root (and the buttons filling it) grows upward
+// over the label, which is not interactive, to give a touch target. The root is
+// wider than the label by the free gap before the -/+ control so three options fit;
+// it ignores pointer events itself so that gap never steals a tap.
 function placeModeToggle(tile, modes) {
     const { section, label: labelId } = TILES[tile];
     const label = document.getElementById(labelId);
@@ -223,13 +227,14 @@ function placeModeToggle(tile, modes) {
     }
     // Over the label there is room to grow upward; over steam's toggle there is not.
     const hit = tile === 'steam' ? 17 : 24;
+    const extra = tile === 'steam' ? 14 : 30;
     const top = label.offsetTop + label.offsetHeight + 1;
     const root = document.createElement('div');
     root.dataset.pluginSurface = `mode:${tile}`;
     root.dataset.agentId = `plugin-tile:${tile}:tile-mode`;
     root.setAttribute('role', 'group');
-    root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${label.offsetWidth}px;height:${hit}px;`
-        + 'z-index:1;display:flex;align-items:flex-end;gap:6px;white-space:nowrap;overflow:hidden;'
+    root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${label.offsetWidth + extra}px;height:${hit}px;`
+        + 'z-index:1;display:flex;align-items:flex-end;gap:6px;white-space:nowrap;overflow:hidden;pointer-events:none;'
         + `font-size:14px;line-height:17px;color:${MUTED};`;
 
     const options = [{ key: '', label: builtinLabel(tile), title: '' },
@@ -245,7 +250,9 @@ function placeModeToggle(tile, modes) {
         button.type = 'button';
         button.textContent = opt.label;
         button.dataset.modeKey = opt.key;
-        button.style.cssText = 'background:none;border:0;padding:0;cursor:pointer;font:inherit;height:17px;line-height:17px;';
+        // Fills the root's height; the text sits at the bottom like a tile-line.
+        button.style.cssText = `background:none;border:0;padding:${hit - 17}px 0 0;box-sizing:border-box;cursor:pointer;font:inherit;`
+            + 'height:100%;min-width:32px;line-height:17px;text-align:center;overflow:hidden;text-overflow:ellipsis;pointer-events:auto;';
         if (opt.title) button.title = opt.title;
         button.addEventListener('click', () => setSelectedMode(tile, opt.key || null));
         root.appendChild(button);
@@ -255,6 +262,10 @@ function placeModeToggle(tile, modes) {
         // Choosing a built-in steam mode ends a plugin one.
         label.dataset.pluginModeWired = '1';
         label.addEventListener('click', () => setSelectedMode('steam', null));
+        // The built-in toggle also switches on Enter and Space.
+        label.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') setSelectedMode('steam', null);
+        });
     }
     return true;
 }
@@ -263,8 +274,18 @@ function placeModeToggle(tile, modes) {
 // ignored and `skin` is read again, so what the plugin says is what is shown.
 // Steppers pass `immediate: false` to be debounced; presets and the numpad do not.
 const callQueue = createCallQueue({
-    send: (key, { plugin, endpoint, body }) => callPluginEndpoint(plugin.id, endpoint, body, 'POST'),
+    // A timeout rejects, which the queue counts as a failed send.
+    send: (key, { plugin, endpoint, body }) => withTimeout(
+        callPluginEndpoint(encodeURIComponent(plugin.id), endpoint, body, 'POST'), CALL_TIMEOUT_MS),
 });
+
+const callKey = (plugin, surface) => `${plugin.id}:${surface.tile}`;
+
+// True while a call for this mode is being sent or the user is still stepping, so a
+// redraw must keep the value the user is moving rather than the plugin's older one.
+export function isModeCallBusy(plugin, surface) {
+    return callQueue.busy(callKey(plugin, surface));
+}
 
 export function callMode(plugin, surface, number, { immediate = true } = {}) {
     const action = surface?.action;
@@ -272,10 +293,10 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
         return Promise.resolve(false);
     }
     const payload = { plugin, endpoint: action.endpoint, body: { [action.field]: number } };
-    return callQueue.request(`${plugin.id}:${surface.tile}`, payload, { immediate }).then(sent => {
-        // null: a newer call replaced this one, which will refresh. Otherwise
-        // read skin again and redraw even if the answer is unchanged, so a number
-        // the plugin refused snaps back.
+    return callQueue.request(callKey(plugin, surface), payload, { immediate }).then(sent => {
+        // null: a newer call replaced or overtook this one, which will refresh.
+        // Otherwise read skin again and redraw even if the answer is unchanged, so
+        // a number the plugin refused snaps back.
         if (sent !== null) { lastKey = ''; refreshPluginSurfaces(); }
         return sent === true;
     }).catch(() => false);
@@ -285,8 +306,15 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
 // (offsetTop/Height/Width), which is 0 while the main page is display:none, so
 // tiles are skipped then and the caller must not remember the answer as drawn.
 function render(entries) {
+    lastEntries = entries;
     const mainHidden = document.getElementById('main-page')?.style.display === 'none';
-    document.querySelectorAll('[data-plugin-surface]').forEach(el => el.remove());
+    document.querySelectorAll('[data-plugin-surface]').forEach(el => {
+        // The tile's value and presets overlays belong to the tile-modes module,
+        // which clears them when the mode is left.
+        const owner = el.dataset.pluginSurface;
+        if (owner.startsWith('mode-value:') || owner.startsWith('mode-presets:')) return;
+        el.remove();
+    });
     touchedSections.forEach(el => { el.style.position = ''; });
     touchedSections = [];
 
@@ -296,7 +324,11 @@ function render(entries) {
     let headerButtons = 0;
 
     // A mode takes the label slot, so a tile-line on that tile is not drawn.
-    const plan = planTileModes(entries);
+    // A mode whose endpoint cannot be called is never drawn, and neither is a steam
+    // mode while the built-in Auto mode owns the steam -/+.
+    const steamAuto = isAutoSteamMode();
+    const plan = planTileModes(entries.filter(({ plugin, surface }) => surface.kind !== 'tile-mode'
+        || (callableEndpoint(plugin, surface.action?.endpoint) && !(surface.tile === 'steam' && steamAuto))));
     const modeTiles = new Set(Object.keys(plan).filter(tile => TILES[tile]));
     drawnModes = {};
 
@@ -374,6 +406,11 @@ export function initPluginSurfaces() {
     window.addEventListener('focus', refreshIfDue);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') refreshIfDue();
+    });
+    // Entering or leaving the built-in Auto steam mode: draw again from the last
+    // answer, which hides or restores the steam toggle.
+    document.addEventListener('streamline:steamautochange', () => {
+        if (lastEntries && !render(lastEntries)) lastKey = '';
     });
     // Returning from a sub-page: a surface rendered while the page was hidden
     // must be placed again, so forget the last drawn answer.
