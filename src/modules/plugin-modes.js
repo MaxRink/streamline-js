@@ -36,9 +36,8 @@ export function formatModeValue(mode, value) {
 
 // Sends one payload per key at a time, newest wins. `request` resolves:
 //   false  `send` rejected (or timed out);
-//   null   a newer payload replaced it before it was sent;
-//   null   (also) it was sent, but a newer payload is already waiting
-//          (superseded), so its answer is stale and must not be shown;
+//   null   superseded: a newer payload replaced it before it was sent, or it was
+//          sent but a newer one is already waiting, so its answer is stale;
 //   true   it was sent and nothing newer is waiting.
 // `request(key, payload, { immediate })` debounces unless `immediate`; `busy(key)`
 // is true while a send is in flight or a payload is pending or debouncing.
