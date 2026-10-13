@@ -119,7 +119,11 @@ function placeTileSurface(surface) {
     return el;
 }
 
+// -> true when everything was drawn. Tile placement measures the label
+// (offsetTop/Height/Width), which is 0 while the main page is display:none, so
+// tiles are skipped then and the caller must not remember the answer as drawn.
 function render(entries) {
+    const mainHidden = document.getElementById('main-page')?.style.display === 'none';
     document.querySelectorAll('[data-plugin-surface]').forEach(el => el.remove());
     touchedSections.forEach(el => { el.style.position = ''; });
     touchedSections = [];
@@ -138,10 +142,12 @@ function render(entries) {
             }
             continue;
         }
+        if (mainHidden) continue;
         const slot = `${surface.kind}:${surface.tile}`;
         if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
         if (placeTileSurface(surface)) usedSlots.add(slot);
     }
+    return !mainHidden;
 }
 
 export async function refreshPluginSurfaces() {
@@ -158,8 +164,9 @@ export async function refreshPluginSurfaces() {
         // controls, which re-runs the strip fit.
         const key = JSON.stringify(entries.map(e => [e.plugin.id, e.surface]));
         if (key === lastKey) return;
-        lastKey = key;
-        render(entries);
+        // Only remember the answer once it was fully drawn; a render skipped
+        // while the main page is hidden is retried by the next refresh.
+        lastKey = render(entries) ? key : '';
     } catch (error) {
         logger.warn('Plugin surfaces refresh failed:', error);
     } finally {

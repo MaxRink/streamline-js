@@ -28,6 +28,8 @@ that does not validate is dropped, and the rest still shows.
 - A read that fails or takes longer than 2 s hides that plugin's surfaces; it never blocks the dashboard.
 - `header-button` is drawn before the system buttons. `tile-hint` and `tile-line` are drawn without moving the tile: a line under the label, a hint under the value.
 - Actions on tile surfaces are not wired yet; they are shown, inert.
+- Tile surfaces are placed from the label's measured size, so they are only drawn while the dashboard is visible;
+  a read that finishes while it is hidden is drawn on the next refresh.
 
 ## Kinds
 
