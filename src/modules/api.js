@@ -153,14 +153,10 @@ export async function getDevices() {
     return response.json();
 }
 
-export async function getScaleInfo() {
-    const response = await fetch(`${API_BASE_URL}/scale/info`);
-    if (!response.ok) {
-        const error = new Error(`Failed to get scale info (${response.status})`);
-        error.status = response.status;
-        throw error;
-    }
-    return response.json();
+/** Connected scale inventory, including the host-owned connection role. */
+export async function getScaleDevices() {
+    const devices = await getDevices();
+    return Array.isArray(devices) ? devices.filter(device => device?.type === 'scale') : [];
 }
 
 // ── Sensors (Bengle milk probe et al.) ──────────────────────────────────────
@@ -526,6 +522,37 @@ export function connectWebSocket(onData, onReconnect) {
     };
 
     reconnectingWebSocket.onreconnect = null;
+}
+
+const addressedScaleSocketSlot = createSocketSlot('addressed scale snapshot');
+
+/** Stream raw snapshots for one explicitly selected scale (primary or auxiliary). */
+export function connectAddressedScaleWebSocket(deviceId, onData, onReconnect, onDisconnect) {
+    if (!String(deviceId || '').trim()) throw new Error('Invalid scale selection');
+    const socket = addressedScaleSocketSlot.replace(() => new ReconnectingWebSocket(
+        `${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/scales/${encodeURIComponent(String(deviceId))}/snapshot`,
+        [],
+        { reconnectInterval: 3000 },
+    ));
+    socket.onopen = () => onReconnect?.();
+    socket.onmessage = event => {
+        try {
+            const data = JSON.parse(event.data);
+            if (data?.status === 'connected') onReconnect?.();
+            else if (data?.status === 'disconnected') onDisconnect?.();
+            else if (!data?.error) onData?.(data);
+        } catch (error) {
+            logger.warn('Error parsing addressed scale snapshot:', error);
+        }
+    };
+    socket.onerror = error => logger.warn('Addressed scale snapshot error:', error);
+    socket.onclose = () => onDisconnect?.();
+    socket.onreconnect = null;
+    return socket;
+}
+
+export function closeAddressedScaleWebSocket() {
+    addressedScaleSocketSlot.close();
 }
 
 export function connectScaleWebSocket(onData, onReconnect, onDisconnect) {
