@@ -247,6 +247,11 @@ An invalid action drops the action only; the surface still shows, inert.
     afterwards.
 
   Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
+- **`step`**: `{ "type": "step", "field": "targetDoseWeight", "by": -0.5 }` on tile kinds only. Moves the
+  tile's current value by `by` (a non-zero number, at most 100 either way) and goes through the same setter as
+  `set`, so the result is clamped to the same range and the profile remembers it. `field` is `targetDoseWeight`,
+  `targetYield` or `grinderSetting`; brew temperature is not steppable. Nothing happens until the tile shows a
+  number. Use it for a pill such as "+0.5 g" when your plugin does not need to know the current value.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
   `targetDoseWeight` (1 to 30), `targetYield` (1 to 2000), `grinderSetting` (0 to 9999) or `brewTemperature`
   (70 to 105, **degrees Celsius**). The maximums are the ones the tile enforces when the user types a value;

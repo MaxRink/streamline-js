@@ -85,6 +85,15 @@ test('open: presentation is a hint, unknown values fall back to page', () => {
     assert.equal(open({ view: '../../etc' }).view, '');
 });
 
+test('step moves a steppable tile field by a bounded non-zero amount', () => {
+    const step = (field, by, kind = 'tile-hint') => ok([{ id: 'a', kind, tile: 'dose', text: 'x', action: { type: 'step', field, by } }])[0]?.action;
+    assert.deepEqual(step('targetDoseWeight', '-0.5'), { type: 'step', field: 'targetDoseWeight', by: -0.5 });
+    assert.deepEqual(step('grinderSetting', 1, 'tile-line'), { type: 'step', field: 'grinderSetting', by: 1 });
+    for (const bad of [0, 101, 'x', null]) assert.ok(!step('targetYield', bad));
+    assert.ok(!step('brewTemperature', 1));
+    assert.ok(!step('targetDoseWeight', 1, 'header-button'));
+});
+
 test('set: only dose, yield, grind and brew temperature, as numbers clamped to the tile maximums', () => {
     const set = (field, value) => ok([{ id: 'a', kind: 'tile-hint', tile: 'dose', text: 'x', action: { type: 'set', field, value } }])[0].action;
     assert.deepEqual(set('targetDoseWeight', 18.5), { type: 'set', field: 'targetDoseWeight', value: 18.5 });
