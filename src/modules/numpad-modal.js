@@ -256,13 +256,24 @@ function handleNumberClick(num) {
         isFirstInput = false;
     } else if (currentValue === '0' || currentValue === '') {
         currentValue = num;
-    } else if (currentValue.length < 5) {
+    } else if (currentValue === '-0') {
+        currentValue = '-' + num;
+    } else if (currentValue.replace('-', '').length < 5) {
         currentValue = currentValue + num;
     }
     updateDisplay();
 }
 
 function handleDecimalClick() {
+    // A caller that needs negative numbers (config.signed) turns this key into +/-.
+    if (currentConfig?.signed) {
+        // First key press replaces the shown value, so +/- there starts a negative number.
+        currentValue = isFirstInput ? '-0'
+            : (currentValue.startsWith('-') ? currentValue.slice(1) : '-' + currentValue);
+        isFirstInput = false;
+        updateDisplay();
+        return;
+    }
     if (isFirstInput) {
         currentValue = '0.';
         isFirstInput = false;
@@ -377,6 +388,11 @@ async function openModal(inputElement, options = {}) {
         };
     }
     currentConfig = config;
+    const decimalKey = document.querySelector('.numpad-modal-numpad-btn[data-action="decimal"]');
+    if (decimalKey) {
+        decimalKey.textContent = config.signed ? '±' : '.';
+        decimalKey.setAttribute('aria-label', config.signed ? 'Plus or minus' : 'Decimal point');
+    }
     const inputValue = inputElement.value || inputElement.getAttribute('data-default') || config.defaultValue;
     // Remove any existing units for editing
     currentValue = inputValue.replace(/[g°cF]/g, '').trim() || config.defaultValue;

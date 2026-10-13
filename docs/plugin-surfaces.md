@@ -91,8 +91,8 @@ __httpRequestHandler(request) {
 
 ## Tile modes
 
-> **Status:** the parser and this contract are in; the skin draws `tile-mode` in the following changes of the
-> same series. Remove this note when the last one lands.
+> **Status:** drawn for `dose`, `drink`, `grind`, `temperature` and `flush`. `steam` is accepted but not drawn
+> yet, because its label slot already holds the steam mode toggle. Remove this note when it is.
 
 A `tile-mode` lets a plugin add its own option to a left-column tile, the way the steam control shows
 `Auto | F | T` when the Auto Steam Calculator is on. The built-in option stays first.
@@ -118,7 +118,8 @@ A `tile-mode` lets a plugin add its own option to a left-column tile, the way th
 | `action` | required, a `call`; a mode without a valid one is dropped |
 
 While the mode is selected the tile shows `value` and `unit`, `-` / `+` step by `step`, tapping the value opens the
-numpad for free entry (negative values allowed when `min` is below 0), and a preset applies directly. Each of
+numpad for free entry, and a preset applies directly. For negative entry the numpad's `.` key becomes `±`, which
+is only done when `min` is below 0 and `decimals` is 0; with decimals the numpad stays positive-only. Each of
 those sends the new number to the plugin with the `call`, and the skin then reads `skin` again: the `value` you
 answer with is the truth, so a number you reject or adjust snaps back.
 
@@ -127,6 +128,8 @@ Rules:
 - One `tile-mode` per plugin per tile, and at most 3 options per tile in total (the built-in one included); if
   plugins ask for more, the first in Decaid's plugin list win.
 - A mode on a tile replaces a `tile-line` on that tile, since both use the space under the label.
+- While a mode is selected the tile's own value and preset row are hidden, not changed: they keep following the
+  machine, and selecting the built-in option shows them again. A mode with no `presets` leaves that row empty.
 - The selected mode is not remembered: after a reload the tile shows its built-in mode. What the plugin applied
   stays in effect, and the tile shows the real result.
 - Without the plugin, or with it off, the tile is exactly as it is today.

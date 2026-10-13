@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTileModes, createCallQueue } from '../src/modules/plugin-modes.js';
+import { planTileModes, createCallQueue, clampModeValue, stepModeValue, formatModeValue } from '../src/modules/plugin-modes.js';
 
 const mode = (plugin, tile, id = 'm') => ({ plugin: { id: plugin }, surface: { id, kind: 'tile-mode', tile } });
 
@@ -35,8 +35,8 @@ test('call queue: a burst is debounced to the newest payload', async () => {
     const first = h.queue.request('t', { percent: 1 });
     const second = h.queue.request('t', { percent: 2 });
     const third = h.queue.request('t', { percent: 3 });
-    assert.equal(await first, false);
-    assert.equal(await second, false);
+    assert.equal(await first, null);
+    assert.equal(await second, null);
     h.fire(); await h.tick();
     assert.deepEqual(h.sent, [['t', { percent: 3 }]]);
     h.gates[0].resolve(); 
@@ -51,7 +51,7 @@ test('call queue: one in flight per key, the newest waits for it, then goes', as
     const c = h.queue.request('t', { percent: 7 }, { immediate: true });
     await h.tick();
     assert.equal(h.sent.length, 1);            // b and c wait for a
-    assert.equal(await b, false);              // c replaced b
+    assert.equal(await b, null);               // c replaced b
     h.gates[0].resolve();
     assert.equal(await a, true);
     await h.tick();
@@ -75,4 +75,21 @@ test('call queue: keys are independent, and a failed send resolves false without
     assert.deepEqual(h.sent[2], ['a', 3]);
     h.gates[2].resolve();
     assert.equal(await again, true);
+});
+
+const pct = { min: -20, max: 20, step: 1, decimals: 0, unit: '%' };
+
+test('mode values: clamp, step without float noise, and format with a sign only when negative is possible', () => {
+    assert.equal(clampModeValue(pct, 99), 20);
+    assert.equal(clampModeValue(pct, -99), -20);
+    assert.equal(clampModeValue(pct, 2.6), 3);
+    assert.equal(stepModeValue({ ...pct, decimals: 1, step: 0.1 }, 0.2, 1), 0.3);
+    assert.equal(stepModeValue(pct, 20, 1), 20);
+    assert.equal(stepModeValue(pct, -20, -1), -20);
+    assert.equal(formatModeValue(pct, 5), '+5%');
+    assert.equal(formatModeValue(pct, 0), '0%');
+    assert.equal(formatModeValue(pct, -0.3), '0%');
+    assert.equal(formatModeValue(pct, -7), '-7%');
+    assert.equal(formatModeValue({ min: 0, max: 60, step: 1, decimals: 0, unit: 's' }, 12), '12s');
+    assert.equal(formatModeValue({ min: 0, max: 5, step: 0.5, decimals: 1 }, 2), '2.0');
 });

@@ -16,9 +16,27 @@ export function planTileModes(entries) {
     return byTile;
 }
 
-// Sends one payload per key at a time, newest wins: a payload that is replaced
-// before it was sent resolves false, a sent one resolves true (false when `send`
-// rejects). `request(key, payload, { immediate })` debounces unless `immediate`.
+const round = (n, digits) => Math.round(n * 10 ** digits) / 10 ** digits;
+
+// Mode values are clamped into [min, max] and held at the mode's decimals.
+export function clampModeValue(mode, n) {
+    return round(Math.min(mode.max, Math.max(mode.min, n)), mode.decimals);
+}
+
+export function stepModeValue(mode, value, direction) {
+    return clampModeValue(mode, round(value + direction * mode.step, 2));
+}
+
+// `+5%`, `0%`, `-7%`; the plus sign only when the mode can go negative.
+export function formatModeValue(mode, value) {
+    const n = clampModeValue(mode, value);
+    const text = n.toFixed(mode.decimals);
+    return `${mode.min < 0 && n > 0 ? '+' : ''}${text}${mode.unit || ''}`;
+}
+
+// Sends one payload per key at a time, newest wins. `request` resolves true when
+// the payload was sent, false when `send` rejected, and null when a newer payload
+// replaced it before it went out. `{ immediate }` skips the debounce.
 export function createCallQueue({ send, delayMs = 300, setTimer = setTimeout, clearTimer = clearTimeout }) {
     const lanes = new Map(); // key -> { timer, pending, inFlight }
 
@@ -50,7 +68,7 @@ export function createCallQueue({ send, delayMs = 300, setTimer = setTimeout, cl
     function request(key, payload, { immediate = false } = {}) {
         const lane = laneFor(key);
         if (lane.timer) { clearTimer(lane.timer); lane.timer = null; }
-        if (lane.pending) lane.pending.resolve(false);
+        if (lane.pending) lane.pending.resolve(null);
         return new Promise(resolve => {
             lane.pending = { payload, resolve };
             if (immediate) run(key);
