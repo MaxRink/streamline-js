@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -19,7 +19,7 @@ test('the example answer from the proposal parses as written', () => {
 
 test('wrong shape, wrong version or no answer give no surfaces and never throw', () => {
     for (const raw of [null, undefined, 'x', 3, [], {}, { version: 2, surfaces: [] }, { version: 1 }, { version: 1, surfaces: 'x' }]) {
-        assert.deepEqual(parseSkinAnswer(raw), { surfaces: [] });
+        assert.deepEqual(parseSkinAnswer(raw), { surfaces: [], live: null });
     }
 });
 
@@ -241,4 +241,56 @@ test('tile-mode: menu items are label and number, capped, clamped; presetsEditab
     assert.equal(ok([mode({ presetsEditable: false })])[0].presetsEditable, false);
     assert.equal('presetsEditable' in ok([mode({ presetsEditable: true })])[0], false);
     assert.equal('menu' in ok([mode({ menu: 'x' })])[0], false);
+});
+
+const hintCall = over => ({ id: 'lock', kind: 'tile-hint', tile: 'drink', text: 'Ratio', active: true,
+    action: { type: 'call', endpoint: 'ratio', field: 'lock', value: 1 }, ...over });
+
+test('call on a hint or line carries one fixed number; active marks it on', () => {
+    const [h] = ok([hintCall()]);
+    assert.deepEqual(h.action, { type: 'call', endpoint: 'ratio', field: 'lock', value: 1 });
+    assert.equal(h.active, true);
+    const [l] = ok([{ id: 'l', kind: 'tile-line', tile: 'dose', text: 'x',
+        action: { type: 'call', endpoint: 'ratio', field: 'lock', value: '0.456' } }]);
+    assert.equal(l.action.value, 0.46);
+    assert.equal('active' in l, false);
+    assert.equal('active' in ok([hintCall({ active: 'yes' })])[0], false);
+    assert.equal('active' in ok([hintCall({ active: false })])[0], false);
+});
+
+test('a hint or line call without a usable value, or to a reserved endpoint, is inert; header buttons cannot call', () => {
+    for (const action of [
+        { type: 'call', endpoint: 'ratio', field: 'lock' },
+        { type: 'call', endpoint: 'ratio', field: 'lock', value: 'x' },
+        { type: 'call', endpoint: 'ratio', field: 'lock', value: 1e9 },
+        { type: 'call', endpoint: 'ratio', field: 'lock', value: Infinity },
+        { type: 'call', endpoint: 'settings', field: 'lock', value: 1 },
+        { type: 'call', endpoint: 'ratio', field: '1x', value: 1 },
+    ]) {
+        const [h] = ok([hintCall({ action })]);
+        assert.equal(h.text, 'Ratio', JSON.stringify(action));       // the surface still shows
+        assert.equal('action' in h, false, JSON.stringify(action));  // inert
+    }
+    const [b] = ok([{ id: 'b', kind: 'header-button', label: 'x',
+        action: { type: 'call', endpoint: 'ratio', field: 'lock', value: 1 } }]);
+    assert.equal('action' in b, false);
+});
+
+test('a tile-mode call still takes no value', () => {
+    const m = ok([mode({ action: { type: 'call', endpoint: 'apply', field: 'percent', value: 5 } })])[0];
+    assert.deepEqual(m.action, { type: 'call', endpoint: 'apply', field: 'percent' });
+});
+
+test('live names a websocket endpoint; it is only used when the plugin declares it', () => {
+    const answer = (live) => parseSkinAnswer({ version: 1, surfaces: [], live });
+    assert.deepEqual(answer({ endpoint: 'changed' }).live, { endpoint: 'changed' });
+    for (const bad of [null, undefined, 'changed', {}, { endpoint: 5 }, { endpoint: 'bad id' }, { endpoint: 'skin' }, { endpoint: 'settings' }]) {
+        assert.equal(answer(bad).live, null, JSON.stringify(bad));
+    }
+    const plugin = { api: [{ id: 'changed', type: 'websocket' }, { id: 'apply', type: 'http' }] };
+    assert.equal(liveEndpoint(plugin, { endpoint: 'changed' }), 'changed');
+    assert.equal(liveEndpoint(plugin, { endpoint: 'apply' }), null);      // http, not a socket
+    assert.equal(liveEndpoint(plugin, { endpoint: 'other' }), null);
+    assert.equal(liveEndpoint({}, { endpoint: 'changed' }), null);
+    assert.equal(liveEndpoint(plugin, null), null);
 });

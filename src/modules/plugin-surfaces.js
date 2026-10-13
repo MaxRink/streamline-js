@@ -104,11 +104,17 @@ function parseSet(action) {
 // Whether `endpoint` is one the plugin declares is checked against its manifest by
 // callableEndpoint(); `skin` is the read side and the other RESERVED_ENDPOINTS are
 // Decaid's own routes, so none of those is callable.
-function parseCall(action) {
+// A hint or line sends a fixed number with its tap (`value`, required there); a
+// tile-mode sends whatever the user chose, so it declares none.
+const CALL_VALUE_MAX = 99999;
+function parseCall(action, { withValue = false } = {}) {
     const { endpoint, field } = action;
     if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
     if (typeof field !== 'string' || !FIELD_RE.test(field)) return null;
-    return { type: 'call', endpoint, field };
+    if (!withValue) return { type: 'call', endpoint, field };
+    const value = toNumber(action.value);
+    if (value === null || Math.abs(value) > CALL_VALUE_MAX) return null;
+    return { type: 'call', endpoint, field, value: round2(value) };
 }
 
 // True when `plugin` declares an http endpoint with this id that a `call` may use.
@@ -124,6 +130,7 @@ function parseAction(raw, kind) {
     if (raw.type === 'open') return parseOpen(raw);
     if (raw.type === 'set' && (kind === 'tile-hint' || kind === 'tile-line')) return parseSet(raw);
     if (raw.type === 'call' && kind === 'tile-mode') return parseCall(raw);
+    if (raw.type === 'call' && (kind === 'tile-hint' || kind === 'tile-line')) return parseCall(raw, { withValue: true });
     return null;
 }
 
@@ -197,16 +204,35 @@ function parseSurface(raw) {
         const text = cleanText(raw.text, kind === 'tile-hint' ? CAPS.hint : CAPS.text);
         if (!text) return null;
         const title = kind === 'tile-hint' ? cleanText(raw.title, CAPS.title) : '';
-        return { id, kind, tile: raw.tile, text, ...(title && { title }), ...(action && { action }) };
+        // `active` marks a pill or line as switched on (a lock, a chosen option).
+        return { id, kind, tile: raw.tile, text, ...(title && { title }),
+            ...(raw.active === true && { active: true }), ...(action && { action }) };
     }
 
     return null; // unknown kind: a newer plugin on an older skin just shows less
 }
 
 // -> { surfaces: [...] }. Never throws; a wrong version or shape gives no surfaces.
+// `live` names a websocket endpoint of the plugin that says "my answer changed":
+// any message on it makes the skin read `skin` again. Whether the plugin really
+// declares that websocket is checked against its manifest by liveEndpoint().
+function parseLive(raw) {
+    const endpoint = raw && typeof raw === 'object' ? raw.endpoint : null;
+    if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
+    return { endpoint };
+}
+
+// -> the endpoint id when `plugin` declares it as a websocket, else null.
+export function liveEndpoint(plugin, live) {
+    const id = live?.endpoint;
+    if (typeof id !== 'string' || RESERVED_ENDPOINTS.includes(id)) return null;
+    return Array.isArray(plugin?.api) && plugin.api.some(e => e?.type === 'websocket' && e?.id === id) ? id : null;
+}
+
 export function parseSkinAnswer(raw) {
-    const out = { surfaces: [] };
+    const out = { surfaces: [], live: null };
     if (!raw || typeof raw !== 'object' || raw.version !== SKIN_VERSION || !Array.isArray(raw.surfaces)) return out;
+    out.live = parseLive(raw.live);
 
     const seen = new Set();
     const slots = new Set(); // one header button, and one hint, line and mode per tile

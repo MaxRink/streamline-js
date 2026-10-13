@@ -6,9 +6,9 @@
 // A failed or slow read hides that plugin's surfaces and never blocks the
 // dashboard. With no plugin answering `skin` nothing is drawn.
 
-import { getPlugins, callPluginEndpoint, API_BASE_URL } from './api.js';
+import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL } from './api.js';
 import { logger } from './logger.js';
-import { parseSkinAnswer, skinPlugins, callableEndpoint } from './plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
@@ -59,13 +59,13 @@ function withTimeout(promise, ms) {
 async function readSurfaces(plugin) {
     try {
         const answer = await withTimeout(callPluginEndpoint(plugin.id, 'skin', null, 'GET'), READ_TIMEOUT_MS);
-        return parseSkinAnswer(answer).surfaces;
+        return parseSkinAnswer(answer);
     } catch (error) {
         // callPluginEndpoint logs an HTTP failure at error level; a timeout is
         // only logged here, at debug. Either way the plugin is just hidden, so
         // one broken plugin cannot affect the others.
         logger.debug(`Plugin surfaces: ${plugin.id} skin not read:`, error?.message);
-        return [];
+        return { surfaces: [], live: null };
     }
 }
 
@@ -89,12 +89,20 @@ function buildButton(plugin, surface) {
     if (surface.text) button.title = surface.text;
     button.setAttribute('aria-label', surface.text ? `${surface.label}: ${surface.text}` : surface.label);
 
-    bindAction(button, plugin, surface.action);
+    bindAction(button, plugin, surface.action, surface);
     return button;
 }
 
-function bindAction(el, plugin, action) {
-    if (action?.type === 'open') {
+function bindAction(el, plugin, action, surface) {
+    if (action?.type === 'call') {
+        // A fixed number to the plugin's own endpoint; `skin` is read again after,
+        // so the plugin's answer decides what the pill says next.
+        el.addEventListener('click', () => {
+            callMode(plugin, surface, action.value, { immediate: true }).then(sent => {
+                if (!sent) logger.warn('Plugin call not delivered:', surface.id);
+            });
+        });
+    } else if (action?.type === 'open') {
         // `presentation` is a hint; only same-frame navigation exists so far.
         const url = pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null });
         if (url) el.addEventListener('click', () => window.location.assign(url));
@@ -112,12 +120,15 @@ function buildTileSurface(plugin, surface) {
     el.textContent = surface.text;
     el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     const title = surface.title || surface.text;
+    // Switched on: the skin's blue and bold, so a lock or a chosen option reads at a glance.
+    if (surface.active) el.dataset.active = '1';
 
     const root = surface.action ? document.createElement('button') : el;
     if (surface.action) {
         root.appendChild(el);
         root.style.cssText = 'display:flex;align-items:flex-end;justify-content:center;background:none;border:0;padding:0;cursor:pointer;';
-        bindAction(root, plugin, surface.action);
+        bindAction(root, plugin, surface.action, surface);
+        if (surface.action.type === 'call') root.setAttribute('aria-pressed', String(surface.active === true));
     } else {
         root.style.pointerEvents = 'none';
     }
@@ -149,6 +160,7 @@ function placeTileSurface(plugin, surface) {
         root.style.zIndex = '1';
         el.style.cssText += `max-width:100%;height:17px;line-height:17px;padding:0 10px;border-radius:9px;`
             + `font-size:13px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
+        if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--mimoja-blue-v2);';
         parent.appendChild(root);
         return root;
     }
@@ -167,6 +179,7 @@ function placeTileSurface(plugin, surface) {
     root.style.zIndex = '1';
     if (surface.action) root.style.justifyContent = 'flex-start';
     el.style.cssText += `width:100%;font-size:14px;line-height:17px;color:${MUTED};`;
+    if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;';
     section.appendChild(root);
     return root;
 }
@@ -374,9 +387,14 @@ export async function refreshPluginSurfaces() {
     try {
         const plugins = skinPlugins(await getPlugins());
         const entries = [];
+        const live = new Map(); // plugin id -> websocket endpoint it pushes "changed" on
         for (const plugin of plugins) {
-            for (const surface of await readSurfaces(plugin)) entries.push({ plugin, surface });
+            const answer = await readSurfaces(plugin);
+            for (const surface of answer.surfaces) entries.push({ plugin, surface });
+            const endpoint = liveEndpoint(plugin, answer.live);
+            if (endpoint) live.set(plugin.id, endpoint);
         }
+        syncLive(live);
         // Skip the DOM work when nothing changed: a rebuild resizes the header
         // controls, which re-runs the strip fit.
         const key = JSON.stringify(entries.map(e => [e.plugin.id, e.surface]));
@@ -389,6 +407,38 @@ export async function refreshPluginSurfaces() {
     } finally {
         running = false;
         if (refreshAgain) { refreshAgain = false; refreshPluginSurfaces(); }
+    }
+}
+
+// Sockets a plugin asked for with `live`: one per plugin, only while the page is
+// visible. A message re-reads `skin` and asks the tiles to re-read the workflow
+// (the plugin may have changed it), after a short wait so a burst is one read.
+const PUSH_DEBOUNCE_MS = 300;
+const liveSockets = new Map(); // plugin id -> endpoint
+let pushTimer = null;
+
+function onPush() {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => {
+        refreshPluginSurfaces();
+        document.dispatchEvent(new Event('streamline:workflow-refresh'));
+    }, PUSH_DEBOUNCE_MS);
+}
+
+function closeLive() {
+    for (const id of liveSockets.keys()) closePluginPush(id);
+    liveSockets.clear();
+}
+
+function syncLive(wanted) {
+    if (document.hidden) { closeLive(); return; }
+    for (const id of [...liveSockets.keys()]) {
+        if (wanted.get(id) !== liveSockets.get(id)) { closePluginPush(id); liveSockets.delete(id); }
+    }
+    for (const [id, endpoint] of wanted) {
+        if (liveSockets.get(id) === endpoint) continue;
+        connectPluginPush(id, endpoint, onPush);
+        liveSockets.set(id, endpoint);
     }
 }
 
@@ -405,7 +455,9 @@ export function initPluginSurfaces() {
     setInterval(refreshPluginSurfaces, REFRESH_MS);
     window.addEventListener('focus', refreshIfDue);
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') refreshIfDue();
+        // Visible again: read now (also reopens the live sockets closed when hidden).
+        if (document.visibilityState === 'visible') refreshPluginSurfaces();
+        else closeLive();
     });
     // Entering or leaving the built-in Auto steam mode: draw again from the last
     // answer, which hides or restores the steam toggle.

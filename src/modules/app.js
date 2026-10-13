@@ -1842,6 +1842,8 @@ function startWorkflowWatch() {
         if (document.visibilityState === 'visible') refreshWorkflowTiles();
     });
     window.addEventListener('focus', refreshWorkflowTiles);
+    // A plugin that changed the workflow and said so (plugin surfaces' `live`).
+    document.addEventListener('streamline:workflow-refresh', refreshWorkflowTiles);
 }
 
 async function isShotBlockedByNoScale() {
