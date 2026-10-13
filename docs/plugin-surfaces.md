@@ -239,14 +239,17 @@ An invalid action drops the action only; the surface still shows, inert.
 
   **`overlay`** shows your `ui` page in an iframe in a dialog over the dashboard, so the user never leaves it.
   The frame URL is your `ui` endpoint with `embed=1&theme=light|dark` (and `view` when given), without `returnTo`.
-  Your page and endpoint must:
+  Your page must:
 
-  - send `Content-Security-Policy: frame-ancestors <the skin's origin>` on the `ui` response (the plugin sets
-    this, Decaid does not); a response without it cannot be framed;
   - post `window.parent.postMessage({ type: 'streamline:ready' }, '*')` once loaded. If the skin has not seen
     it within 3 seconds it closes the dialog and opens the page instead, the same as `page`;
-  - post `{ type: 'streamline:close' }` to close the dialog. Escape closes it too. The skin re-reads `skin`
-    afterwards.
+  - post `{ type: 'streamline:close' }` when it is done. The skin also draws a close button (×), closes on a tap
+    outside the dialog and on Escape, then re-reads `skin` and the workflow.
+
+  The frame is sandboxed (`allow-scripts allow-same-origin allow-forms`): it cannot navigate the skin and has no
+  popups. Decaid sends no `X-Frame-Options` or CSP on a plugin's `ui` response, so it can be framed as is. To
+  allow only the skin, send `Content-Security-Policy: frame-ancestors <skin origin>` yourself; the skin's origin
+  is the `Origin` of its requests (or the `Referer` of the frame request), the embed URL carries no `returnTo`.
 
   Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of

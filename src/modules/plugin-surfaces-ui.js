@@ -97,6 +97,8 @@ function buildButton(plugin, surface) {
 // `{type:'streamline:ready'}` once it has loaded (a CSP `frame-ancestors` block
 // gives no event the skin could catch) and `{type:'streamline:close'}` to close.
 // No ready message in time: drop the dialog and go to the page, as `page` does.
+// The skin draws its own close button and closes on a backdrop tap, because key
+// events go to the frame once it is touched and a tablet has no Escape key.
 const OVERLAY_READY_MS = 3000;
 let overlayOpen = false;
 
@@ -111,10 +113,18 @@ function openOverlay(plugin, action, pageUrl) {
     dialog.dataset.agentId = `plugin-overlay:${plugin.id}`;
     dialog.style.cssText = 'width:min(1100px,94vw);height:min(760px,90vh);max-width:none;max-height:none;padding:0;border:0;border-radius:16px;overflow:hidden;background:var(--bg,#fff);';
     const frame = document.createElement('iframe');
+    // Scripts and forms run in the plugin's own origin; the frame cannot navigate the skin.
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
     frame.src = src;
     frame.title = plugin.name || plugin.id;
     frame.style.cssText = 'display:block;width:100%;height:100%;border:0;';
     dialog.appendChild(frame);
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = '×';
+    closeButton.setAttribute('aria-label', 'Close');
+    closeButton.style.cssText = 'position:absolute;top:8px;right:8px;width:44px;height:44px;border-radius:22px;border:0;font-size:28px;line-height:1;cursor:pointer;background:rgba(0,0,0,.55);color:#fff;z-index:1;';
+    dialog.appendChild(closeButton);
 
     let timer = null;
     const finish = () => {
@@ -124,7 +134,9 @@ function openOverlay(plugin, action, pageUrl) {
         if (dialog.open) dialog.close();
         dialog.remove();
         overlayOpen = false;
+        // The page may have changed the workflow; the tiles read it again.
         refreshPluginSurfaces();
+        document.dispatchEvent(new Event('streamline:workflow-refresh'));
     };
     const onMessage = event => {
         if (event.source !== frame.contentWindow) return;
@@ -134,8 +146,17 @@ function openOverlay(plugin, action, pageUrl) {
     };
     window.addEventListener('message', onMessage);
     dialog.addEventListener('close', finish);
+    closeButton.addEventListener('click', finish);
+    // A tap on the backdrop lands on the dialog itself, never on the frame.
+    dialog.addEventListener('click', event => { if (event.target === dialog) finish(); });
     document.body.appendChild(dialog);
-    dialog.showModal();
+    try {
+        dialog.showModal();
+    } catch (e) {
+        logger.warn('Plugin overlay could not open:', e);
+        finish();
+        return;
+    }
     timer = setTimeout(() => {
         logger.warn('Plugin overlay did not report ready, opening as a page:', plugin.id);
         finish();
