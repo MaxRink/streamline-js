@@ -61,7 +61,7 @@ An invalid action drops the action only; the surface still shows, inert.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
   `targetDoseWeight` (1 to 30), `targetYield` (1 to 2000), `grinderSetting` (0 to 9999) or `brewTemperature`
   (70 to 105, **degrees Celsius**). The maximums are the ones the tile enforces when the user types a value;
-  the minimums are stricter than the tile's 0. `value` is a number or a numeric string; it is clamped to that
+  the tile's minimum is 0, and dose, yield and brew temperature use a higher one here (grind is the same 0). `value` is a number or a numeric string; it is clamped to that
   range and rounded to hundredths. It goes through the same setters as a tile edit, so **the active profile
   remembers it** until it is changed again.
 
@@ -69,6 +69,9 @@ An invalid action drops the action only; the surface still shows, inert.
   > temperature, so a profile with temperature steps (94, then 90, then 88) becomes one flat value, and the
   > profile then remembers it. If your plugin needs to keep the shape, for example an offset of the whole curve,
   > do not use `set`: make the change from your plugin's own page or endpoint and write the profile yourself.
+  >
+  > Like the tile, it writes nothing when the current workflow has no profile steps, and the tile still shows the
+  > requested value until the next refresh.
 
 Nothing else can be written: no machine commands, and no profile changes other than the remembered dose, yield,
 grind and the profile temperature that `set` itself writes (see the `brewTemperature` note above).

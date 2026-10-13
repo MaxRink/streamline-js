@@ -12,8 +12,8 @@ export const MAX_SURFACES = 3;      // per plugin, all kinds together
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
 // The fields `set` may write. Each maximum is the one the tile itself enforces when
 // the user types a value (ui.js makeEditable handlers; brew temperature also caps
-// the +/- buttons at 105). The tile's minimum is 0; a plugin may not go below the
-// minimum listed here, which is stricter than the tile.
+// the +/- buttons at 105). The tile's minimum is 0; dose, yield and brew
+// temperature use a higher minimum here (grind is the same 0).
 // brewTemperature is in degrees Celsius. Applying it sets every step of the
 // profile to that one value (the tile's own behaviour), flattening a profile
 // that has temperature steps; see docs/plugin-surfaces.md.
