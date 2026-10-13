@@ -345,7 +345,11 @@ const callQueue = createCallQueue({
         callPluginEndpoint(encodeURIComponent(plugin.id), endpoint, body, 'POST'), CALL_TIMEOUT_MS),
 });
 
-const callKey = (plugin, surface) => `${plugin.id}:${surface.tile}`;
+// A mode shares one lane per tile (newest value wins). A fixed-value hint or line
+// is its own lane, so tapping it never supersedes a mode's pending value.
+const callKey = (plugin, surface) => (surface.kind === 'tile-hint' || surface.kind === 'tile-line'
+    ? `${plugin.id}:${surface.id}`
+    : `${plugin.id}:${surface.tile}`);
 
 // True while a call for this mode is being sent or the user is still stepping, so a
 // redraw must keep the value the user is moving rather than the plugin's older one.
@@ -371,7 +375,12 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
 // -> true when everything was drawn. Tile placement measures the label
 // (offsetTop/Height/Width), which is 0 while the main page is display:none, so
 // tiles are skipped then and the caller must not remember the answer as drawn.
-function render(entries) {
+function render(rawEntries) {
+    // A hint or line whose call endpoint the plugin does not declare is drawn
+    // inert, like a surface with no action, so it does not look tappable.
+    const entries = rawEntries.map(e => (e.surface.action?.type === 'call' && e.surface.kind !== 'tile-mode'
+        && !callableEndpoint(e.plugin, e.surface.action.endpoint)
+        ? { ...e, surface: { ...e.surface, action: null } } : e));
     lastEntries = entries;
     const mainHidden = document.getElementById('main-page')?.style.display === 'none';
     document.querySelectorAll('[data-plugin-surface]').forEach(el => {
@@ -465,14 +474,17 @@ export async function refreshPluginSurfaces() {
 
 // Sockets a plugin asked for with `live`: one per plugin, only while the page is
 // visible. A message re-reads `skin` and asks the tiles to re-read the workflow
-// (the plugin may have changed it), after a short wait so a burst is one read.
+// (the plugin may have changed it). A burst is one read: the wait starts at the
+// first message and is not pushed back by later ones, so a fast stream still
+// refreshes every PUSH_DEBOUNCE_MS.
 const PUSH_DEBOUNCE_MS = 300;
 const liveSockets = new Map(); // plugin id -> endpoint
 let pushTimer = null;
 
 function onPush() {
-    clearTimeout(pushTimer);
+    if (pushTimer) return;
     pushTimer = setTimeout(() => {
+        pushTimer = null;
         refreshPluginSurfaces();
         document.dispatchEvent(new Event('streamline:workflow-refresh'));
     }, PUSH_DEBOUNCE_MS);
