@@ -26,6 +26,18 @@ export const SET_LIMITS = {
 export const SET_FIELDS = Object.keys(SET_LIMITS);
 export const PRESENTATIONS = ['page', 'overlay'];
 
+// `tile-mode` adds an option to the toggle under a left-column tile's label.
+// Steam and flush can take a mode but not a hint or a line, so they are not in TILES.
+export const MODE_TILES = [...TILES, 'steam', 'flush'];
+export const MODE_LIMITS = {
+    label: 6,        // characters in the toggle option
+    unit: 3,         // characters appended to the value
+    presets: 4,      // the preset row has four slots
+    bound: 9999,     // |min|, |max|
+    decimals: 2,
+};
+const FIELD_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const CAPS = { label: 24, text: 40, hint: 24, title: 80, image: 2048 };
 
@@ -57,15 +69,23 @@ function parseOpen(action) {
     };
 }
 
+// A finite number from a number or a numeric string; null otherwise.
+function toNumber(value) {
+    const n = typeof value === 'number' ? value
+        : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
+    return Number.isFinite(n) ? n : null;
+}
+
+const round2 = n => Math.round(n * 100) / 100;
+
 // A finite number (or numeric string) clamped to the field's range, to
 // hundredths; null when it is not a number or the field is not settable.
 export function clampSetValue(field, value) {
     if (!Object.prototype.hasOwnProperty.call(SET_LIMITS, field)) return null;
     const limits = SET_LIMITS[field];
-    const n = typeof value === 'number' ? value
-        : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
-    if (!Number.isFinite(n)) return null;
-    return Math.round(Math.min(limits.max, Math.max(limits.min, n)) * 100) / 100;
+    const n = toNumber(value);
+    if (n === null) return null;
+    return round2(Math.min(limits.max, Math.max(limits.min, n)));
 }
 
 function parseSet(action) {
@@ -73,12 +93,62 @@ function parseSet(action) {
     return value === null ? null : { type: 'set', field: action.field, value };
 }
 
+// `call` POSTs `{ [field]: <number> }` to one of the plugin's own http endpoints.
+// Whether `endpoint` is one the plugin declares is checked against its manifest by
+// callableEndpoint(); `skin` is the read side and is never callable.
+function parseCall(action) {
+    const { endpoint, field } = action;
+    if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || endpoint === 'skin') return null;
+    if (typeof field !== 'string' || !FIELD_RE.test(field)) return null;
+    return { type: 'call', endpoint, field };
+}
+
+// True when `plugin` declares an http endpoint with this id that a `call` may use.
+export function callableEndpoint(plugin, endpoint) {
+    if (typeof endpoint !== 'string' || endpoint === 'skin') return false;
+    return Array.isArray(plugin?.api) && plugin.api.some(e => e?.type === 'http' && e?.id === endpoint);
+}
+
 // An invalid action drops the action only; the surface still shows, inert.
+// (`tile-mode` is the exception: without a valid `call` it is dropped.)
 function parseAction(raw, kind) {
     if (!raw || typeof raw !== 'object') return null;
     if (raw.type === 'open') return parseOpen(raw);
-    if (raw.type === 'set' && kind !== 'header-button') return parseSet(raw);
+    if (raw.type === 'set' && (kind === 'tile-hint' || kind === 'tile-line')) return parseSet(raw);
+    if (raw.type === 'call' && kind === 'tile-mode') return parseCall(raw);
     return null;
+}
+
+// A mode the user steps through with the tile's -/+ and numpad. Every number is
+// clamped into [min, max]; a mode that cannot be stepped or called is dropped.
+function parseMode(raw, id, action) {
+    if (!MODE_TILES.includes(raw.tile) || action?.type !== 'call') return null;
+    const label = cleanText(raw.label, MODE_LIMITS.label);
+    if (!label) return null;
+    const unit = cleanText(raw.unit, MODE_LIMITS.unit);
+
+    const bound = MODE_LIMITS.bound;
+    const min = toNumber(raw.min);
+    const max = toNumber(raw.max);
+    if (min === null || max === null || min >= max || min < -bound || max > bound) return null;
+    const clamp = n => round2(Math.min(max, Math.max(min, n)));
+
+    const value = toNumber(raw.value);
+    if (value === null) return null;
+    const rawStep = raw.step == null ? 1 : toNumber(raw.step);
+    if (rawStep === null || rawStep <= 0 || rawStep > max - min) return null;
+    const decimals = raw.decimals == null ? 0 : raw.decimals;
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > MODE_LIMITS.decimals) return null;
+
+    const presets = [];
+    if (Array.isArray(raw.presets)) {
+        for (const item of raw.presets) {
+            const n = toNumber(item);
+            if (n !== null && presets.length < MODE_LIMITS.presets) presets.push(clamp(n));
+        }
+    }
+    return { id, kind: 'tile-mode', tile: raw.tile, label, ...(unit && { unit }),
+        value: clamp(value), min, max, step: round2(rawStep), decimals, presets, action };
 }
 
 function parseSurface(raw) {
@@ -93,6 +163,8 @@ function parseSurface(raw) {
         const image = raw.image == null ? null : httpsUrl(raw.image);
         return { id, kind, label, ...(text && { text }), ...(image && { image }), ...(action && { action }) };
     }
+
+    if (kind === 'tile-mode') return parseMode(raw, id, action);
 
     if (kind === 'tile-hint' || kind === 'tile-line') {
         if (!TILES.includes(raw.tile)) return null;
@@ -111,7 +183,7 @@ export function parseSkinAnswer(raw) {
     if (!raw || typeof raw !== 'object' || raw.version !== SKIN_VERSION || !Array.isArray(raw.surfaces)) return out;
 
     const seen = new Set();
-    const slots = new Set(); // one header button, and one hint and one line per tile
+    const slots = new Set(); // one header button, and one hint, line and mode per tile
     for (const item of raw.surfaces) {
         if (out.surfaces.length >= MAX_SURFACES) break;
         const surface = parseSurface(item);
