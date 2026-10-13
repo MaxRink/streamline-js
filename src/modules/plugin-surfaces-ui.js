@@ -8,7 +8,9 @@
 
 import { getPlugins, callPluginEndpoint, API_BASE_URL } from './api.js';
 import { logger } from './logger.js';
-import { parseSkinAnswer, skinPlugins } from './plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint } from './plugin-surfaces.js';
+import { planTileModes, createCallQueue } from './plugin-modes.js';
+import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
 import { applyPluginSet } from './ui.js';
 
@@ -29,12 +31,18 @@ const TILES = {
     dose: { section: 'dose-section', label: 'dose-label', control: 'dose-in-minus' },
     drink: { section: 'drink-section', label: 'drink-label', control: 'drink-out-minus' },
     temperature: { section: 'brew-section', label: 'brew-label', control: 'temp-minus' },
+    flush: { section: 'flush-section', label: 'flush-label', control: 'flush-minus' },
 };
+// `steam` can take a mode too, but its label slot already holds the steam mode
+// toggle; plugin options are added there in a later change.
 const MUTED = 'var(--low-contrast-white)';
 
 let started = false;
 let touchedSections = [];
 let running = false;
+let refreshAgain = false;
+let drawnModes = {}; // tile -> [{ key, plugin, surface }] as last drawn
+const selectedMode = {}; // tile -> `${plugin.id}:${surface.id}`; absent = the built-in mode
 let lastRun = 0;
 let lastKey = '';
 
@@ -159,6 +167,103 @@ function placeTileSurface(plugin, surface) {
     return root;
 }
 
+// What the built-in option of each tile's toggle says.
+function builtinLabel(tile) {
+    if (tile === 'temperature') return getTempUnit() === 'F' ? '°F' : '°C';
+    if (tile === 'dose' || tile === 'drink') return 'g';
+    if (tile === 'flush') return 's';
+    return document.getElementById(TILES[tile].label)?.textContent.trim() || '';
+}
+
+function modeKey(plugin, surface) {
+    return `${plugin.id}:${surface.id}`;
+}
+
+function setSelectedMode(tile, key) {
+    if ((selectedMode[tile] || null) === key) return;
+    if (key) selectedMode[tile] = key; else delete selectedMode[tile];
+    const entry = (drawnModes[tile] || []).find(m => m.key === key) || null;
+    paintToggle(tile);
+    // The tile itself reacts to this (value, steppers, presets).
+    document.dispatchEvent(new CustomEvent('streamline:tilemodechange', {
+        detail: { tile, plugin: entry?.plugin || null, surface: entry?.surface || null },
+    }));
+}
+
+function paintToggle(tile) {
+    const root = document.querySelector(`[data-plugin-surface="mode:${tile}"]`);
+    if (!root) return;
+    root.querySelectorAll('button').forEach(b => {
+        const on = (b.dataset.modeKey || '') === (selectedMode[tile] || '');
+        b.setAttribute('aria-pressed', String(on));
+        b.style.color = on ? 'var(--mimoja-blue-v2)' : MUTED;
+        b.style.fontWeight = on ? '700' : '600';
+    });
+}
+
+// The `Auto | F | T` style toggle in the label slot. The visible text is 17px
+// high like a tile-line; the buttons are taller and grow upward over the label,
+// which is not interactive, to give a touch target.
+function placeModeToggle(tile, modes) {
+    const { section, label: labelId } = TILES[tile];
+    const sectionEl = document.getElementById(section);
+    const label = document.getElementById(labelId);
+    if (!sectionEl || !label) return false;
+    if (!sectionEl.style.position) {
+        sectionEl.style.position = 'relative';
+        touchedSections.push(sectionEl);
+    }
+    const hit = 24;
+    const top = label.offsetTop + label.offsetHeight + 1;
+    const root = document.createElement('div');
+    root.dataset.pluginSurface = `mode:${tile}`;
+    root.dataset.agentId = `plugin-tile:${tile}:tile-mode`;
+    root.setAttribute('role', 'group');
+    root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${label.offsetWidth}px;height:${hit}px;`
+        + 'z-index:1;display:flex;align-items:flex-end;gap:6px;white-space:nowrap;overflow:hidden;'
+        + `font-size:14px;line-height:17px;color:${MUTED};`;
+
+    const options = [{ key: '', label: builtinLabel(tile), title: '' },
+        ...modes.map(m => ({ key: m.key, label: m.surface.label, title: m.surface.label }))];
+    options.forEach((opt, i) => {
+        if (i > 0) {
+            const bar = document.createElement('span');
+            bar.textContent = '|';
+            bar.style.pointerEvents = 'none';
+            root.appendChild(bar);
+        }
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = opt.label;
+        button.dataset.modeKey = opt.key;
+        button.style.cssText = 'background:none;border:0;padding:0;cursor:pointer;font:inherit;height:17px;line-height:17px;';
+        if (opt.title) button.title = opt.title;
+        button.addEventListener('click', () => setSelectedMode(tile, opt.key || null));
+        root.appendChild(button);
+    });
+    sectionEl.appendChild(root);
+    return true;
+}
+
+// Sends `{ [field]: number }` to the mode's own http endpoint; the answer is
+// ignored and `skin` is read again, so what the plugin says is what is shown.
+// Steppers pass `immediate: false` to be debounced; presets and the numpad do not.
+const callQueue = createCallQueue({
+    send: (key, { plugin, endpoint, body }) => callPluginEndpoint(plugin.id, endpoint, body, 'POST'),
+});
+
+export function callMode(plugin, surface, number, { immediate = true } = {}) {
+    const action = surface?.action;
+    if (action?.type !== 'call' || !callableEndpoint(plugin, action.endpoint) || !Number.isFinite(number)) {
+        return Promise.resolve(false);
+    }
+    const payload = { plugin, endpoint: action.endpoint, body: { [action.field]: number } };
+    return callQueue.request(`${plugin.id}:${surface.tile}`, payload, { immediate }).then(sent => {
+        if (sent) refreshPluginSurfaces();
+        return sent;
+    }).catch(() => false);
+}
+
 // -> true when everything was drawn. Tile placement measures the label
 // (offsetTop/Height/Width), which is 0 while the main page is display:none, so
 // tiles are skipped then and the caller must not remember the answer as drawn.
@@ -172,6 +277,12 @@ function render(entries) {
     const anchor = container?.firstChild;
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
     let headerButtons = 0;
+
+    // A mode takes the label slot, so a tile-line on that tile is not drawn.
+    const plan = planTileModes(entries);
+    const modeTiles = new Set(Object.keys(plan).filter(tile => TILES[tile]));
+    drawnModes = {};
+
     for (const { plugin, surface } of entries) {
         if (surface.kind === 'header-button') {
             // One plugin button in total, the first plugin in Decaid's list whose
@@ -184,15 +295,29 @@ function render(entries) {
             continue;
         }
         if (mainHidden) continue;
+        if (surface.kind === 'tile-mode') continue; // drawn per tile below
+        if (surface.kind === 'tile-line' && modeTiles.has(surface.tile)) continue;
         const slot = `${surface.kind}:${surface.tile}`;
         if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
         if (placeTileSurface(plugin, surface)) usedSlots.add(slot);
+    }
+
+    if (!mainHidden) {
+        for (const tile of modeTiles) {
+            const modes = plan[tile].map(({ plugin, surface }) => ({ key: modeKey(plugin, surface), plugin, surface }));
+            if (placeModeToggle(tile, modes)) drawnModes[tile] = modes;
+        }
+        // A selected mode that is gone (plugin off, answer changed) falls back to the built-in one.
+        for (const tile of Object.keys(selectedMode)) {
+            if (!(drawnModes[tile] || []).some(m => m.key === selectedMode[tile])) setSelectedMode(tile, null);
+        }
+        Object.keys(drawnModes).forEach(paintToggle);
     }
     return !mainHidden;
 }
 
 export async function refreshPluginSurfaces() {
-    if (running) return;
+    if (running) { refreshAgain = true; return; } // e.g. a mode call finished mid-read
     running = true;
     lastRun = Date.now();
     try {
@@ -212,6 +337,7 @@ export async function refreshPluginSurfaces() {
         logger.warn('Plugin surfaces refresh failed:', error);
     } finally {
         running = false;
+        if (refreshAgain) { refreshAgain = false; refreshPluginSurfaces(); }
     }
 }
 
