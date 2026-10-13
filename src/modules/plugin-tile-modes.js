@@ -51,12 +51,15 @@ function readEdits(plugin, surface) {
     }
 }
 
+// -> whether the edit was stored (a WebView in private mode, or a full store, refuses).
 function writeEdits(plugin, surface, edits) {
     try {
-        if (edits.every(n => n === null)) localStorage.removeItem(editsKey(plugin, surface));
+        if (edits.every(e => e === null)) localStorage.removeItem(editsKey(plugin, surface));
         else localStorage.setItem(editsKey(plugin, surface), JSON.stringify(edits));
+        return true;
     } catch (error) {
         logger.warn('Plugin mode preset edit not saved:', error);
+        return false;
     }
 }
 
@@ -77,7 +80,7 @@ function apply(tile, number, { immediate }) {
 }
 
 // `initial` and `onConfirm` default to editing the mode's own value.
-async function openNumpad(tile, { initial, onConfirm } = {}) {
+async function openNumpad(tile, { initial, onConfirm, suffix = '' } = {}) {
     const state = active[tile];
     if (!state) return;
     const { plugin, surface } = state;
@@ -87,7 +90,7 @@ async function openNumpad(tile, { initial, onConfirm } = {}) {
     const input = { value: String(start), setAttribute() {}, getAttribute() { return null; }, dispatchEvent() {} };
     module.openModal(input, {
         // Per plugin and mode, so two plugins on one tile keep their own previous-value pills.
-        fieldType: `plugin-mode-${String(plugin.id)}:${surface.id}`.replace(/[^A-Za-z0-9_.:-]/g, '_'),
+        fieldType: `plugin-mode-${String(plugin.id)}:${surface.id}${suffix}`.replace(/[^A-Za-z0-9_.:-]/g, '_'),
         config: {
             title: `${TILE_DOM[tile].title} ${surface.label}`,
             unit: surface.unit || '',
@@ -101,20 +104,30 @@ async function openNumpad(tile, { initial, onConfirm } = {}) {
     });
 }
 
-function savePresetEdit(tile, index, value) {
+// -> whether it was stored. Does nothing if the tile no longer shows the mode the
+// menu was opened for (the plugin answered differently, or the user switched).
+function savePresetEdit(tile, plugin, surface, index, value) {
     const state = active[tile];
-    if (!state) return;
-    const { plugin, surface } = state;
-    writeEdits(plugin, surface, withPresetEdit(surface, readEdits(plugin, surface), index, value));
-    draw(tile, plugin, surface, { keepValue: true });
+    if (!state || state.plugin.id !== plugin.id || state.surface.id !== surface.id) return false;
+    const stored = writeEdits(plugin, state.surface, withPresetEdit(state.surface, readEdits(plugin, state.surface), index, value));
+    draw(tile, plugin, state.surface, { keepValue: true });
+    return stored;
+}
+
+function reportSaved(stored, message) {
+    if (stored) showToast(getTranslation(message), 2000, 'success');
+    else showToast(getTranslation('Could not save the preset on this device'), 3000, 'error');
 }
 
 // The long press of a plugin preset: the built-in preset menu, then the plugin's items.
 function openPresetMenu(tile, button, index) {
     const state = active[tile];
-    if (!state) return;
+    if (!state || !button.isConnected) return; // a redraw replaced the button under the finger
     const { plugin, surface } = state;
     const fmt = n => formatModeValue(surface, n);
+    const stillShown = () => active[tile]?.plugin.id === plugin.id && active[tile]?.surface.id === surface.id;
+    // Replacements as functions: a plugin unit such as "$&" is not a replace pattern.
+    const fill = (key, text) => getTranslation(key).replace('{value}', () => text);
     const model = presetMenuModel(surface, index, readEdits(plugin, surface), state.value);
     const items = [];
     let divided = false; // one divider between the built-in items and the plugin's
@@ -124,29 +137,33 @@ function openPresetMenu(tile, button, index) {
             divided = true;
         }
         if (entry.id === 'apply') {
-            items.push({ label: getTranslation('Apply {value}').replace('{value}', fmt(entry.value)),
-                onSelect: () => apply(tile, entry.value, { immediate: true }) });
+            items.push({ label: fill('Apply {value}', fmt(entry.value)),
+                onSelect: () => { if (stillShown()) apply(tile, entry.value, { immediate: true }); } });
         } else if (entry.id === 'enter') {
             items.push({ label: getTranslation('Enter value'), onSelect: () => openNumpad(tile, {
                 initial: entry.value,
+                suffix: ':preset', // its previous-value pills are presets, not mode values
                 onConfirm: raw => {
                     const n = parseFloat(raw);
                     if (!Number.isFinite(n)) return;
-                    savePresetEdit(tile, index, n);
-                    showToast(`Preset saved as ${fmt(clampModeValue(surface, n))}`, 2000, 'success');
+                    reportSaved(savePresetEdit(tile, plugin, surface, index, n), `Preset saved as ${fmt(clampModeValue(surface, n))}`);
                 },
             }) });
         } else if (entry.id === 'save') {
-            items.push({ label: getTranslation('Save current ({value}) here').replace('{value}', fmt(entry.value)),
-                disabled: entry.disabled, onSelect: () => savePresetEdit(tile, index, entry.value) });
+            items.push({ label: fill('Save current ({value}) here', fmt(entry.value)),
+                disabled: entry.disabled,
+                onSelect: () => reportSaved(savePresetEdit(tile, plugin, surface, index, entry.value),
+                    `Preset saved as ${fmt(entry.value)}`) });
         } else if (entry.id === 'revert') {
-            items.push({ label: getTranslation('Revert to {value}').replace('{value}', fmt(entry.value)),
+            items.push({ label: fill('Revert to {value}', fmt(entry.value)),
                 danger: true, disabled: entry.disabled, onSelect: () => {
-                    savePresetEdit(tile, index, null);
-                    showToast(`Preset reverted to ${fmt(entry.value)}`, 2000, 'info');
+                    if (savePresetEdit(tile, plugin, surface, index, null)) {
+                        showToast(getTranslation(`Preset reverted to ${fmt(entry.value)}`), 2000, 'info');
+                    }
                 } });
         } else {
-            items.push({ label: entry.label, onSelect: () => apply(tile, entry.value, { immediate: true }) });
+            items.push({ label: entry.label,
+                onSelect: () => { if (stillShown()) apply(tile, entry.value, { immediate: true }); } });
         }
     }
     openContextMenu(button, items);

@@ -137,15 +137,35 @@ test('call queue: busy(key) covers debounce, in flight and the newest waiting', 
 });
 
 const withPresets = { ...pct, presets: [-5, -2, 2, 5] };
+const e = (base, value) => ({ base, value });
 
 test('preset edits: the user value wins per slot, bad edits are ignored, null clears', () => {
-    assert.deepEqual(sanitizeEdits(withPresets, [null, 3, 'x', 99, 7]), [null, 3, null, 20]);
+    assert.deepEqual(sanitizeEdits(withPresets, [null, e(-2, 3), 'x', e(5, 99), 7]), [null, e(-2, 3), null, e(5, 20)]);
     assert.deepEqual(sanitizeEdits(withPresets, 'junk'), [null, null, null, null]);
-    assert.deepEqual(effectivePresets(withPresets, [null, 3]), [-5, 3, 2, 5]);
+    assert.deepEqual(sanitizeEdits(withPresets, [{ base: -5, value: NaN }, { value: 1 }, 5, { base: 2 }]), [null, null, null, null]);
+    assert.deepEqual(effectivePresets(withPresets, [null, e(-2, 3)]), [-5, 3, 2, 5]);
     const edited = withPresetEdit(withPresets, null, 2, 8);
-    assert.deepEqual(edited, [null, null, 8, null]);
+    assert.deepEqual(edited, [null, null, e(2, 8), null]);
     assert.deepEqual(withPresetEdit(withPresets, edited, 2, null), [null, null, null, null]);
     assert.deepEqual(withPresetEdit(withPresets, edited, 9, 1), edited);
+});
+
+test('preset edits follow the plugin preset they were made on, not the slot', () => {
+    const edits = [e(-5, 9), null, null, null];
+    assert.deepEqual(effectivePresets(withPresets, edits), [9, -2, 2, 5]);
+    // the plugin reorders or recalculates: the edit no longer matches, so it is dropped
+    assert.deepEqual(effectivePresets({ ...withPresets, presets: [5, 2, -2, -5] }, edits), [5, 2, -2, -5]);
+    assert.deepEqual(effectivePresets({ ...withPresets, presets: [-4, -2, 2, 5] }, edits), [-4, -2, 2, 5]);
+    // fewer presets: nothing out of range is kept
+    assert.deepEqual(sanitizeEdits({ ...withPresets, presets: [-5, -2] }, [e(-5, 9), null, null, e(5, 1)]), [e(-5, 9), null]);
+});
+
+test('presetsEditable false: the plugin presets always show, edits are kept for later', () => {
+    const locked = { ...withPresets, presetsEditable: false };
+    const edits = [e(-5, 9), null, null, null];
+    assert.deepEqual(effectivePresets(locked, edits), [-5, -2, 2, 5]);
+    assert.deepEqual(withPresetEdit(locked, edits, 1, 3)[0], e(-5, 9)); // stored edit survives
+    assert.deepEqual(effectivePresets(withPresets, edits), [9, -2, 2, 5]); // unlocked again
 });
 
 test('preset menu: built-in items, revert only after an edit, plugin items last, no editing when locked', () => {
@@ -154,13 +174,14 @@ test('preset menu: built-in items, revert only after an edit, plugin items last,
     assert.deepEqual(ids(plain), ['apply', 'enter', 'save', 'revert']);
     assert.equal(plain.find(m => m.id === 'revert').disabled, true);
     assert.equal(plain.find(m => m.id === 'save').value, 4);
-    const edited = presetMenuModel({ ...withPresets, menu: [{ label: 'Reset', value: 0 }] }, 1, [null, 9], 4);
+    const edited = presetMenuModel({ ...withPresets, menu: [{ label: 'Reset', value: 0 }] }, 1, [null, e(-2, 9)], 4);
     assert.deepEqual(ids(edited), ['apply', 'enter', 'save', 'revert', 'menu']);
-    assert.equal(edited[0].value, 9);                       // the edit is what applies
+    assert.equal(edited[0].value, 9);                            // the edit is what applies
     assert.equal(edited.find(m => m.id === 'revert').value, -2); // revert goes to the plugin's own
     assert.equal(edited.find(m => m.id === 'revert').disabled, false);
-    const locked = presetMenuModel({ ...withPresets, presetsEditable: false, menu: [{ label: 'Reset', value: 0 }] }, 0, null, NaN);
+    const locked = presetMenuModel({ ...withPresets, presetsEditable: false, menu: [{ label: 'Reset', value: 0 }] }, 0, [e(-5, 9)], NaN);
     assert.deepEqual(ids(locked), ['apply', 'menu']);
+    assert.equal(locked[0].value, -5);                           // not the old edit
     assert.equal(presetMenuModel({ ...withPresets, presetsEditable: false }, 0, null, 0).length, 1);
     assert.equal(presetMenuModel(withPresets, 0, null, NaN).find(m => m.id === 'save').disabled, true);
 });

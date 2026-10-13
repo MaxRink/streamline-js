@@ -202,7 +202,10 @@ Rules:
   plugin mode, and a mode there takes the place of whichever of steam's preset rows is showing.
 - Long-pressing a plugin preset opens the same menu as the built-in presets: *Apply*, *Enter value*, *Save current
   here* and *Revert to* (the plugin's own value). The user's edits are kept per plugin and mode on that device, and
-  override the plugin's preset until reverted; the plugin only ever sees the number when it is applied. Your `menu`
+  override the plugin's preset until reverted; the plugin only ever sees the number when it is applied. An edit
+  belongs to the preset value it was made on: if you change or reorder your presets it is dropped, so it never
+  lands on a different preset. With `presetsEditable: false` your own presets always show and old edits are ignored
+  (kept, so they apply again if you unlock them). Your `menu`
   items follow, and choosing one is a `call` with that item's number. Set `presetsEditable: false` to leave only
   *Apply* and your items. A tile with no preset row (Grind, Dose) has no menu.
 - While a mode is selected the tile's own value and preset row are hidden, not changed: they keep following the

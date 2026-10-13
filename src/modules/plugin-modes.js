@@ -34,29 +34,38 @@ export function formatModeValue(mode, value) {
     return `${mode.min < 0 && n > 0 ? '+' : ''}${text}${mode.unit || ''}`;
 }
 
-// The user's edits to a mode's presets: an array of numbers or null (not edited),
-// one per preset slot. Anything else in it is ignored.
+// The user's edits to a mode's presets: one entry per preset slot, `{ base, value }`
+// or null. `base` is the plugin's preset when the edit was made; an edit whose base
+// no longer matches (the plugin changed or reordered its presets) is dropped, so it
+// never lands on a different preset. Anything malformed is ignored.
 export function sanitizeEdits(mode, edits) {
     const out = mode.presets.map(() => null);
     if (Array.isArray(edits)) {
-        mode.presets.forEach((_, i) => {
-            const n = edits[i];
-            if (typeof n === 'number' && Number.isFinite(n)) out[i] = clampModeValue(mode, n);
+        mode.presets.forEach((preset, i) => {
+            const e = edits[i];
+            if (e && typeof e === 'object' && Number.isFinite(e.value) && e.base === preset) {
+                out[i] = { base: preset, value: clampModeValue(mode, e.value) };
+            }
         });
     }
     return out;
 }
 
 // What the preset row shows: the user's edit where there is one, else the plugin's.
+// Presets the plugin marked not editable are always the plugin's own; stored edits
+// are kept and apply again if it unlocks them.
 export function effectivePresets(mode, edits) {
+    if (mode.presetsEditable === false) return [...mode.presets];
     const clean = sanitizeEdits(mode, edits);
-    return mode.presets.map((preset, i) => (clean[i] === null ? preset : clean[i]));
+    return mode.presets.map((preset, i) => (clean[i] === null ? preset : clean[i].value));
 }
 
 // `edits` with slot `index` set to `value` (clamped), or cleared with null.
 export function withPresetEdit(mode, edits, index, value) {
     const next = sanitizeEdits(mode, edits);
-    if (index >= 0 && index < next.length) next[index] = value === null ? null : clampModeValue(mode, value);
+    if (index >= 0 && index < next.length) {
+        next[index] = value === null ? null : { base: mode.presets[index], value: clampModeValue(mode, value) };
+    }
     return next;
 }
 
