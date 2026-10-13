@@ -53,7 +53,7 @@ test('call queue: one in flight per key, the newest waits for it, then goes', as
     assert.equal(h.sent.length, 1);            // b and c wait for a
     assert.equal(await b, null);               // c replaced b
     h.gates[0].resolve();
-    assert.equal(await a, true);
+    assert.equal(await a, null);               // sent, but c is waiting: a stale answer
     await h.tick();
     assert.deepEqual(h.sent.map(s => s[1]), [{ percent: 5 }, { percent: 7 }]);
     h.gates[1].resolve();
@@ -92,4 +92,46 @@ test('mode values: clamp, step without float noise, and format with a sign only 
     assert.equal(formatModeValue(pct, -7), '-7%');
     assert.equal(formatModeValue({ min: 0, max: 60, step: 1, decimals: 0, unit: 's' }, 12), '12s');
     assert.equal(formatModeValue({ min: 0, max: 5, step: 0.5, decimals: 1 }, 2), '2.0');
+});
+
+test('call queue: a finished job resolves null while a newer payload is debouncing', async () => {
+    const h = harness();
+    const a = h.queue.request('t', { percent: 1 }, { immediate: true });
+    await h.tick();
+    const b = h.queue.request('t', { percent: 2 }); // debounced, timer not fired
+    h.gates[0].resolve();
+    assert.equal(await a, null);
+    assert.equal(h.sent.length, 1);
+    h.fire(); await h.tick();
+    assert.equal(h.sent.length, 2);
+    h.gates[1].resolve();
+    assert.equal(await b, true);
+});
+
+test('call queue: a failed send stays false even with a newer payload waiting', async () => {
+    const h = harness();
+    const a = h.queue.request('t', 1, { immediate: true });
+    await h.tick();
+    h.queue.request('t', 2, { immediate: true });
+    h.gates[0].reject(new Error('boom'));
+    assert.equal(await a, false);
+});
+
+test('call queue: busy(key) covers debounce, in flight and the newest waiting', async () => {
+    const h = harness();
+    assert.equal(h.queue.busy('t'), false);
+    const a = h.queue.request('t', 1);
+    assert.equal(h.queue.busy('t'), true);      // debouncing
+    assert.equal(h.queue.busy('other'), false);
+    h.fire(); await h.tick();
+    assert.equal(h.queue.busy('t'), true);      // in flight
+    const b = h.queue.request('t', 2, { immediate: true });
+    h.gates[0].resolve();
+    assert.equal(await a, null);
+    assert.equal(h.queue.busy('t'), true);      // b now in flight
+    await h.tick();
+    h.gates[1].resolve();
+    assert.equal(await b, true);
+    await h.tick();
+    assert.equal(h.queue.busy('t'), false);
 });
