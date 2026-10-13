@@ -21,6 +21,7 @@ function openNumpadModal(...args) {
 import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation, fitTextToWidth } from './i18n.js';
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
+import { stepValue, formatRatio } from './value-format.js';
 
 
 function initLanguageSwitcher() {
@@ -272,7 +273,7 @@ export function updateDrinkOutPresetsDisplay(doseIn, drinkOut) {
     if (doseInEl && drinkOutEl && ratioEl) {
         if (!isNaN(doseIn) && !isNaN(drinkOut) && doseIn > 0) {
             const ratio = drinkOut / doseIn;
-            ratioEl.textContent = `(1:${ratio.toFixed(1)})`;
+            ratioEl.textContent = `(1:${formatRatio(ratio)})`;
         } else {
             ratioEl.textContent = '(1:--)';
         }
@@ -357,7 +358,7 @@ export function updateDrinkRatio() {
 
         if (!isNaN(doseIn) && !isNaN(drinkOut) && doseIn > 0) {
             const ratio = drinkOut / doseIn;
-            ratioEl.textContent = `(1:${ratio.toFixed(1)})`;
+            ratioEl.textContent = `(1:${formatRatio(ratio)})`;
         } else {
             ratioEl.textContent = '(1:--)';
         }
@@ -589,7 +590,7 @@ function setupValueAdjuster(minusBtnId, plusBtnId, valueElId, step, min, formatt
         if (!valueEl) return;
         let currentValue = parseFloat(valueEl.textContent);
         if (currentValue > min) {
-            currentValue -= getStep();
+            currentValue = stepValue(currentValue, getStep(), -1);
             valueEl.textContent = format(currentValue);
             scheduleUpdate(currentValue);
             if (afterUpdate) afterUpdate(format(currentValue));
@@ -601,7 +602,7 @@ function setupValueAdjuster(minusBtnId, plusBtnId, valueElId, step, min, formatt
         const valueEl = document.getElementById(valueElId);
         if (!valueEl) return;
         let currentValue = parseFloat(valueEl.textContent);
-        currentValue += getStep();
+        currentValue = stepValue(currentValue, getStep(), 1);
         valueEl.textContent = format(currentValue);
         scheduleUpdate(currentValue);
         if (afterUpdate) afterUpdate(format(currentValue));
