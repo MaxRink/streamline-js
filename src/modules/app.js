@@ -2147,6 +2147,9 @@ async function initMainPageOnce() {
         initMilkProbeSensorPolling();
         connectShotSettingsWebSocket(handleShotSettingsData);
         void initVisualizer().catch(error => logger.error('Visualizer initialization failed:', error));
+        // Plugin-declared dashboard surfaces; a no-op when no plugin answers `skin`.
+        import('./plugin-surfaces-ui.js').then(m => m.initPluginSurfaces())
+            .catch(error => logger.warn('Plugin surfaces failed to start:', error));
         mainPageInitialized = true;
         logger.info('initMainPageOnce: finished.');
         return workflow;

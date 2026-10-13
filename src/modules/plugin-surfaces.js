@@ -109,3 +109,10 @@ export function parseSkinAnswer(raw) {
     }
     return out;
 }
+
+// Loaded plugins that declare an http endpoint named `skin`; the only ones asked.
+export function skinPlugins(plugins) {
+    if (!Array.isArray(plugins)) return [];
+    return plugins.filter(p => p?.loaded && typeof p.id === 'string'
+        && Array.isArray(p.api) && p.api.some(e => e?.type === 'http' && e?.id === 'skin'));
+}

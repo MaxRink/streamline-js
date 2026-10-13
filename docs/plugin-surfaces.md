@@ -22,6 +22,12 @@ Discovery: a loaded plugin with an http endpoint named `skin`. `GET /api/v1/plug
 Parsing and limits live in `src/modules/plugin-surfaces.js` (`parseSkinAnswer`). The answer is untrusted; anything
 that does not validate is dropped, and the rest still shows.
 
+## When it is read
+
+- On dashboard load, when the window regains focus, and at most once a minute.
+- A read that fails or takes longer than 2 s hides that plugin's surfaces; it never blocks the dashboard.
+- Only `header-button` is drawn so far, before the system buttons. Tile surfaces are parsed but not yet shown.
+
 ## Kinds
 
 | `kind` | Where | Fields |

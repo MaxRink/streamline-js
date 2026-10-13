@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -85,4 +85,18 @@ test('an invalid action leaves the surface, inert; header buttons cannot set', (
     assert.equal(s.action, undefined);
     const [h] = ok([{ id: 'b', kind: 'header-button', label: 'B', action: { type: 'set', field: 'targetYield', value: 36 } }]);
     assert.equal(h.action, undefined);
+});
+
+test('only loaded plugins with an http skin endpoint are asked', () => {
+    const skin = { id: 'skin', type: 'http' };
+    const plugins = [
+        { id: 'a', loaded: true, api: [skin] },
+        { id: 'b', loaded: false, api: [skin] },
+        { id: 'c', loaded: true, api: [{ id: 'ui', type: 'http' }] },
+        { id: 'd', loaded: true, api: [{ id: 'skin', type: 'websocket' }] },
+        { id: 'e', loaded: true },
+        null,
+    ];
+    assert.deepEqual(skinPlugins(plugins).map(p => p.id), ['a']);
+    assert.deepEqual(skinPlugins(null), []);
 });

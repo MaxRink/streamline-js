@@ -421,3 +421,13 @@ test('nothing checkable means no request at all', () => {
         'a folder install can never answer, so asking only spends rate limit');
     assert.equal(shouldCheckPluginUpdates(null, { now: NOW }), false);
 });
+
+test('a dashboard link returns to the dashboard and can select a plugin view', () => {
+    const plugin = { id: 'p.reaplugin', api: [{ id: 'ui', type: 'http' }] };
+    const base = 'http://x:8080/api/v1';
+    const url = new URL(buildPluginUiUrl(plugin, base, 'http://x:8044/?page=settings', { view: 'main', returnPage: null }));
+    assert.equal(url.searchParams.get('view'), 'main');
+    assert.equal(url.searchParams.get('returnTo'), 'http://x:8044/');
+    // The view still goes through when there is nothing safe to return to.
+    assert.equal(buildPluginUiUrl(plugin, base, 'javascript:alert(1)', { view: 'next' }), `${base}/plugins/p.reaplugin/ui?view=next`);
+});
