@@ -3,6 +3,7 @@ import { manualSteamMode, steamModeCycle } from './auto-steam-capability.js';
 import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver } from './api.js';
 import { openDB, getSetting } from './idb.js';
 import { deriveSleepButtonAction, isWakePending } from './screensaver-policy.js';
+import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
 import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync } from './steam-mode.js';
 import { shouldUseNumpad } from './numpad-policy.js';
@@ -1719,7 +1720,8 @@ export function setScreensaverCycleSeconds(seconds) {
 function _updateScreensaverClock() {
     if (!screensaverClockEl) return;
     const now = new Date();
-    screensaverClockTimeEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    Object.assign(screensaverClockEl.style, screensaverClockPositionStyle(localStorage.getItem('screensaverClockPosition')));
+    screensaverClockTimeEl.textContent = formatScreensaverClockTime(now, localStorage.getItem('screensaverClockFormat'));
     screensaverClockDateEl.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
@@ -1741,6 +1743,22 @@ function _syncScreensaverClock() {
 // Called by settings UI; applies immediately if the saver is currently up.
 export function setScreensaverClockEnabled(enabled) {
     localStorage.setItem('screensaverShowClock', enabled ? 'true' : 'false');
+    _syncScreensaverClock();
+}
+
+export function setScreensaverClockFormat(format) {
+    if (!SCREENSAVER_CLOCK_FORMATS.some(option => option.value === format)) {
+        throw new RangeError('Invalid screensaver clock format');
+    }
+    localStorage.setItem('screensaverClockFormat', format);
+    _syncScreensaverClock();
+}
+
+export function setScreensaverClockPosition(position) {
+    if (!SCREENSAVER_CLOCK_POSITIONS.some(option => option.value === position)) {
+        throw new RangeError('Invalid screensaver clock position');
+    }
+    localStorage.setItem('screensaverClockPosition', position);
     _syncScreensaverClock();
 }
 

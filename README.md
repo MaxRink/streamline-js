@@ -656,9 +656,15 @@ machine is **confirmed asleep**, and tapping it wakes the machine.
 | Control | Notes |
 |---|---|
 | On / off | Enabled by default |
+| Show date and time | Enabled by default, on both image and black screen savers |
+| Clock format | Device default (unchanged locale behavior), 12-hour, or 24-hour |
+| Clock position | Top left/center/right or bottom left/center/right; bottom center by default |
 | Your own images | Upload one or more; thumbnails are shown, and you can clear them again |
 | Image cycle | How long each image stays up, 2–600 seconds, default 10. Only meaningful with more than one image |
 | Black screen | A plain black screen saver instead of images |
+
+Clock preferences are saved locally and mirrored to Decaid with the other UI preferences.
+They do not change sleep timing or the image cycle.
 
 > The skin never raises the screen saver optimistically, and hiding it never wakes the machine —
 > only your tap does. This is deliberate: an earlier version put the machine to sleep and woke it
