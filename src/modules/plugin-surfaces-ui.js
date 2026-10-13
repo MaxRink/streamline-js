@@ -93,6 +93,56 @@ function buildButton(plugin, surface) {
     return button;
 }
 
+// The plugin's `ui` page in a dialog over the dashboard. The page must send
+// `{type:'streamline:ready'}` once it has loaded (a CSP `frame-ancestors` block
+// gives no event the skin could catch) and `{type:'streamline:close'}` to close.
+// No ready message in time: drop the dialog and go to the page, as `page` does.
+const OVERLAY_READY_MS = 3000;
+let overlayOpen = false;
+
+function openOverlay(plugin, action, pageUrl) {
+    if (overlayOpen) return;
+    const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    const src = pluginUiUrl(plugin, API_BASE_URL, null, { view: action.view, embedTheme: theme });
+    if (!src) return;
+    overlayOpen = true;
+
+    const dialog = document.createElement('dialog');
+    dialog.dataset.agentId = `plugin-overlay:${plugin.id}`;
+    dialog.style.cssText = 'width:min(1100px,94vw);height:min(760px,90vh);max-width:none;max-height:none;padding:0;border:0;border-radius:16px;overflow:hidden;background:var(--bg,#fff);';
+    const frame = document.createElement('iframe');
+    frame.src = src;
+    frame.title = plugin.name || plugin.id;
+    frame.style.cssText = 'display:block;width:100%;height:100%;border:0;';
+    dialog.appendChild(frame);
+
+    let timer = null;
+    const finish = () => {
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        dialog.removeEventListener('close', finish);
+        if (dialog.open) dialog.close();
+        dialog.remove();
+        overlayOpen = false;
+        refreshPluginSurfaces();
+    };
+    const onMessage = event => {
+        if (event.source !== frame.contentWindow) return;
+        const type = event.data?.type;
+        if (type === 'streamline:ready') clearTimeout(timer);
+        else if (type === 'streamline:close') finish();
+    };
+    window.addEventListener('message', onMessage);
+    dialog.addEventListener('close', finish);
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    timer = setTimeout(() => {
+        logger.warn('Plugin overlay did not report ready, opening as a page:', plugin.id);
+        finish();
+        window.location.assign(pageUrl);
+    }, OVERLAY_READY_MS);
+}
+
 function bindAction(el, plugin, action, surface) {
     if (action?.type === 'call') {
         // A fixed number to the plugin's own endpoint; `skin` is read again after,
@@ -103,9 +153,12 @@ function bindAction(el, plugin, action, surface) {
             });
         });
     } else if (action?.type === 'open') {
-        // `presentation` is a hint; only same-frame navigation exists so far.
         const url = pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null });
-        if (url) el.addEventListener('click', () => window.location.assign(url));
+        if (url && action.presentation === 'overlay') {
+            el.addEventListener('click', () => openOverlay(plugin, action, url));
+        } else if (url) {
+            el.addEventListener('click', () => window.location.assign(url));
+        }
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
             if (!applyPluginSet(action.field, action.value)) logger.warn('Plugin set not applied:', action.field);

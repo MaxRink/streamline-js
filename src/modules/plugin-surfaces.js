@@ -64,7 +64,6 @@ function httpsUrl(value) {
     }
 }
 
-// `overlay` is accepted but only a hint; the renderer decides what it can honour.
 // Anything unknown falls back to `page` and never invalidates the surface.
 function parseOpen(action) {
     const view = typeof action.view === 'string' ? action.view : '';

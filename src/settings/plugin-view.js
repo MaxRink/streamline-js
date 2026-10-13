@@ -32,12 +32,15 @@ export function isPluginSettingVisible(schema) {
 // Cross-origin referrers can lose the path/query or be absent in a WebView.
 // `returnPage` is the skin page the plugin returns to (settings by default, or
 // null for the dashboard); `view` selects a screen inside the plugin's own UI.
-export function pluginUiUrl(plugin, apiBaseUrl, currentUrl, { view = '', returnPage = 'settings' } = {}) {
+// `embedTheme` ('light' | 'dark') is for an overlay frame: the page gets
+// `embed=1&theme=` and no `returnTo`, since closing is a message, not a navigation.
+export function pluginUiUrl(plugin, apiBaseUrl, currentUrl, { view = '', returnPage = 'settings', embedTheme = '' } = {}) {
     const endpoints = Array.isArray(plugin?.api) ? plugin.api : [];
     if (!endpoints.some(e => e?.type === 'http' && e?.id === 'ui')) return null;
     const uiUrl = `${apiBaseUrl}/plugins/${encodeURIComponent(plugin.id)}/ui`;
     const params = [];
-    if (currentUrl) {
+    if (embedTheme) params.push('embed=1', `theme=${embedTheme === 'light' ? 'light' : 'dark'}`);
+    if (currentUrl && !embedTheme) {
         try {
             const returnTo = new URL(currentUrl);
             if (['http:', 'https:'].includes(returnTo.protocol) && !returnTo.username && !returnTo.password) {

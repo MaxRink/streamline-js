@@ -232,8 +232,21 @@ Rules:
 An invalid action drops the action only; the surface still shows, inert.
 
 - **`open`**: `{ "type": "open", "view": "main", "presentation": "page" }`. Opens the plugin's `ui` page.
-  `view` is the same id charset as above. `presentation` is a hint: `page` (default, same-frame navigation
-  with `returnTo`) or `overlay`. Anything else, and `overlay` until it exists, behaves as `page`.
+  `view` is the same id charset as above. `presentation` is `page` (default, same-frame navigation with
+  `returnTo`) or `overlay`; anything else behaves as `page`.
+
+  **`overlay`** shows your `ui` page in an iframe in a dialog over the dashboard, so the user never leaves it.
+  The frame URL is your `ui` endpoint with `embed=1&theme=light|dark` (and `view` when given), without `returnTo`.
+  Your page and endpoint must:
+
+  - send `Content-Security-Policy: frame-ancestors <the skin's origin>` on the `ui` response (the plugin sets
+    this, Decaid does not); a response without it cannot be framed;
+  - post `window.parent.postMessage({ type: 'streamline:ready' }, '*')` once loaded. If the skin has not seen
+    it within 3 seconds it closes the dialog and opens the page instead, the same as `page`;
+  - post `{ type: 'streamline:close' }` to close the dialog. Escape closes it too. The skin re-reads `skin`
+    afterwards.
+
+  Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
   `targetDoseWeight` (1 to 30), `targetYield` (1 to 2000), `grinderSetting` (0 to 9999) or `brewTemperature`
   (70 to 105, **degrees Celsius**). The maximums are the ones the tile enforces when the user types a value;
