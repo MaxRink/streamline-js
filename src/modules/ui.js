@@ -22,6 +22,7 @@ import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation,
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
 import { stepValue, formatRatio } from './value-format.js';
+import { clampSetValue } from './plugin-surfaces.js';
 
 
 function initLanguageSwitcher() {
@@ -304,6 +305,38 @@ export function updateTemperatureValue(newValue) {
             });
         }
     });
+}
+
+// A plugin's `set` action (see docs/plugin-surfaces.md). Goes through the same
+// setters a tile edit uses, so it also becomes the active profile's override.
+// Refused (false) until the dose and drink tiles show numbers: the dose setter
+// reads the other tile's value from the DOM and would send NaN.
+export function applyPluginSet(field, value) {
+    const n = clampSetValue(field, value);
+    if (n === null) return false;
+    const dose = parseFloat(document.getElementById('dose-in-value')?.textContent);
+    const drink = parseFloat(document.getElementById('drink-out-value')?.textContent);
+    markTileInteraction();
+    if (field === 'grinderSetting') {
+        updateGrindValue(n);
+        updateGrindDisplay({ grinderSetting: String(n) });
+        flashElement(document.getElementById('grind-value'));
+        return true;
+    }
+    if (isNaN(dose) || isNaN(drink)) return false;
+    if (field === 'targetDoseWeight') {
+        updateDoseValue('in', n);
+        updateDrinkOutPresetsDisplay(n, drink);
+        flashElement(document.getElementById('dose-in-value'));
+        return true;
+    }
+    if (field === 'targetYield') {
+        updateDoseValue('out', n);
+        updateDrinkOutPresetsDisplay(dose, n);
+        flashElement(document.getElementById('drink-out-value'));
+        return true;
+    }
+    return false;
 }
 
 export function updateGrindValue(newValue) {

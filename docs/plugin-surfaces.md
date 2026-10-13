@@ -13,7 +13,7 @@ Discovery: a loaded plugin with an http endpoint named `skin`. `GET /api/v1/plug
     { "id": "main", "kind": "header-button", "label": "Plugin", "text": "Something chosen",
       "image": "https://example.com/photo.jpg", "action": { "type": "open", "view": "main" } },
     { "id": "grind", "kind": "tile-hint", "tile": "grind", "text": "Last 6.4", "title": "Last shot of this coffee",
-      "action": { "type": "set", "field": "grinderSetting", "value": "6.4" } },
+      "action": { "type": "set", "field": "grinderSetting", "value": 6.4 } },
     { "id": "gear", "kind": "tile-line", "tile": "grind", "text": "EG-1 · 1200 rpm" }
   ]
 }
@@ -27,7 +27,7 @@ that does not validate is dropped, and the rest still shows.
 - On dashboard load, when the window regains focus, and at most once a minute.
 - A read that fails or takes longer than 2 s hides that plugin's surfaces; it never blocks the dashboard.
 - `header-button` is drawn before the system buttons. `tile-hint` and `tile-line` are drawn without moving the tile: a line under the label, a hint under the value.
-- Actions on tile surfaces are not wired yet; they are shown, inert.
+- A tile surface with an action is tappable; its touch area is larger than the pill or line it shows.
 
 ## Kinds
 
@@ -56,7 +56,9 @@ An invalid action drops the action only; the surface still shows, inert.
   `view` is the same id charset as above. `presentation` is a hint: `page` (default, same-frame navigation
   with `returnTo`) or `overlay`. Anything else, and `overlay` until it exists, behaves as `page`.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
-  `targetDoseWeight`, `targetYield`, `grinderSetting`, `brewTemperature`. `value` is a finite number or a string
-  of up to 20 characters. The skin clamps to the same range the tile and numpad use.
+  `targetDoseWeight` (1 to 120), `targetYield` (1 to 200) or `grinderSetting` (0 to 9999). `value` is a number or
+  a numeric string; it is clamped to that range and rounded to hundredths. It is applied exactly as if the user
+  had typed it into the tile, so **the active profile remembers it** until it is changed again. Brew temperature
+  cannot be set: the tile's setter rewrites every profile step.
 
 Nothing else can be written: no machine commands, no profile changes.

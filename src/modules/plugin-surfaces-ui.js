@@ -10,6 +10,7 @@ import { getPlugins, callPluginEndpoint, API_BASE_URL } from './api.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins } from './plugin-surfaces.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
+import { applyPluginSet } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -72,36 +73,68 @@ function buildButton(plugin, surface) {
     if (surface.text) button.title = surface.text;
     button.setAttribute('aria-label', surface.text ? `${surface.label}: ${surface.text}` : surface.label);
 
-    const action = surface.action;
-    if (action?.type === 'open') {
-        // `presentation` is a hint; only same-frame navigation exists so far.
-        const url = pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null });
-        if (url) button.addEventListener('click', () => window.location.assign(url));
-    }
+    bindAction(button, plugin, surface.action);
     return button;
 }
 
-function buildTileSurface(surface) {
-    const el = document.createElement('span');
-    el.dataset.pluginSurface = surface.id;
-    el.dataset.agentId = `plugin-tile:${surface.tile}:${surface.kind}`;
-    el.textContent = surface.text;
-    el.title = surface.title || surface.text;
-    // Display only for now: actions on tile surfaces arrive with the `set` step.
-    el.style.cssText = 'position:absolute;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;';
-    return el;
+function bindAction(el, plugin, action) {
+    if (action?.type === 'open') {
+        // `presentation` is a hint; only same-frame navigation exists so far.
+        const url = pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null });
+        if (url) el.addEventListener('click', () => window.location.assign(url));
+    } else if (action?.type === 'set') {
+        el.addEventListener('click', () => {
+            if (!applyPluginSet(action.field, action.value)) logger.warn('Plugin set not applied:', action.field);
+        });
+    }
 }
 
-function placeTileSurface(surface) {
+// The visible pill or line. With an action it sits inside a larger transparent
+// button, because the 17px gap it lives in is too small to tap reliably.
+function buildTileSurface(plugin, surface) {
+    const el = document.createElement('span');
+    el.textContent = surface.text;
+    el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const title = surface.title || surface.text;
+
+    const root = surface.action ? document.createElement('button') : el;
+    if (surface.action) {
+        root.appendChild(el);
+        root.style.cssText = 'display:flex;align-items:flex-end;justify-content:center;background:none;border:0;padding:0;cursor:pointer;';
+        bindAction(root, plugin, surface.action);
+    } else {
+        root.style.pointerEvents = 'none';
+    }
+    root.dataset.pluginSurface = surface.id;
+    root.dataset.agentId = `plugin-tile:${surface.tile}:${surface.kind}`;
+    root.title = title;
+    return { root, el };
+}
+
+function placeTileSurface(plugin, surface) {
     const tile = TILES[surface.tile];
-    const el = buildTileSurface(surface);
+    const { root, el } = buildTileSurface(plugin, surface);
+    const hit = surface.action ? 24 : 17; // the visible pill/line is 17px
+    root.style.position = 'absolute';
+    root.style.overflow = surface.action ? 'visible' : 'hidden';
+
     if (surface.kind === 'tile-hint') {
         const parent = document.getElementById(tile.control)?.parentElement;
         if (!parent) return null;
-        el.style.cssText += `left:50%;transform:translateX(-50%);top:73px;max-width:246px;height:17px;line-height:17px;`
-            + `padding:0 10px;border-radius:9px;font-size:13px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
-        parent.appendChild(el);
-        return el;
+        // Pill is 17px at the bottom of the gap, ending 1px short of the next
+        // row. The hit area grows upward only and is 100px wide so it stays
+        // between the minus and plus buttons.
+        root.style.left = '50%';
+        root.style.transform = 'translateX(-50%)';
+        root.style.top = `${72 + 17 - hit}px`;
+        root.style.width = surface.action ? '100px' : 'auto';
+        root.style.maxWidth = '246px';
+        root.style.height = `${hit}px`;
+        root.style.zIndex = '1';
+        el.style.cssText += `max-width:100%;height:17px;line-height:17px;padding:0 10px;border-radius:9px;`
+            + `font-size:13px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
+        parent.appendChild(root);
+        return root;
     }
     const section = document.getElementById(tile.section);
     const label = document.getElementById(tile.label);
@@ -110,10 +143,16 @@ function placeTileSurface(surface) {
         section.style.position = 'relative';
         touchedSections.push(section);
     }
-    el.style.cssText += `left:0;top:${label.offsetTop + label.offsetHeight + 1}px;width:${label.offsetWidth}px;`
-        + `font-size:14px;line-height:17px;color:${MUTED};`;
-    section.appendChild(el);
-    return el;
+    const top = label.offsetTop + label.offsetHeight + 1;
+    root.style.left = '0';
+    root.style.top = `${top + 17 - hit}px`;
+    root.style.width = `${label.offsetWidth}px`;
+    root.style.height = `${hit}px`;
+    root.style.zIndex = '1';
+    if (surface.action) root.style.justifyContent = 'flex-start';
+    el.style.cssText += `width:100%;font-size:14px;line-height:17px;color:${MUTED};`;
+    section.appendChild(root);
+    return root;
 }
 
 function render(entries) {
@@ -131,7 +170,7 @@ function render(entries) {
         }
         const slot = `${surface.kind}:${surface.tile}`;
         if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
-        if (placeTileSurface(surface)) usedSlots.add(slot);
+        if (placeTileSurface(plugin, surface)) usedSlots.add(slot);
     }
 }
 

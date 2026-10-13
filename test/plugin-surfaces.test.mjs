@@ -14,7 +14,7 @@ test('the example answer from the proposal parses as written', () => {
     ]);
     assert.equal(s.length, 3);
     assert.deepEqual(s[0].action, { type: 'open', view: 'main', presentation: 'page' });
-    assert.deepEqual(s[1].action, { type: 'set', field: 'grinderSetting', value: '6.4' });
+    assert.deepEqual(s[1].action, { type: 'set', field: 'grinderSetting', value: 6.4 });
 });
 
 test('wrong shape, wrong version or no answer give no surfaces and never throw', () => {
@@ -75,10 +75,15 @@ test('open: presentation is a hint, unknown values fall back to page', () => {
     assert.equal(open({ view: '../../etc' }).view, '');
 });
 
-test('set: only the fixed fields, with a finite number or short string', () => {
+test('set: only dose, yield and grind, as numbers clamped to the numpad ranges', () => {
     const set = (field, value) => ok([{ id: 'a', kind: 'tile-hint', tile: 'dose', text: 'x', action: { type: 'set', field, value } }])[0].action;
     assert.deepEqual(set('targetDoseWeight', 18.5), { type: 'set', field: 'targetDoseWeight', value: 18.5 });
-    for (const [field, value] of [['profile', 'x'], ['machineState', 'sleeping'], ['targetYield', NaN], ['targetYield', Infinity], ['grinderSetting', ''], ['grinderSetting', { a: 1 }]]) {
+    assert.equal(set('targetYield', '36').value, 36);
+    assert.equal(set('targetYield', 9999).value, 200);
+    assert.equal(set('targetDoseWeight', 0).value, 1);
+    assert.equal(set('grinderSetting', 6.456).value, 6.46);
+    for (const [field, value] of [['brewTemperature', 93], ['profile', 'x'], ['machineState', 'sleeping'], ['targetYield', NaN],
+        ['targetYield', Infinity], ['grinderSetting', ''], ['grinderSetting', 'C40'], ['grinderSetting', { a: 1 }]]) {
         assert.equal(set(field, value), undefined);
     }
 });
