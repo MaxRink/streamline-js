@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { decideResync } from '../src/modules/resync-policy.js';
+import { profileAtBrewTemp } from '../src/modules/brew-temp.js';
 
 // Persistence of the user's main-page settings: the shared KV record that
 // outranks a drifted workflow (milk stop, plus the resync rule every tile value
@@ -433,14 +434,15 @@ const TRACKING = [
 // ── Per-profile brew-temp override (profileManager.js) ───────────────────────
 {
     const withSavedBrewTemp = new Function(
+        'profileAtBrewTemp',
         `${lift('profileManager.js', [/export function withSavedBrewTemp\(profile, metadata\) \{[\s\S]*?\r?\n\}/])}
-         return withSavedBrewTemp;`)();
+         return withSavedBrewTemp;`)(profileAtBrewTemp);
 
     const profile = { title: 'Classic', steps: [{ temperature: 92, name: 'infuse' }, { temperature: 88, name: 'decline' }] };
 
-    test('a saved brew temp is applied to every step', () => {
+    test('a saved brew temp moves the whole curve and keeps the profile shape', () => {
         const out = withSavedBrewTemp(profile, { brewTemperature: 94 });
-        assert.deepEqual(out.steps.map(s => s.temperature), [94, 94]);
+        assert.deepEqual(out.steps.map(s => s.temperature), [94, 90]); // 92 -> 88 shifted by +2
         assert.equal(out.title, 'Classic');
         assert.equal(out.steps[1].name, 'decline'); // other step fields survive
     });

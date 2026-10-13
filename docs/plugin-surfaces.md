@@ -233,10 +233,10 @@ An invalid action drops the action only; the surface still shows, inert.
   range and rounded to hundredths. It goes through the same setters as a tile edit, so **the active profile
   remembers it** until it is changed again.
 
-  > **`brewTemperature` flattens the profile.** The tile's setter gives *every step* of the profile the same
-  > temperature, so a profile with temperature steps (94, then 90, then 88) becomes one flat value, and the
-  > profile then remembers it. If your plugin needs to keep the shape, for example an offset of the whole curve,
-  > do not use `set`: make the change from your plugin's own page or endpoint and write the profile yourself.
+  > **`brewTemperature` moves the whole curve.** `value` is where the profile's *first* step goes, and every other
+  > step moves by the same amount, exactly like the Brew tile's `-`/`+`: a profile with steps 94, 90, 88 set to 92
+  > becomes 92, 88, 86. A profile with one temperature stays flat. The profile then remembers it, and the distances
+  > always come from the saved profile, so a profile that was flattened earlier gets its shape back.
   >
   > Like the tile, it writes nothing when the current workflow has no profile steps, and the tile still shows the
   > requested value until the next refresh.
