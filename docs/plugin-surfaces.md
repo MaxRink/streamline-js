@@ -31,6 +31,43 @@ that does not validate is dropped, and the rest still shows.
 - Tile surfaces are placed from the label's measured size, so they are only drawn while the dashboard is visible;
   a read that finishes while it is hidden is drawn on the next refresh.
 
+## Writing a plugin
+
+A plugin needs two things beyond a normal Decaid plugin:
+
+- The manifest lists an http endpoint `skin` (and `ui` if any surface uses `open`), and its `permissions` include
+  `api`. Without `api`, Decaid refuses the endpoint calls.
+- `__httpRequestHandler(request)` answers `skin` with the JSON above (`Content-Type: application/json`).
+
+```json
+{ "id": "my.reaplugin", "name": "My plugin", "version": "1.0.0", "apiVersion": 1,
+  "permissions": ["log", "api"],
+  "api": [ { "id": "skin", "type": "http", "data": {} }, { "id": "ui", "type": "http", "data": {} } ] }
+```
+
+```js
+__httpRequestHandler(request) {
+  if (request.endpoint === 'skin') {
+    return { requestId: request.requestId, status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 1, surfaces: [
+        { id: 'main', kind: 'header-button', label: 'Mine', action: { type: 'open', view: 'main' } },
+        { id: 'g', kind: 'tile-hint', tile: 'grind', text: 'Try 7.5',
+          action: { type: 'set', field: 'grinderSetting', value: 7.5 } } ] }) };
+  }
+  // ...answer `ui` with your page
+}
+```
+
+**Going back from your page.** An `open` navigates the same frame to your `ui` endpoint and adds
+`?returnTo=<dashboard URL>&view=<view>`. Link back to `returnTo` (only if it is `http:` or `https:`); a link to
+`/` goes to Decaid's root, not the skin. Escape both values if you put them in an inline script.
+
+**Trying it.** Install a local copy on a running Decaid with
+`PUT /api/v1/plugins/<id>/source` (body `{ "manifest": {...}, "plugin": "<plugin.js text>" }`), then
+`POST /api/v1/plugins/<id>/enable`. Keep `version` the same or higher, Decaid rejects a downgrade.
+`GET /api/v1/plugins/<id>/skin` shows exactly what the skin will read.
+
 ## Kinds
 
 | `kind` | Where | Fields |
