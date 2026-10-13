@@ -104,7 +104,8 @@
    box size stays identical to light mode. */
 [data-theme="dark"] #dye-open-btn,
 [data-theme="dark"] #settings-btn,
-[data-theme="dark"] #sleep-button {
+[data-theme="dark"] #sleep-button,
+[data-theme="dark"] .settings-button[data-plugin-surface] {
     color: var(--text-primary);
     border-color: #101117;
 }
