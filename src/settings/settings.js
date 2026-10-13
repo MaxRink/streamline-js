@@ -6990,6 +6990,17 @@ function setupVisualizerEventListeners() {
     const formIsCurrent = () => formContainer?.isConnected &&
         document.getElementById('visualizer-form-container') === formContainer;
 
+    const invalidateSave = () => {
+        saveGeneration++;
+        if (formIsCurrent()) saveButton.disabled = false;
+    };
+    for (const input of [usernameInput, passwordInput, minDurationInput]) {
+        input?.addEventListener('input', invalidateSave);
+    }
+    for (const input of [autoUploadCheckbox, enabledToggle]) {
+        input?.addEventListener('change', invalidateSave);
+    }
+
     if (serverUrlInput) serverUrlInput.disabled = true;
 
     const setStatus = (message, error = false) => {
@@ -7080,7 +7091,7 @@ function setupVisualizerEventListeners() {
     // visible credentials as soon as the normalized URL changes, so a later
     // save cannot accidentally send the old server's password to the new one.
     serverUrlInput?.addEventListener('input', () => {
-        saveGeneration++;
+        invalidateSave();
         try {
             const current = normalizeVisualizerServerUrl(serverUrlInput.value);
             if (!visualizerServerUrlsEqual(current, visualizerServerUrl)) clearCredentialsForServerChange();
@@ -7127,6 +7138,7 @@ function setupVisualizerEventListeners() {
         if (serverChanged) {
             try {
                 const { setPluginSettings } = await import('../modules/api.js');
+                if (!stillCurrent()) return;
                 await setPluginSettings('visualizer.reaplugin', { ServerUrl: serverUrl });
                 if (!stillCurrent()) return;
                 visualizerServerUrl = serverUrl;
@@ -7157,13 +7169,8 @@ function setupVisualizerEventListeners() {
                 // Import verifyVisualizerCredentials from api.js
                 const { verifyVisualizerCredentials } = await import('../modules/api.js');
 
-                saveButton.disabled = true;
-                let result;
-                try {
-                    result = await verifyVisualizerCredentials(username, password, serverForVerify);
-                } finally {
-                    saveButton.disabled = false;
-                }
+                const isValid = await verifyVisualizerCredentials(username, password);
+                if (!stillCurrent()) return;
 
                 if (!isValid) {
                     ui.showToast('Visualizer log-in failed, check credentials', 900, 'error');
@@ -7210,6 +7217,7 @@ function setupVisualizerEventListeners() {
         if (visualizerServerSettingSupported) settingsPayload.ServerUrl = serverUrl;
 
         try {
+            if (!stillCurrent()) return;
             await setPluginSettings(pluginId, settingsPayload);
             if (!stillCurrent()) return;
             visualizerServerUrl = serverUrl;
