@@ -20,7 +20,19 @@ const MAX_PLUGIN_HEADER_BUTTONS = 1; // across all plugins
 // plugin label is not cut to the 135px a system label gets.
 const BUTTON_CLASS = 'settings-button flex justify-center items-center min-h-0 h-[53.7px] whitespace-nowrap border-[1.5px] border-solid border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] rounded-[22.5px] text-[21px] font-semibold';
 
+// Where each tile's surfaces go. Both are placed without moving anything: the
+// 72px control row has ~17px of empty space under the label and ~17px of gap
+// under the buttons, so a line sits under the label and a hint under the value.
+const TILES = {
+    grind: { section: 'grind-section', label: 'grind-label', control: 'grind-minus' },
+    dose: { section: 'dose-section', label: 'dose-label', control: 'dose-in-minus' },
+    drink: { section: 'drink-section', label: 'drink-label', control: 'drink-out-minus' },
+    temperature: { section: 'brew-section', label: 'brew-label', control: 'temp-minus' },
+};
+const MUTED = 'var(--low-contrast-white)';
+
 let started = false;
+let touchedSections = [];
 let running = false;
 let lastRun = 0;
 let lastKey = '';
@@ -34,7 +46,7 @@ function withTimeout(promise, ms) {
 async function readSurfaces(plugin) {
     try {
         const answer = await withTimeout(callPluginEndpoint(plugin.id, 'skin', null, 'GET'), READ_TIMEOUT_MS);
-        return parseSkinAnswer(answer).surfaces.filter(s => s.kind === 'header-button');
+        return parseSkinAnswer(answer).surfaces;
     } catch (error) {
         // callPluginEndpoint logs an HTTP failure at error level; a timeout is
         // only logged here, at debug. Either way the plugin is just hidden, so
@@ -73,17 +85,71 @@ function buildButton(plugin, surface) {
     return button;
 }
 
-function render(entries) {
-    const container = document.getElementById('header-right-controls');
-    if (!container) return;
-    container.querySelectorAll('[data-plugin-surface]').forEach(el => el.remove());
-    const anchor = container.firstChild;
-    // One plugin button in total, the first plugin in Decaid's list whose read
-    // succeeded wins: the header has no
-    // room for more when the DYE2 button is off and the strip does not fit-check.
-    for (const { plugin, surface } of entries.slice(0, MAX_PLUGIN_HEADER_BUTTONS)) {
-        container.insertBefore(buildButton(plugin, surface), anchor);
+function buildTileSurface(surface) {
+    const el = document.createElement('span');
+    el.dataset.pluginSurface = surface.id;
+    el.dataset.agentId = `plugin-tile:${surface.tile}:${surface.kind}`;
+    el.textContent = surface.text;
+    el.title = surface.title || surface.text;
+    // Display only for now: actions on tile surfaces arrive with the `set` step.
+    el.style.cssText = 'position:absolute;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;';
+    return el;
+}
+
+function placeTileSurface(surface) {
+    const tile = TILES[surface.tile];
+    const el = buildTileSurface(surface);
+    if (surface.kind === 'tile-hint') {
+        const parent = document.getElementById(tile.control)?.parentElement;
+        if (!parent) return null;
+        el.style.cssText += `left:50%;transform:translateX(-50%);top:73px;max-width:246px;height:17px;line-height:17px;`
+            + `padding:0 10px;border-radius:9px;font-size:13px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
+        parent.appendChild(el);
+        return el;
     }
+    const section = document.getElementById(tile.section);
+    const label = document.getElementById(tile.label);
+    if (!section || !label) return null;
+    if (!section.style.position) {
+        section.style.position = 'relative';
+        touchedSections.push(section);
+    }
+    el.style.cssText += `left:0;top:${label.offsetTop + label.offsetHeight + 1}px;width:${label.offsetWidth}px;`
+        + `font-size:14px;line-height:17px;color:${MUTED};`;
+    section.appendChild(el);
+    return el;
+}
+
+// -> true when everything was drawn. Tile placement measures the label
+// (offsetTop/Height/Width), which is 0 while the main page is display:none, so
+// tiles are skipped then and the caller must not remember the answer as drawn.
+function render(entries) {
+    const mainHidden = document.getElementById('main-page')?.style.display === 'none';
+    document.querySelectorAll('[data-plugin-surface]').forEach(el => el.remove());
+    touchedSections.forEach(el => { el.style.position = ''; });
+    touchedSections = [];
+
+    const container = document.getElementById('header-right-controls');
+    const anchor = container?.firstChild;
+    const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
+    let headerButtons = 0;
+    for (const { plugin, surface } of entries) {
+        if (surface.kind === 'header-button') {
+            // One plugin button in total, the first plugin in Decaid's list whose
+            // read succeeded wins: the header has no room for more when the DYE2
+            // button is off.
+            if (container && headerButtons < MAX_PLUGIN_HEADER_BUTTONS) {
+                container.insertBefore(buildButton(plugin, surface), anchor);
+                headerButtons += 1;
+            }
+            continue;
+        }
+        if (mainHidden) continue;
+        const slot = `${surface.kind}:${surface.tile}`;
+        if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
+        if (placeTileSurface(surface)) usedSlots.add(slot);
+    }
+    return !mainHidden;
 }
 
 export async function refreshPluginSurfaces() {
@@ -100,8 +166,9 @@ export async function refreshPluginSurfaces() {
         // controls, which re-runs the strip fit.
         const key = JSON.stringify(entries.map(e => [e.plugin.id, e.surface]));
         if (key === lastKey) return;
-        lastKey = key;
-        render(entries);
+        // Only remember the answer once it was fully drawn; a render skipped
+        // while the main page is hidden is retried by the next refresh.
+        lastKey = render(entries) ? key : '';
     } catch (error) {
         logger.warn('Plugin surfaces refresh failed:', error);
     } finally {

@@ -8,7 +8,6 @@
 
 export const SKIN_VERSION = 1;
 export const MAX_SURFACES = 3;      // per plugin, all kinds together
-export const MAX_HEADER_BUTTONS = 1;
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
 export const SET_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting', 'brewTemperature'];
@@ -97,13 +96,14 @@ export function parseSkinAnswer(raw) {
     if (!raw || typeof raw !== 'object' || raw.version !== SKIN_VERSION || !Array.isArray(raw.surfaces)) return out;
 
     const seen = new Set();
-    let headerButtons = 0;
+    const slots = new Set(); // one header button, and one hint and one line per tile
     for (const item of raw.surfaces) {
         if (out.surfaces.length >= MAX_SURFACES) break;
         const surface = parseSurface(item);
         if (!surface || seen.has(surface.id)) continue;
-        if (surface.kind === 'header-button' && headerButtons >= MAX_HEADER_BUTTONS) continue;
-        if (surface.kind === 'header-button') headerButtons += 1;
+        const slot = surface.tile ? `${surface.kind}:${surface.tile}` : surface.kind;
+        if (slots.has(slot)) continue;
+        slots.add(slot);
         seen.add(surface.id);
         out.surfaces.push(surface);
     }
