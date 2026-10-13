@@ -91,9 +91,6 @@ __httpRequestHandler(request) {
 
 ## Tile modes
 
-> **Status:** drawn for `dose`, `drink`, `grind`, `temperature` and `flush`. `steam` is accepted but not drawn
-> yet, because its label slot already holds the steam mode toggle. Remove this note when it is.
-
 A `tile-mode` lets a plugin add its own option to a left-column tile, the way the steam control shows
 `Auto | F | T` when the Auto Steam Calculator is on. The built-in option stays first.
 
@@ -127,7 +124,9 @@ Rules:
 
 - One `tile-mode` per plugin per tile, and at most 3 options per tile in total (the built-in one included); if
   plugins ask for more, the first in Decaid's plugin list win.
-- A mode on a tile replaces a `tile-line` on that tile, since both use the space under the label.
+- A mode on a tile replaces a `tile-line` on that tile, since both use the space under the label. On `steam`
+  the toggle goes on the line under the built-in `Time | Flow` toggle; choosing a built-in steam mode ends a
+  plugin mode, and a mode there takes the place of whichever of steam's preset rows is showing.
 - While a mode is selected the tile's own value and preset row are hidden, not changed: they keep following the
   machine, and selecting the built-in option shows them again. A mode with no `presets` leaves that row empty.
 - The selected mode is not remembered: after a reload the tile shows its built-in mode. What the plugin applied

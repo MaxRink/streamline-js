@@ -11,11 +11,15 @@ import { callMode, isModeCallBusy } from './plugin-surfaces-ui.js';
 import { clampModeValue, stepModeValue, formatModeValue } from './plugin-modes.js';
 
 const TILE_DOM = {
-    temperature: { minus: 'temp-minus', plus: 'temp-plus', value: 'temp-value', presets: 'temp-presets', title: 'BREW' },
-    dose: { minus: 'dose-in-minus', plus: 'dose-in-plus', value: 'dose-in-value', presets: null, title: 'DOSE' },
-    drink: { minus: 'drink-out-minus', plus: 'drink-out-plus', value: 'drink-out-value', presets: 'drink-out-presets', title: 'DRINK', ownBox: true },
-    grind: { minus: 'grind-minus', plus: 'grind-plus', value: 'grind-value', presets: null, title: 'GRIND' },
-    flush: { minus: 'flush-minus', plus: 'flush-plus', value: 'flush-value', presets: 'flush-presets', title: 'FLUSH' },
+    temperature: { minus: 'temp-minus', plus: 'temp-plus', value: 'temp-value', presets: ['temp-presets'], title: 'BREW' },
+    dose: { minus: 'dose-in-minus', plus: 'dose-in-plus', value: 'dose-in-value', presets: [], title: 'DOSE' },
+    drink: { minus: 'drink-out-minus', plus: 'drink-out-plus', value: 'drink-out-value', presets: ['drink-out-presets'], title: 'DRINK', ownBox: true },
+    grind: { minus: 'grind-minus', plus: 'grind-plus', value: 'grind-value', presets: [], title: 'GRIND' },
+    flush: { minus: 'flush-minus', plus: 'flush-plus', value: 'flush-value', presets: ['flush-presets'], title: 'FLUSH' },
+    // Steam keeps one preset row per built-in mode and shows one at a time, and
+    // its value box holds the duration and the flow.
+    steam: { minus: 'steam-minus', plus: 'steam-plus', value: 'steam-duration-value',
+        presets: ['steam-presets', 'steam-flow-presets', 'steam-milk-presets', 'steam-auto-presets'], title: 'STEAM', ownBox: true },
 };
 
 const active = {}; // tile -> { plugin, surface, value, valueEl, presetButtons, overlay: [elements], restore: [fns] }
@@ -116,18 +120,16 @@ function draw(tile, plugin, surface) {
     state.overlay.push(mine);
     state.valueEl = mine;
 
-    // Presets: the plugin's own, or none. Tiles without a preset row ignore them.
-    const row = dom.presets && document.getElementById(dom.presets);
-    if (row) {
-        const template = row.firstElementChild;
-        hideEl(row);
-        if (!row.style.position) {
-            row.style.position = 'relative';
-            state.restore.push(() => { row.style.position = ''; });
-        }
+    // Presets: the plugin's own, or none. The tile's rows are taken out of the
+    // layout and ours, the same size, takes the place of the first, so nothing
+    // moves. Tiles without a preset row ignore the mode's presets.
+    const rows = dom.presets.map(id => document.getElementById(id)).filter(Boolean);
+    if (rows.length) {
+        const [first] = rows;
+        const template = first.firstElementChild;
         const mineRow = document.createElement('div');
         mineRow.dataset.pluginSurface = `mode-presets:${tile}`;
-        mineRow.style.cssText = 'position:absolute;inset:0;display:flex;justify-content:space-between;align-items:center;visibility:visible;';
+        mineRow.className = first.className.replace(/\bhidden\b/, '').trim();
         for (const preset of surface.presets) {
             const button = document.createElement('button');
             button.type = 'button';
@@ -138,7 +140,12 @@ function draw(tile, plugin, surface) {
             mineRow.appendChild(button);
             state.presetButtons.push(button);
         }
-        row.appendChild(mineRow);
+        for (const row of rows) {
+            const before = row.style.display;
+            row.style.display = 'none';
+            state.restore.push(() => { row.style.display = before; });
+        }
+        first.parentElement.insertBefore(mineRow, first);
         state.overlay.push(mineRow);
     }
     paint(tile);
