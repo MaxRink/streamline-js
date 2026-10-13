@@ -145,6 +145,16 @@ async function handleAutoSteamCalculationError(error) {
 }
 
 export function isAutoSteamMode() { return steamMode === 'auto' || calibratedSteamApplying; }
+
+// Plugin steam tile-modes are not offered while Auto is on (its -/+ are taken), so
+// tell them when that changes.
+let announcedAutoSteam = false;
+function announceAutoSteamChange() {
+    const auto = isAutoSteamMode();
+    if (auto === announcedAutoSteam) return;
+    announcedAutoSteam = auto;
+    document.dispatchEvent(new CustomEvent('streamline:steamautochange', { detail: { auto } }));
+}
 let currentMilkStop = 60; // milk auto-stop target °C (workflow.stopAtTemperature)
 let milkProbePresent = false; // live probe presence, fed by app.js (setMilkProbePresent)
 let milkStopArmed = false;    // workflow stopAtTemperature > 0, as last seen/written
@@ -1069,6 +1079,7 @@ async function adjustAutoSteamSelection(delta) {
 }
 
 function updateSteamPresetDisplay() {
+    announceAutoSteamChange();
     const timePresetContainer = document.getElementById('steam-presets');
     const flowPresetContainer = document.getElementById('steam-flow-presets');
     const milkPresetContainer = document.getElementById('steam-milk-presets');

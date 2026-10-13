@@ -12,7 +12,7 @@ import { parseSkinAnswer, skinPlugins, callableEndpoint } from './plugin-surface
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSet } from './ui.js';
+import { applyPluginSet, isAutoSteamMode } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -48,6 +48,7 @@ let drawnModes = {}; // tile -> [{ key, plugin, surface }] as last drawn
 const selectedMode = {}; // tile -> `${plugin.id}:${surface.id}`; absent = the built-in mode
 let lastRun = 0;
 let lastKey = '';
+let lastEntries = null; // the answer as last drawn, to re-evaluate without a read
 
 function withTimeout(promise, ms) {
     let timer;
@@ -250,7 +251,7 @@ function placeModeToggle(tile, modes) {
         button.textContent = opt.label;
         button.dataset.modeKey = opt.key;
         // Fills the root's height; the text sits at the bottom like a tile-line.
-        button.style.cssText = 'background:none;border:0;padding:7px 0 0;box-sizing:border-box;cursor:pointer;font:inherit;'
+        button.style.cssText = `background:none;border:0;padding:${hit - 17}px 0 0;box-sizing:border-box;cursor:pointer;font:inherit;`
             + 'height:100%;min-width:32px;line-height:17px;text-align:center;overflow:hidden;text-overflow:ellipsis;pointer-events:auto;';
         if (opt.title) button.title = opt.title;
         button.addEventListener('click', () => setSelectedMode(tile, opt.key || null));
@@ -261,6 +262,10 @@ function placeModeToggle(tile, modes) {
         // Choosing a built-in steam mode ends a plugin one.
         label.dataset.pluginModeWired = '1';
         label.addEventListener('click', () => setSelectedMode('steam', null));
+        // The built-in toggle also switches on Enter and Space.
+        label.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') setSelectedMode('steam', null);
+        });
     }
     return true;
 }
@@ -301,6 +306,7 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
 // (offsetTop/Height/Width), which is 0 while the main page is display:none, so
 // tiles are skipped then and the caller must not remember the answer as drawn.
 function render(entries) {
+    lastEntries = entries;
     const mainHidden = document.getElementById('main-page')?.style.display === 'none';
     document.querySelectorAll('[data-plugin-surface]').forEach(el => {
         // The tile's value and presets overlays belong to the tile-modes module,
@@ -318,9 +324,11 @@ function render(entries) {
     let headerButtons = 0;
 
     // A mode takes the label slot, so a tile-line on that tile is not drawn.
-    // A mode whose endpoint cannot be called is never drawn.
-    const plan = planTileModes(entries.filter(({ plugin, surface }) =>
-        surface.kind !== 'tile-mode' || callableEndpoint(plugin, surface.action?.endpoint)));
+    // A mode whose endpoint cannot be called is never drawn, and neither is a steam
+    // mode while the built-in Auto mode owns the steam -/+.
+    const steamAuto = isAutoSteamMode();
+    const plan = planTileModes(entries.filter(({ plugin, surface }) => surface.kind !== 'tile-mode'
+        || (callableEndpoint(plugin, surface.action?.endpoint) && !(surface.tile === 'steam' && steamAuto))));
     const modeTiles = new Set(Object.keys(plan).filter(tile => TILES[tile]));
     drawnModes = {};
 
@@ -398,6 +406,11 @@ export function initPluginSurfaces() {
     window.addEventListener('focus', refreshIfDue);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') refreshIfDue();
+    });
+    // Entering or leaving the built-in Auto steam mode: draw again from the last
+    // answer, which hides or restores the steam toggle.
+    document.addEventListener('streamline:steamautochange', () => {
+        if (lastEntries && !render(lastEntries)) lastKey = '';
     });
     // Returning from a sub-page: a surface rendered while the page was hidden
     // must be placed again, so forget the last drawn answer.
