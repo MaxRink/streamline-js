@@ -10,11 +10,24 @@ export const SKIN_VERSION = 1;
 export const MAX_SURFACES = 3;      // per plugin, all kinds together
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
-export const SET_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting', 'brewTemperature'];
+// The fields `set` may write. Each maximum is the one the tile itself enforces when
+// the user types a value (ui.js makeEditable handlers; brew temperature also caps
+// the +/- buttons at 105). The tile's minimum is 0; dose, yield and brew
+// temperature use a higher minimum here (grind is the same 0).
+// brewTemperature is in degrees Celsius. Applying it sets every step of the
+// profile to that one value (the tile's own behaviour), flattening a profile
+// that has temperature steps; see docs/plugin-surfaces.md.
+export const SET_LIMITS = {
+    targetDoseWeight: { min: 1, max: 30 },
+    targetYield: { min: 1, max: 2000 },
+    grinderSetting: { min: 0, max: 9999 },
+    brewTemperature: { min: 70, max: 105 },
+};
+export const SET_FIELDS = Object.keys(SET_LIMITS);
 export const PRESENTATIONS = ['page', 'overlay'];
 
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
-const CAPS = { label: 24, text: 40, hint: 24, title: 80, image: 2048, value: 20 };
+const CAPS = { label: 24, text: 40, hint: 24, title: 80, image: 2048 };
 
 function cleanText(value, max) {
     if (typeof value !== 'string') return '';
@@ -44,18 +57,20 @@ function parseOpen(action) {
     };
 }
 
-// Range clamping happens where the value is applied (the tile's own setter);
-// this only guarantees shape: a known field and a finite number or short string.
+// A finite number (or numeric string) clamped to the field's range, to
+// hundredths; null when it is not a number or the field is not settable.
+export function clampSetValue(field, value) {
+    if (!Object.prototype.hasOwnProperty.call(SET_LIMITS, field)) return null;
+    const limits = SET_LIMITS[field];
+    const n = typeof value === 'number' ? value
+        : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(Math.min(limits.max, Math.max(limits.min, n)) * 100) / 100;
+}
+
 function parseSet(action) {
-    if (!SET_FIELDS.includes(action.field)) return null;
-    let value = action.value;
-    if (typeof value === 'string') {
-        value = cleanText(value, CAPS.value);
-        if (!value) return null;
-    } else if (typeof value !== 'number' || !Number.isFinite(value)) {
-        return null;
-    }
-    return { type: 'set', field: action.field, value };
+    const value = clampSetValue(action.field, action.value);
+    return value === null ? null : { type: 'set', field: action.field, value };
 }
 
 // An invalid action drops the action only; the surface still shows, inert.

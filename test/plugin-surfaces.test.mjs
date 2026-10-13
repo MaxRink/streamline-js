@@ -14,7 +14,7 @@ test('the example answer from the proposal parses as written', () => {
     ]);
     assert.equal(s.length, 3);
     assert.deepEqual(s[0].action, { type: 'open', view: 'main', presentation: 'page' });
-    assert.deepEqual(s[1].action, { type: 'set', field: 'grinderSetting', value: '6.4' });
+    assert.deepEqual(s[1].action, { type: 'set', field: 'grinderSetting', value: 6.4 });
 });
 
 test('wrong shape, wrong version or no answer give no surfaces and never throw', () => {
@@ -85,10 +85,20 @@ test('open: presentation is a hint, unknown values fall back to page', () => {
     assert.equal(open({ view: '../../etc' }).view, '');
 });
 
-test('set: only the fixed fields, with a finite number or short string', () => {
+test('set: only dose, yield, grind and brew temperature, as numbers clamped to the tile maximums', () => {
     const set = (field, value) => ok([{ id: 'a', kind: 'tile-hint', tile: 'dose', text: 'x', action: { type: 'set', field, value } }])[0].action;
     assert.deepEqual(set('targetDoseWeight', 18.5), { type: 'set', field: 'targetDoseWeight', value: 18.5 });
-    for (const [field, value] of [['profile', 'x'], ['machineState', 'sleeping'], ['targetYield', NaN], ['targetYield', Infinity], ['grinderSetting', ''], ['grinderSetting', { a: 1 }]]) {
+    assert.equal(set('targetYield', '36').value, 36);
+    assert.equal(set('targetYield', 9999).value, 2000);
+    assert.equal(set('targetDoseWeight', 500).value, 30);
+    assert.equal(set('grinderSetting', 99999).value, 9999);
+    assert.equal(set('targetDoseWeight', 0).value, 1);
+    assert.equal(set('grinderSetting', 6.456).value, 6.46);
+    assert.deepEqual(set('brewTemperature', 93), { type: 'set', field: 'brewTemperature', value: 93 });
+    assert.equal(set('brewTemperature', 20).value, 70);
+    assert.equal(set('brewTemperature', 500).value, 105);
+    for (const [field, value] of [['brewTemperature', 'hot'], ['profile', 'x'], ['constructor', 1], ['__proto__', 1], ['toString', 1], ['machineState', 'sleeping'], ['targetYield', NaN],
+        ['targetYield', Infinity], ['grinderSetting', ''], ['grinderSetting', 'C40'], ['grinderSetting', { a: 1 }]]) {
         assert.equal(set(field, value), undefined);
     }
 });

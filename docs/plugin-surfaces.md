@@ -13,7 +13,7 @@ Discovery: a loaded plugin with an http endpoint named `skin`. `GET /api/v1/plug
     { "id": "main", "kind": "header-button", "label": "Plugin", "text": "Something chosen",
       "image": "https://example.com/photo.jpg", "action": { "type": "open", "view": "main" } },
     { "id": "grind", "kind": "tile-hint", "tile": "grind", "text": "Last 6.4", "title": "Last shot of this coffee",
-      "action": { "type": "set", "field": "grinderSetting", "value": "6.4" } },
+      "action": { "type": "set", "field": "grinderSetting", "value": 6.4 } },
     { "id": "gear", "kind": "tile-line", "tile": "grind", "text": "EG-1 · 1200 rpm" }
   ]
 }
@@ -27,7 +27,7 @@ that does not validate is dropped, and the rest still shows.
 - On dashboard load, every minute, and when the window regains focus or the dashboard becomes visible (at most once per 2 s).
 - A read that fails or takes longer than 2 s hides that plugin's surfaces; it never blocks the dashboard.
 - `header-button` is drawn before the system buttons. `tile-hint` and `tile-line` are drawn without moving the tile: a line under the label, a hint under the value.
-- Actions on tile surfaces are not wired yet; they are shown, inert.
+- A tile surface with an action is tappable; its touch area is larger than the pill or line it shows.
 - Tile surfaces are placed from the label's measured size, so they are only drawn while the dashboard is visible;
   a read that finishes while it is hidden is drawn on the next refresh.
 
@@ -59,7 +59,19 @@ An invalid action drops the action only; the surface still shows, inert.
   `view` is the same id charset as above. `presentation` is a hint: `page` (default, same-frame navigation
   with `returnTo`) or `overlay`. Anything else, and `overlay` until it exists, behaves as `page`.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
-  `targetDoseWeight`, `targetYield`, `grinderSetting`, `brewTemperature`. `value` is a finite number or a string
-  of up to 20 characters; anything else drops the action. This answer is only checked for shape.
+  `targetDoseWeight` (1 to 30), `targetYield` (1 to 2000), `grinderSetting` (0 to 9999) or `brewTemperature`
+  (70 to 105, **degrees Celsius**). The maximums are the ones the tile enforces when the user types a value;
+  the tile's minimum is 0, and dose, yield and brew temperature use a higher one here (grind is the same 0). `value` is a number or a numeric string; it is clamped to that
+  range and rounded to hundredths. It goes through the same setters as a tile edit, so **the active profile
+  remembers it** until it is changed again.
 
-Nothing else can be written: no machine commands, no profile changes.
+  > **`brewTemperature` flattens the profile.** The tile's setter gives *every step* of the profile the same
+  > temperature, so a profile with temperature steps (94, then 90, then 88) becomes one flat value, and the
+  > profile then remembers it. If your plugin needs to keep the shape, for example an offset of the whole curve,
+  > do not use `set`: make the change from your plugin's own page or endpoint and write the profile yourself.
+  >
+  > Like the tile, it writes nothing when the current workflow has no profile steps, and the tile still shows the
+  > requested value until the next refresh.
+
+Nothing else can be written: no machine commands, and no profile changes other than the remembered dose, yield,
+grind and the profile temperature that `set` itself writes (see the `brewTemperature` note above).
