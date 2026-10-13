@@ -26,7 +26,9 @@
 15. [Appendix](#15-appendix)
 
 **Building a skin or a plugin?** The REST and WebSocket API reference lives in
-[docs/API.md](docs/API.md). Contributing to this skin? See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+[docs/API.md](docs/API.md). Want a plugin to add a button or a hint to the main screen? See
+[docs/plugin-surfaces.md](docs/plugin-surfaces.md). Contributing to this skin? See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ---
 
@@ -309,6 +311,14 @@ Streamline.js only *reads* DYE2's data. A recipe hidden in DYE2 will not appear 
 
 In the in-app web view there is also a floating **Exit to Decent dashboard** button. Drag it to
 move it; long-press to hide it.
+
+### Plugin additions
+
+A Decaid plugin can add up to three small things to this screen: one button in the top bar, and a
+short hint or line on the Grind, Dose, Drink or Temperature tile. A button opens the plugin's own
+page, and a hint can set that tile's value when you tap it. They look like the built-in controls, and
+disappear when the plugin is switched off or does not answer. Plugin authors: see
+[docs/plugin-surfaces.md](docs/plugin-surfaces.md).
 
 ### Left column — shot settings
 

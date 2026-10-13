@@ -21,6 +21,7 @@ Use this file for orientation. Read the smallest matching topic note, inspect th
 | Manifest, version, `dist`, tags, GitHub Actions, Pages | `.github/workflows/release.yml`, `.github/workflows/static.yml`, `skin-manifest.json`, `src/version.js` | `AI_RELEASE_NOTES.md` |
 | Behavior parity with the old skin or rewrite archaeology | Current JS first, then a narrow search in `skin.tcl`, `tcl_rewrite_guide.md`, or `rewrite_roadmap.md` | `AI_LEGACY_NOTES.md` |
 | User-facing behavior or troubleshooting docs | Current implementation and matching topic note, then `README.md` or `docs/*.md` | The owning topic note |
+| Plugin-declared dashboard surfaces (header button, tile hint/line, `open`/`set`) | `src/modules/plugin-surfaces.js` (parser), `src/modules/plugin-surfaces-ui.js` (render), `applyPluginSet` in `src/modules/ui.js` | `docs/plugin-surfaces.md` |
 | DYE2, extensions, Home Assistant, or plugin UI | The target module and settings category; inspect its API calls | `AI_API_NOTES.md`, `AI_SETTINGS_NOTES.md`, or `AI_UI_NOTES.md` as needed |
 
 ## Production Entry Points
