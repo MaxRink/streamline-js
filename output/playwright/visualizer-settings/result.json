@@ -1,0 +1,24 @@
+{
+  "requests": [
+    {
+      "endpoint": "/plugins/visualizer.reaplugin/settings",
+      "method": "POST",
+      "body": {
+        "ServerUrl": "https://coffee.example/visualizer"
+      }
+    },
+    {
+      "endpoint": "/plugins/visualizer.reaplugin/settings",
+      "method": "POST",
+      "body": {
+        "Username": "new-user",
+        "Password": "new-secret",
+        "AutoUpload": true,
+        "LengthThreshold": 5,
+        "ServerUrl": "https://coffee.example/visualizer"
+      }
+    }
+  ],
+  "errors": [],
+  "result": "pass"
+}

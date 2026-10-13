@@ -30,7 +30,7 @@ import { loadIro } from '../modules/vendor-loader.js';
 import { readSettingsLocation, writeSettingsLocation } from './settings-location.js';
 import { SETTINGS_TREE as settingsTree } from './settings-tree.js';
 import { adoptFromMachine, diffUserSettings, restorePatches } from './settings-restore.js';
-import { DEFAULT_VISUALIZER_SERVER_URL, normalizeVisualizerServerUrl, visualizerServerUrlsEqual } from './visualizer-server.js';
+import { DEFAULT_VISUALIZER_SERVER_URL, normalizeVisualizerServerUrl, visualizerServerUrlsEqual, isInsecureVisualizerServerUrl } from './visualizer-server.js';
 import { escapeHtml, pluginViewModel, pluginStatusLabel, pluginNavEntries,
          pluginIdFromCategory, pluginCategoryFor, pluginStatus, isManagedPluginSource,
          minutesSince, shouldCheckPluginUpdates, isPluginSettingVisible, pluginUiUrl } from './plugin-view.js';
@@ -6430,7 +6430,7 @@ export function renderExtensionsSettings() {
                                     <div class="flex flex-col gap-2">
                                         <label for="visualizer-server-url" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Visualizer server URL:">Visualizer server URL:</label>
                                         <input type="url" id="visualizer-server-url" class="w-full max-w-[560px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="https://visualizer.coffee" autocomplete="url" inputmode="url" aria-describedby="visualizer-server-help visualizer-status">
-                                        <p id="visualizer-server-help" class="text-[var(--text-primary)] text-[20px] opacity-70 leading-[1.4] max-w-[62ch]" data-i18n-key="Use HTTPS. A path prefix is supported; trailing slashes are removed.">Use HTTPS. A path prefix is supported; trailing slashes are removed.</p>
+                                        <p id="visualizer-server-help" class="text-[var(--text-primary)] text-[20px] opacity-70 leading-[1.4] max-w-[62ch]" data-i18n-key="HTTP is supported for local or LAN servers, but sends credentials and shots without encryption. A path prefix is supported; trailing slashes are removed.">HTTP is supported for local or LAN servers, but sends credentials and shots without encryption. A path prefix is supported; trailing slashes are removed.</p>
                                     </div>
                                     <div class="flex flex-col gap-2">
                                         <label for="visualizer-username" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Username:">Username:</label>
@@ -6986,13 +6986,27 @@ function setupVisualizerEventListeners() {
     const statusDiv = document.getElementById('visualizer-status');
     const formContainer = document.getElementById('visualizer-form-container');
     const enabledToggle = document.getElementById('visualizer-enabled');
+    let saveGeneration = 0;
+    const formIsCurrent = () => formContainer?.isConnected &&
+        document.getElementById('visualizer-form-container') === formContainer;
 
     if (serverUrlInput) serverUrlInput.disabled = true;
 
     const setStatus = (message, error = false) => {
-        if (!statusDiv) return;
+        if (!statusDiv || !formIsCurrent()) return;
         statusDiv.textContent = message || '';
         statusDiv.classList.toggle('text-red-500', error);
+    };
+
+    const setTransportNotice = serverUrl => {
+        if (!serverUrlInput) return;
+        const insecure = isInsecureVisualizerServerUrl(serverUrl);
+        serverUrlInput.setAttribute('aria-label', insecure
+            ? getTranslation('Visualizer server URL (HTTP, unencrypted)')
+            : getTranslation('Visualizer server URL'));
+        if (insecure) {
+            setStatus(getTranslation('Warning: HTTP sends Visualizer credentials and shot data without encryption.'), true);
+        }
     };
 
     const clearCredentialsForServerChange = () => {
@@ -7066,17 +7080,23 @@ function setupVisualizerEventListeners() {
     // visible credentials as soon as the normalized URL changes, so a later
     // save cannot accidentally send the old server's password to the new one.
     serverUrlInput?.addEventListener('input', () => {
+        saveGeneration++;
         try {
             const current = normalizeVisualizerServerUrl(serverUrlInput.value);
             if (!visualizerServerUrlsEqual(current, visualizerServerUrl)) clearCredentialsForServerChange();
             else setStatus('');
+            setTransportNotice(current);
         } catch {
-            setStatus(getTranslation('Enter a valid HTTPS Visualizer server URL.'), true);
+            setStatus(getTranslation('Enter a valid HTTP or HTTPS Visualizer server URL.'), true);
         }
     });
 
     // Add click handler for the save button
     saveButton.addEventListener('click', async () => {
+        const generation = ++saveGeneration;
+        saveButton.disabled = true;
+        const stillCurrent = () => formIsCurrent() && generation === saveGeneration;
+        const finish = () => { if (stillCurrent()) saveButton.disabled = false; };
         let serverUrl;
         try {
             serverUrl = normalizeVisualizerServerUrl(serverUrlInput?.value);
@@ -7084,8 +7104,11 @@ function setupVisualizerEventListeners() {
             setStatus(error.message, true);
             ui.showToast(error.message, 2500, 'error');
             serverUrlInput?.focus();
+            finish();
             return;
         }
+        if (!stillCurrent()) return;
+        setTransportNotice(serverUrl);
         const serverChanged = !visualizerServerUrlsEqual(serverUrl, visualizerServerUrl);
         const username = usernameInput.value.trim();
         const password = passwordInput.value; // Don't trim password as spaces might be valid
@@ -7094,6 +7117,7 @@ function setupVisualizerEventListeners() {
             const message = getTranslation('This Decaid version cannot use a custom Visualizer server. Update Decaid first.');
             setStatus(message, true);
             ui.showToast(message, 3500, 'error');
+            finish();
             return;
         }
 
@@ -7104,19 +7128,23 @@ function setupVisualizerEventListeners() {
             try {
                 const { setPluginSettings } = await import('../modules/api.js');
                 await setPluginSettings('visualizer.reaplugin', { ServerUrl: serverUrl });
+                if (!stillCurrent()) return;
                 visualizerServerUrl = serverUrl;
                 clearCredentialsForServerChange();
                 ui.showToast(getTranslation('Server saved. Enter credentials for this server.'), 3500, 'info');
             } catch (error) {
+                if (!stillCurrent()) return;
                 const message = visualizerErrorText(error, getTranslation('Could not save server'));
                 setStatus(message, true);
                 ui.showToast(message, 3500, 'error');
             }
+            finish();
             return;
         }
 
         if (!username) {
             ui.showToast('Please enter your Visualizer username', 1500, 'error');
+            finish();
             return;
         }
 
@@ -7137,25 +7165,23 @@ function setupVisualizerEventListeners() {
                     saveButton.disabled = false;
                 }
 
-                if (!result.valid) {
-                    // error = the check itself failed (unreachable, TLS, plugin);
-                    // otherwise the server answered and said no.
-                    ui.showToast(
-                        result.error
-                            ? `Could not reach ${plan.url}: ${result.error}`
-                            : 'Visualizer log-in failed, check credentials',
-                        result.error ? 5000 : 900, 'error');
+                if (!isValid) {
+                    ui.showToast('Visualizer log-in failed, check credentials', 900, 'error');
+                    finish();
                     return; // Stop here if credentials are bad
                 }
 
                 ui.showToast('Visualizer log-in success', 900, 'success');
             } catch (error) {
+                if (!stillCurrent()) return;
                 console.error('Error during credential validation:', error);
                 const message = visualizerErrorText(error, getTranslation('Credential check'));
                 setStatus(message, true);
                 ui.showToast(message, 3000, 'error');
+                finish();
                 return;
             }
+            if (!stillCurrent()) return;
             passwordPayload = password;
         } else {
             passwordPayload = { isSet: visualizerPasswordIsSet }; // preserve current state
@@ -7185,15 +7211,18 @@ function setupVisualizerEventListeners() {
 
         try {
             await setPluginSettings(pluginId, settingsPayload);
+            if (!stillCurrent()) return;
             visualizerServerUrl = serverUrl;
             setStatus(`${getTranslation('Active Visualizer server')}: ${serverUrl}`);
             ui.showToast('Visualizer settings saved successfully', 3000, 'success');
         } catch (error) {
+            if (!stillCurrent()) return;
             console.error('Failed to save visualizer plugin settings:', error);
             const message = visualizerErrorText(error, getTranslation('Saving Visualizer settings'));
             setStatus(message, true);
             ui.showToast(message, 3000, 'error');
         }
+        finish();
     });
 }
 
@@ -7201,11 +7230,14 @@ function setupVisualizerEventListeners() {
 async function loadVisualizerSettings() {
     const seq = ++visualizerLoadSeq;
     try {
-        const { getPluginSettings, getPlugins } = await import('../modules/api.js');
+        const loadingForm = document.getElementById('visualizer-form-container');
+        if (!loadingForm) return;
+        const { getPluginSettings } = await import('../modules/api.js');
         const pluginId = 'visualizer.reaplugin';
 
         const savedSettings = await getPluginSettings(pluginId);
         const plugins = await getPlugins();
+        if (!loadingForm.isConnected || document.getElementById('visualizer-form-container') !== loadingForm) return;
         const visualizerPlugin = plugins?.find(plugin => plugin?.id === pluginId);
         visualizerServerSettingSupported = !!visualizerPlugin?.settings?.ServerUrl;
 
@@ -7220,7 +7252,8 @@ async function loadVisualizerSettings() {
         // The awaits above can outlive the page: leaving the Visualizer sub-page
         // re-renders the content area and drops the form, so by the time settings
         // arrive these lookups return null. Nothing to populate — bail.
-        if (!usernameInput || !passwordInput || !autoUploadCheckbox || !minDurationInput) return;
+        if (!usernameInput || !passwordInput || !autoUploadCheckbox || !minDurationInput ||
+            !loadingForm.isConnected || document.getElementById('visualizer-form-container') !== loadingForm) return;
 
         let serverUrl = DEFAULT_VISUALIZER_SERVER_URL;
         try {
@@ -7301,7 +7334,9 @@ async function loadVisualizerSettings() {
         }
         const statusDiv = document.getElementById('visualizer-status');
         if (statusDiv) {
-            statusDiv.textContent = visualizerServerSettingSupported
+            statusDiv.textContent = isInsecureVisualizerServerUrl(serverUrl)
+                ? getTranslation('Warning: HTTP sends Visualizer credentials and shot data without encryption.')
+                : visualizerServerSettingSupported
                 ? `${getTranslation('Active Visualizer server')}: ${serverUrl}`
                 : getTranslation('Update Decaid to configure a custom Visualizer server.');
         }
