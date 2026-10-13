@@ -7174,7 +7174,6 @@ function setupVisualizerEventListeners() {
         const pluginId = 'visualizer.reaplugin';
 
         const settingsPayload = {
-            ServerUrl: serverUrl,
             Username: username,
             Password: passwordPayload,
             // Both switches gate it — saving credentials must not start uploads
@@ -7182,9 +7181,7 @@ function setupVisualizerEventListeners() {
             AutoUpload: isAutoUploadEnabled(),
             LengthThreshold: minDuration
         };
-        // Only a backend that declares the setting is sent it; an older one
-        // would drop it and keep talking to the hosted server.
-        if (visualizerSaved.supported) settingsPayload[VISUALIZER_SERVER_SETTING] = plan.url;
+        if (visualizerServerSettingSupported) settingsPayload.ServerUrl = serverUrl;
 
         try {
             await setPluginSettings(pluginId, settingsPayload);
