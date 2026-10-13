@@ -33,6 +33,8 @@ export const MODE_LIMITS = {
     label: 6,        // characters in the toggle option
     unit: 3,         // characters appended to the value
     presets: 4,      // the preset row has four slots
+    menu: 4,         // extra items in a preset's long-press menu
+    menuLabel: 24,
     bound: 9999,     // |min|, |max|
     decimals: 2,
 };
@@ -160,8 +162,19 @@ function parseMode(raw, id, action) {
             if (n !== null && presets.length < MODE_LIMITS.presets) presets.push(clamp(n));
         }
     }
+    // Extra long-press menu items: a label and the number to send. Same `call`.
+    const menu = [];
+    if (Array.isArray(raw.menu)) {
+        for (const item of raw.menu) {
+            if (menu.length >= MODE_LIMITS.menu || !item || typeof item !== 'object') continue;
+            const itemLabel = cleanText(item.label, MODE_LIMITS.menuLabel);
+            const n = toNumber(item.value);
+            if (itemLabel && n !== null) menu.push({ label: itemLabel, value: clamp(n) });
+        }
+    }
     return { id, kind: 'tile-mode', tile: raw.tile, label, ...(unit && { unit }),
-        value: clamp(value), min, max, step, decimals, presets, action };
+        value: clamp(value), min, max, step, decimals, presets, ...(menu.length && { menu }),
+        ...(raw.presetsEditable === false && { presetsEditable: false }), action };
 }
 
 function parseSurface(raw) {
