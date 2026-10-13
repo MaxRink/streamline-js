@@ -40,8 +40,8 @@ A plugin needs two things beyond a normal Decaid plugin:
 - `__httpRequestHandler(request)` answers `skin` with the JSON above (`Content-Type: application/json`).
 
 ```json
-{ "id": "my.reaplugin", "name": "My plugin", "version": "1.0.0", "apiVersion": 1,
-  "permissions": ["log", "api"],
+{ "id": "my.reaplugin", "author": "You", "name": "My plugin", "description": "What it does.",
+  "version": "1.0.0", "apiVersion": 1, "permissions": ["log", "api"], "settings": {},
   "api": [ { "id": "skin", "type": "http", "data": {} }, { "id": "ui", "type": "http", "data": {} } ] }
 ```
 
@@ -67,6 +67,75 @@ __httpRequestHandler(request) {
 `PUT /api/v1/plugins/<id>/source` (body `{ "manifest": {...}, "plugin": "<plugin.js text>" }`), then
 `POST /api/v1/plugins/<id>/enable`. Keep `version` the same or higher, Decaid rejects a downgrade.
 `GET /api/v1/plugins/<id>/skin` shows exactly what the skin will read.
+
+## Worked example: a brew temperature offset
+
+A plugin that adds `°C | %` under **Brew**: any whole percent from -20 to 20, applied to every profile step so the
+temperature curve keeps its shape. The plugin owns the maths and the write; the skin only shows the mode and
+calls `apply`.
+
+```json
+{ "id": "temp-offset.reaplugin", "author": "You", "name": "Brew temp offset",
+  "description": "Offsets every profile step's temperature by a percent.",
+  "version": "1.0.0", "apiVersion": 1, "permissions": ["log", "api"], "settings": {},
+  "api": [ { "id": "skin", "type": "http", "data": {} }, { "id": "apply", "type": "http", "data": {} } ] }
+```
+
+```js
+function createPlugin(host) {
+  const BASE = 'http://localhost:8080/api/v1';
+  let baseline = null, percent = 0;      // the profile's own temperatures, and our offset
+
+  const json = (req, status, body) => ({ requestId: req.requestId, status,
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  return {
+    id: 'temp-offset.reaplugin', version: '1.0.0',
+    onLoad() {}, onUnload() {}, onEvent() {},
+    async __httpRequestHandler(request) {
+      if (request.endpoint === 'skin') {
+        return json(request, 200, { version: 1, surfaces: [{
+          id: 'pct', kind: 'tile-mode', tile: 'temperature', label: '%', unit: '%',
+          value: percent, min: -20, max: 20, step: 1, decimals: 0, presets: [-5, -2, 2, 5],
+          action: { type: 'call', endpoint: 'apply', field: 'percent' } }] });
+      }
+      if (request.endpoint === 'apply') {
+        const p = Number(request.body && request.body.percent);   // body is parsed JSON
+        if (!Number.isFinite(p) || Math.abs(p) > 20) return json(request, 400, { error: 'out of range' });
+        const workflow = await (await fetch(BASE + '/workflow')).json();
+        baseline = baseline || workflow.profile.steps.map(s => s.temperature);
+        workflow.profile.steps.forEach((s, i) => {
+          s.temperature = Math.round(baseline[i] * (1 + p / 100) * 10) / 10;
+        });
+        await fetch(BASE + '/workflow', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile: workflow.profile }) });
+        percent = p;
+        return json(request, 200, { percent });
+      }
+      return json(request, 404, { error: 'not found' });
+    },
+  };
+}
+```
+
+Things a real plugin also has to decide, which the skin cannot do for it:
+
+- **When the baseline is stale.** If the user switches profile or edits a step, `baseline` no longer describes the
+  workflow. Compare what you last wrote with the workflow before reusing it, and start over when they differ.
+- **What to send to `PUT /workflow`.** Decaid's deserializer is strict: drop legacy profile fields and send only the
+  `profile`, as the skin's own `updateWorkflow` does (see `src/modules/api.js`).
+- **Restarts.** A plugin that restarts forgets `baseline`. Persist it (`pluginStorage` permission) if the offset must
+  survive.
+
+## Checklist
+
+- Manifest has `permissions: ["api"]` and an http endpoint for every id you use in `skin` (`skin`, `ui`, and any
+  `call` endpoint).
+- `skin` answers quickly (the skin gives it 2 s) and never needs the machine to be connected.
+- Every `call` endpoint validates its number; the skin sends what the user typed within `min`..`max`, but anyone can
+  POST to your endpoint.
+- Answer `skin` with the value you actually applied; that is what the tile shows next.
+- Keep text short: a mode `label` is 6 characters, a preset shows as `value` + `unit` in a 4-slot row.
 
 ## Kinds
 
