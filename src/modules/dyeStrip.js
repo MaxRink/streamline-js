@@ -21,6 +21,7 @@ import { API_BASE_URL, getWorkflow, updateWorkflow, getDye2KvArray, setDye2KvArr
 import { applyWorkflowToMainPageUI } from './profileManager.js';
 import { logger } from './logger.js';
 import { fitTextToBox } from './i18n.js';
+import { stripRightInset } from './header-strip-inset.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
 
 const AF_KEY = 'autoFavourites';
@@ -815,12 +816,13 @@ function syncStripBounds() {
     const controls = document.getElementById('header-right-controls');
     const header = controls?.closest('header');
     if (!controls || !header) return;
-    const right = header.getBoundingClientRect().right
-        - controls.getBoundingClientRect().left + STRIP_GAP;
+    const box = header.getBoundingClientRect();
+    const right = stripRightInset({ headerRight: box.right, headerWidth: box.width, headerLayoutWidth: header.offsetWidth,
+        controlsLeft: controls.getBoundingClientRect().left, gap: STRIP_GAP });
     STRIP_IDS.forEach(id => {
         const nav = document.getElementById(id);
         if (!nav) return;
-        nav.style.right = `${Math.max(0, Math.round(right))}px`;
+        nav.style.right = `${right}px`;
         fitStripCells(nav); // narrower cells wrap more, so the fit has to be redone
     });
 }
