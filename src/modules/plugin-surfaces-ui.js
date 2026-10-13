@@ -97,6 +97,8 @@ function buildButton(plugin, surface) {
 // `{type:'streamline:ready'}` once it has loaded (a CSP `frame-ancestors` block
 // gives no event the skin could catch) and `{type:'streamline:close'}` to close.
 // No ready message in time: drop the dialog and go to the page, as `page` does.
+// The skin draws its own close button and closes on a backdrop tap, because key
+// events go to the frame once it is touched and a tablet has no Escape key.
 const OVERLAY_READY_MS = 3000;
 let overlayOpen = false;
 
@@ -111,10 +113,18 @@ function openOverlay(plugin, action, pageUrl) {
     dialog.dataset.agentId = `plugin-overlay:${plugin.id}`;
     dialog.style.cssText = 'width:min(1100px,94vw);height:min(760px,90vh);max-width:none;max-height:none;padding:0;border:0;border-radius:16px;overflow:hidden;background:var(--bg,#fff);';
     const frame = document.createElement('iframe');
+    // Scripts and forms run in the plugin's own origin; the frame cannot navigate the skin.
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
     frame.src = src;
     frame.title = plugin.name || plugin.id;
     frame.style.cssText = 'display:block;width:100%;height:100%;border:0;';
     dialog.appendChild(frame);
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = '×';
+    closeButton.setAttribute('aria-label', 'Close');
+    closeButton.style.cssText = 'position:absolute;top:8px;right:8px;width:44px;height:44px;border-radius:22px;border:0;font-size:28px;line-height:1;cursor:pointer;background:rgba(0,0,0,.55);color:#fff;z-index:1;';
+    dialog.appendChild(closeButton);
 
     let timer = null;
     const finish = () => {
@@ -124,7 +134,9 @@ function openOverlay(plugin, action, pageUrl) {
         if (dialog.open) dialog.close();
         dialog.remove();
         overlayOpen = false;
+        // The page may have changed the workflow; the tiles read it again.
         refreshPluginSurfaces();
+        document.dispatchEvent(new Event('streamline:workflow-refresh'));
     };
     const onMessage = event => {
         if (event.source !== frame.contentWindow) return;
@@ -134,8 +146,17 @@ function openOverlay(plugin, action, pageUrl) {
     };
     window.addEventListener('message', onMessage);
     dialog.addEventListener('close', finish);
+    closeButton.addEventListener('click', finish);
+    // A tap on the backdrop lands on the dialog itself, never on the frame.
+    dialog.addEventListener('click', event => { if (event.target === dialog) finish(); });
     document.body.appendChild(dialog);
-    dialog.showModal();
+    try {
+        dialog.showModal();
+    } catch (e) {
+        logger.warn('Plugin overlay could not open:', e);
+        finish();
+        return;
+    }
     timer = setTimeout(() => {
         logger.warn('Plugin overlay did not report ready, opening as a page:', plugin.id);
         finish();
@@ -349,7 +370,11 @@ const callQueue = createCallQueue({
         callPluginEndpoint(encodeURIComponent(plugin.id), endpoint, body, 'POST'), CALL_TIMEOUT_MS),
 });
 
-const callKey = (plugin, surface) => `${plugin.id}:${surface.tile}`;
+// A mode shares one lane per tile (newest value wins). A fixed-value hint or line
+// is its own lane, so tapping it never supersedes a mode's pending value.
+const callKey = (plugin, surface) => (surface.kind === 'tile-hint' || surface.kind === 'tile-line'
+    ? `${plugin.id}:${surface.id}`
+    : `${plugin.id}:${surface.tile}`);
 
 // True while a call for this mode is being sent or the user is still stepping, so a
 // redraw must keep the value the user is moving rather than the plugin's older one.
@@ -375,7 +400,12 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
 // -> true when everything was drawn. Tile placement measures the label
 // (offsetTop/Height/Width), which is 0 while the main page is display:none, so
 // tiles are skipped then and the caller must not remember the answer as drawn.
-function render(entries) {
+function render(rawEntries) {
+    // A hint or line whose call endpoint the plugin does not declare is drawn
+    // inert, like a surface with no action, so it does not look tappable.
+    const entries = rawEntries.map(e => (e.surface.action?.type === 'call' && e.surface.kind !== 'tile-mode'
+        && !callableEndpoint(e.plugin, e.surface.action.endpoint)
+        ? { ...e, surface: { ...e.surface, action: null } } : e));
     lastEntries = entries;
     const mainHidden = document.getElementById('main-page')?.style.display === 'none';
     document.querySelectorAll('[data-plugin-surface]').forEach(el => {
@@ -469,14 +499,17 @@ export async function refreshPluginSurfaces() {
 
 // Sockets a plugin asked for with `live`: one per plugin, only while the page is
 // visible. A message re-reads `skin` and asks the tiles to re-read the workflow
-// (the plugin may have changed it), after a short wait so a burst is one read.
+// (the plugin may have changed it). A burst is one read: the wait starts at the
+// first message and is not pushed back by later ones, so a fast stream still
+// refreshes every PUSH_DEBOUNCE_MS.
 const PUSH_DEBOUNCE_MS = 300;
 const liveSockets = new Map(); // plugin id -> endpoint
 let pushTimer = null;
 
 function onPush() {
-    clearTimeout(pushTimer);
+    if (pushTimer) return;
     pushTimer = setTimeout(() => {
+        pushTimer = null;
         refreshPluginSurfaces();
         document.dispatchEvent(new Event('streamline:workflow-refresh'));
     }, PUSH_DEBOUNCE_MS);
