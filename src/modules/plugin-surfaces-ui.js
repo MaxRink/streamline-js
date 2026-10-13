@@ -180,15 +180,20 @@ function modeKey(plugin, surface) {
     return `${plugin.id}:${surface.id}`;
 }
 
-function setSelectedMode(tile, key) {
-    if ((selectedMode[tile] || null) === key) return;
-    if (key) selectedMode[tile] = key; else delete selectedMode[tile];
-    const entry = (drawnModes[tile] || []).find(m => m.key === key) || null;
-    paintToggle(tile);
-    // The tile itself reacts to this (value, steppers, presets).
+// The tile reacts to this (value, steppers, presets). Sent when the selection
+// changes and again when the plugin's answer for the selected mode changed.
+function announceMode(tile) {
+    const entry = (drawnModes[tile] || []).find(m => m.key === selectedMode[tile]) || null;
     document.dispatchEvent(new CustomEvent('streamline:tilemodechange', {
         detail: { tile, plugin: entry?.plugin || null, surface: entry?.surface || null },
     }));
+}
+
+function setSelectedMode(tile, key) {
+    if ((selectedMode[tile] || null) === key) return;
+    if (key) selectedMode[tile] = key; else delete selectedMode[tile];
+    paintToggle(tile);
+    announceMode(tile);
 }
 
 function paintToggle(tile) {
@@ -275,9 +280,11 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
     }
     const payload = { plugin, endpoint: action.endpoint, body: { [action.field]: number } };
     return callQueue.request(callKey(plugin, surface), payload, { immediate }).then(sent => {
-        // `null`: superseded by a newer step, whose own answer will refresh.
-        if (sent) refreshPluginSurfaces();
-        return sent;
+        // null: a newer call replaced or overtook this one, which will refresh.
+        // Otherwise read skin again and redraw even if the answer is unchanged, so
+        // a number the plugin refused snaps back.
+        if (sent !== null) { lastKey = ''; refreshPluginSurfaces(); }
+        return sent === true;
     }).catch(() => false);
 }
 
@@ -337,6 +344,8 @@ function render(entries) {
             if (!(drawnModes[tile] || []).some(m => m.key === selectedMode[tile])) setSelectedMode(tile, null);
         }
         Object.keys(drawnModes).forEach(paintToggle);
+        // The answer may have changed the selected mode's value or presets.
+        Object.keys(selectedMode).forEach(announceMode);
     }
     return !mainHidden;
 }
@@ -374,6 +383,7 @@ function refreshIfDue() {
 export function initPluginSurfaces() {
     if (started) return;
     started = true;
+    import('./plugin-tile-modes.js').then(m => m.initTileModes());
     refreshPluginSurfaces();
     setInterval(refreshPluginSurfaces, REFRESH_MS);
     window.addEventListener('focus', refreshIfDue);
