@@ -21,6 +21,8 @@ function openNumpadModal(...args) {
 import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation, fitTextToWidth } from './i18n.js';
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
+import { stepValue, formatRatio } from './value-format.js';
+import { clampSetValue } from './plugin-surfaces.js';
 
 
 function initLanguageSwitcher() {
@@ -272,7 +274,7 @@ export function updateDrinkOutPresetsDisplay(doseIn, drinkOut) {
     if (doseInEl && drinkOutEl && ratioEl) {
         if (!isNaN(doseIn) && !isNaN(drinkOut) && doseIn > 0) {
             const ratio = drinkOut / doseIn;
-            ratioEl.textContent = `(1:${ratio.toFixed(1)})`;
+            ratioEl.textContent = `(1:${formatRatio(ratio)})`;
         } else {
             ratioEl.textContent = '(1:--)';
         }
@@ -303,6 +305,48 @@ export function updateTemperatureValue(newValue) {
             });
         }
     });
+}
+
+// A plugin's `set` action (see docs/plugin-surfaces.md). Goes through the same
+// setters a tile edit uses, so it also becomes the active profile's override.
+// Dose and yield are refused (false) until both tiles show numbers: the dose
+// setter reads the other tile's value from the DOM and would send NaN.
+export function applyPluginSet(field, value) {
+    const n = clampSetValue(field, value);
+    if (n === null) return false;
+    const dose = parseFloat(document.getElementById('dose-in-value')?.textContent);
+    const drink = parseFloat(document.getElementById('drink-out-value')?.textContent);
+    if (field === 'grinderSetting') {
+        markTileInteraction();
+        updateGrindValue(n);
+        updateGrindDisplay({ grinderSetting: String(n) });
+        flashElement(document.getElementById('grind-value'));
+        return true;
+    }
+    if (field === 'brewTemperature') {
+        // Celsius, like the workflow. Same setter as the tile: every step of the
+        // profile gets this temperature.
+        markTileInteraction();
+        updateTemperatureValue(n);
+        updateTemperatureDisplay(n);
+        flashElement(document.getElementById('temp-value'));
+        return true;
+    }
+    if (isNaN(dose) || isNaN(drink)) return false;
+    markTileInteraction();
+    if (field === 'targetDoseWeight') {
+        updateDoseValue('in', n);
+        updateDrinkOutPresetsDisplay(n, drink);
+        flashElement(document.getElementById('dose-in-value'));
+        return true;
+    }
+    if (field === 'targetYield') {
+        updateDoseValue('out', n);
+        updateDrinkOutPresetsDisplay(dose, n);
+        flashElement(document.getElementById('drink-out-value'));
+        return true;
+    }
+    return false;
 }
 
 export function updateGrindValue(newValue) {
@@ -357,7 +401,7 @@ export function updateDrinkRatio() {
 
         if (!isNaN(doseIn) && !isNaN(drinkOut) && doseIn > 0) {
             const ratio = drinkOut / doseIn;
-            ratioEl.textContent = `(1:${ratio.toFixed(1)})`;
+            ratioEl.textContent = `(1:${formatRatio(ratio)})`;
         } else {
             ratioEl.textContent = '(1:--)';
         }
@@ -589,7 +633,7 @@ function setupValueAdjuster(minusBtnId, plusBtnId, valueElId, step, min, formatt
         if (!valueEl) return;
         let currentValue = parseFloat(valueEl.textContent);
         if (currentValue > min) {
-            currentValue -= getStep();
+            currentValue = stepValue(currentValue, getStep(), -1);
             valueEl.textContent = format(currentValue);
             scheduleUpdate(currentValue);
             if (afterUpdate) afterUpdate(format(currentValue));
@@ -601,7 +645,7 @@ function setupValueAdjuster(minusBtnId, plusBtnId, valueElId, step, min, formatt
         const valueEl = document.getElementById(valueElId);
         if (!valueEl) return;
         let currentValue = parseFloat(valueEl.textContent);
-        currentValue += getStep();
+        currentValue = stepValue(currentValue, getStep(), 1);
         valueEl.textContent = format(currentValue);
         scheduleUpdate(currentValue);
         if (afterUpdate) afterUpdate(format(currentValue));

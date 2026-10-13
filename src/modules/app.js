@@ -1439,8 +1439,9 @@ const lastResyncAt = {};
 // The boot resync runs once; a shotSettings frame can move these at any time
 // after it (BLE reconnect, Rea restart, the machine's own tablet, another skin)
 // and updateSteamDisplay/updateHotWaterDisplay repaint from it unconditionally.
-// Re-run the same comparison on every frame that actually changes one, so the
-// user's setting is restored instead of silently sitting wrong until reload.
+// Re-run the same comparison on every frame that actually changes one. What it
+// does with a difference is resync-policy.js's call: retry our own unlanded
+// push, but adopt a value some other writer set on purpose.
 //
 // Rate-limited per field: see RESYNC_COOLDOWN_MS. Without that this does not
 // converge -- it only converges if a machine that will not take our value keeps
@@ -2147,6 +2148,9 @@ async function initMainPageOnce() {
         initMilkProbeSensorPolling();
         connectShotSettingsWebSocket(handleShotSettingsData);
         void initVisualizer().catch(error => logger.error('Visualizer initialization failed:', error));
+        // Plugin-declared dashboard surfaces; a no-op when no plugin answers `skin`.
+        import('./plugin-surfaces-ui.js').then(m => m.initPluginSurfaces())
+            .catch(error => logger.warn('Plugin surfaces failed to start:', error));
         mainPageInitialized = true;
         logger.info('initMainPageOnce: finished.');
         return workflow;
