@@ -42,7 +42,7 @@ that does not validate is dropped, and the rest still shows.
 ## Limits
 
 - At most 3 surfaces per plugin and 1 `header-button`; extras are dropped in order.
-- Only one plugin `header-button` is drawn in total across all plugins; the first loaded plugin wins.
+- Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
 - `id` is 1 to 40 characters of `A-Z a-z 0-9 _ -` and unique within the answer.
 - `image` must be `https:` without credentials.
 - Unknown `kind`s are ignored, so a newer plugin on an older skin shows less rather than failing.
