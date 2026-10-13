@@ -16,9 +16,13 @@ export function planTileModes(entries) {
     return byTile;
 }
 
-// Sends one payload per key at a time, newest wins: a payload that is replaced
-// before it was sent resolves false, a sent one resolves true (false when `send`
-// rejects). `request(key, payload, { immediate })` debounces unless `immediate`.
+// Sends one payload per key at a time, newest wins. `request` resolves:
+//   false  the payload was replaced before it was sent, or `send` rejected;
+//   null   it was sent, but a newer payload is already waiting (superseded), so
+//          its answer is stale and must not be shown;
+//   true   it was sent and nothing newer is waiting.
+// `request(key, payload, { immediate })` debounces unless `immediate`; `busy(key)`
+// is true while a send is in flight or a payload is pending or debouncing.
 export function createCallQueue({ send, delayMs = 300, setTimer = setTimeout, clearTimer = clearTimeout }) {
     const lanes = new Map(); // key -> { timer, pending, inFlight }
 
@@ -39,9 +43,11 @@ export function createCallQueue({ send, delayMs = 300, setTimer = setTimeout, cl
         lane.inFlight = true;
         Promise.resolve()
             .then(() => send(key, job.payload))
-            .then(() => job.resolve(true), () => job.resolve(false))
-            .then(() => {
+            .then(() => true, () => false)
+            .then(ok => {
                 lane.inFlight = false;
+                // A pending payload (debouncing or not) means the user is still stepping.
+                job.resolve(ok && lane.pending ? null : ok);
                 if (lane.pending && !lane.timer) run(key);
                 else if (!lane.pending && !lane.timer) lanes.delete(key);
             });
@@ -58,5 +64,10 @@ export function createCallQueue({ send, delayMs = 300, setTimer = setTimeout, cl
         });
     }
 
-    return { request };
+    function busy(key) {
+        const lane = lanes.get(key);
+        return !!lane && (lane.inFlight || !!lane.pending || !!lane.timer);
+    }
+
+    return { request, busy };
 }
