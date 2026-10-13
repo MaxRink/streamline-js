@@ -10,12 +10,15 @@ export const SKIN_VERSION = 1;
 export const MAX_SURFACES = 3;      // per plugin, all kinds together
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
-// The fields `set` may write, with the same ranges the numpad offers. Brew
-// temperature is not here on purpose: its setter rewrites every profile step.
+// The fields `set` may write, with the same ranges the numpad offers.
+// brewTemperature is in degrees Celsius. Applying it sets every step of the
+// profile to that one value (the tile's own behaviour), flattening a profile
+// that has temperature steps; see docs/plugin-surfaces.md.
 export const SET_LIMITS = {
     targetDoseWeight: { min: 1, max: 120 },
     targetYield: { min: 1, max: 200 },
     grinderSetting: { min: 0, max: 9999 },
+    brewTemperature: { min: 70, max: 110 },
 };
 export const SET_FIELDS = Object.keys(SET_LIMITS);
 export const PRESENTATIONS = ['page', 'overlay'];

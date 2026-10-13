@@ -75,14 +75,17 @@ test('open: presentation is a hint, unknown values fall back to page', () => {
     assert.equal(open({ view: '../../etc' }).view, '');
 });
 
-test('set: only dose, yield and grind, as numbers clamped to the numpad ranges', () => {
+test('set: only dose, yield, grind and brew temperature, as numbers clamped to the numpad ranges', () => {
     const set = (field, value) => ok([{ id: 'a', kind: 'tile-hint', tile: 'dose', text: 'x', action: { type: 'set', field, value } }])[0].action;
     assert.deepEqual(set('targetDoseWeight', 18.5), { type: 'set', field: 'targetDoseWeight', value: 18.5 });
     assert.equal(set('targetYield', '36').value, 36);
     assert.equal(set('targetYield', 9999).value, 200);
     assert.equal(set('targetDoseWeight', 0).value, 1);
     assert.equal(set('grinderSetting', 6.456).value, 6.46);
-    for (const [field, value] of [['brewTemperature', 93], ['profile', 'x'], ['machineState', 'sleeping'], ['targetYield', NaN],
+    assert.deepEqual(set('brewTemperature', 93), { type: 'set', field: 'brewTemperature', value: 93 });
+    assert.equal(set('brewTemperature', 20).value, 70);
+    assert.equal(set('brewTemperature', 500).value, 110);
+    for (const [field, value] of [['brewTemperature', 'hot'], ['profile', 'x'], ['machineState', 'sleeping'], ['targetYield', NaN],
         ['targetYield', Infinity], ['grinderSetting', ''], ['grinderSetting', 'C40'], ['grinderSetting', { a: 1 }]]) {
         assert.equal(set(field, value), undefined);
     }

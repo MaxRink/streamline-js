@@ -309,8 +309,8 @@ export function updateTemperatureValue(newValue) {
 
 // A plugin's `set` action (see docs/plugin-surfaces.md). Goes through the same
 // setters a tile edit uses, so it also becomes the active profile's override.
-// Refused (false) until the dose and drink tiles show numbers: the dose setter
-// reads the other tile's value from the DOM and would send NaN.
+// Dose and yield are refused (false) until both tiles show numbers: the dose
+// setter reads the other tile's value from the DOM and would send NaN.
 export function applyPluginSet(field, value) {
     const n = clampSetValue(field, value);
     if (n === null) return false;
@@ -321,6 +321,14 @@ export function applyPluginSet(field, value) {
         updateGrindValue(n);
         updateGrindDisplay({ grinderSetting: String(n) });
         flashElement(document.getElementById('grind-value'));
+        return true;
+    }
+    if (field === 'brewTemperature') {
+        // Celsius, like the workflow. Same setter as the tile: every step of the
+        // profile gets this temperature.
+        updateTemperatureValue(n);
+        updateTemperatureDisplay(n);
+        flashElement(document.getElementById('temp-value'));
         return true;
     }
     if (isNaN(dose) || isNaN(drink)) return false;
