@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { createScaleInfoLifecycle, getScaleDeviceSetting, hasSkaleUsbSetting, shouldInvalidateScaleInfoAfterWrite } from '../src/settings/scale-device-details.js';
 
 const source = readFileSync(
     new URL('../src/settings/settings.js', import.meta.url),
     'utf8',
 );
+const apiSource = readFileSync(new URL('../src/modules/api.js', import.meta.url), 'utf8');
 
 function extractFunction(name) {
     const start = source.indexOf(`function ${name}(`);
@@ -46,22 +49,16 @@ function extractAssignedFunction(name) {
 }
 
 function loadScaleDeviceSetting() {
-    const getSetting = extractFunction('getScaleDeviceSetting');
-    return new Function(`${getSetting}\nreturn getScaleDeviceSetting;`)();
+    return getScaleDeviceSetting;
 }
 
 function loadScaleInfoLifecycle({ getScaleInfo, deviceStateCache, renderDeviceListFromCache = () => {} }) {
-    const start = source.indexOf('const scaleInfoByDeviceId = new Map();');
-    const end = source.indexOf('// Render generic loading state', start);
-    assert.ok(start >= 0 && end > start);
-    return new Function(
-        'getScaleInfo',
-        'deviceStateCache',
-        'renderDeviceListFromCache',
-        'logger',
-        `${source.slice(start, end)}
-         return { refreshScaleInfo, scaleInfoByDeviceId, scaleInfoInFlight };`,
-    )(getScaleInfo, deviceStateCache, renderDeviceListFromCache, { warn() {}, debug() {} });
+    return createScaleInfoLifecycle({
+        getScaleInfo,
+        getDeviceState: () => deviceStateCache,
+        renderDeviceListFromCache,
+        logger: { warn() {}, debug() {} },
+    });
 }
 
 function loadRenderSingleDeviceList({
@@ -69,6 +66,7 @@ function loadRenderSingleDeviceList({
     usbPoweredByDevice = undefined,
     legacyUsbPowered = undefined,
     latestBattery = undefined,
+    pendingChanges = { rea: {} },
     getTranslation = value => value,
 }) {
     const render = extractFunction('renderSingleDeviceList');
@@ -76,13 +74,14 @@ function loadRenderSingleDeviceList({
     return new Function(
         'scaleInfoByDeviceId',
         'settingsCache',
+        'pendingChanges',
         'renderBatteryBadge',
         'escapeHtml',
         'getTranslation',
         'renderScalePopupToggle',
         'getScaleDeviceSetting',
         'window',
-        `${extractFunction('hasSkaleUsbSetting')}\n${render}\nreturn renderSingleDeviceList;`,
+        `const hasSkaleUsbSetting = ${hasSkaleUsbSetting.toString()};\n${render}\nreturn renderSingleDeviceList;`,
     )(
         scaleInfoByDeviceId,
         {
@@ -95,6 +94,7 @@ function loadRenderSingleDeviceList({
                     : {}),
             },
         },
+        pendingChanges,
         level => `<battery>${level}</battery>`,
         value => String(value),
         getTranslation,
@@ -179,9 +179,48 @@ test('an unavailable scale-info endpoint leaves metadata unknown', async () => {
     assert.deepEqual(lifecycle.scaleInfoByDeviceId.get('A'), {});
 });
 
+test('scale-info failures are cached and retried only after the backoff', async () => {
+    let calls = 0;
+    let now = 1000;
+    const lifecycle = createScaleInfoLifecycle({
+        getDeviceState: () => ({ devices: [{ id: 'A', state: 'connected' }] }),
+        now: () => now,
+        getScaleInfo: async () => {
+            calls += 1;
+            const error = new Error('offline');
+            error.status = 500;
+            throw error;
+        },
+    });
+    await lifecycle.refreshScaleInfo('A');
+    await lifecycle.refreshScaleInfo('A');
+    assert.equal(calls, 1);
+    now += 30_000;
+    await lifecycle.refreshScaleInfo('A');
+    assert.equal(calls, 2);
+});
+
+test('scale-info does not fetch while the settings list is unmounted', async () => {
+    let calls = 0;
+    const lifecycle = createScaleInfoLifecycle({
+        isMounted: () => false,
+        getDeviceState: () => ({ devices: [{ id: 'A', state: 'connected' }] }),
+        getScaleInfo: async () => { calls += 1; return {}; },
+    });
+    await lifecycle.refreshScaleInfo('A');
+    assert.equal(calls, 0);
+});
+
+test('the settings module remains syntactically valid as an ES module', () => {
+    execFileSync(process.execPath, ['--input-type=module', '--check'], {
+        input: source,
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+});
+
 test('stale metadata is not rendered for disconnected scales or unknown batteries', () => {
     const metadata = new Map([['A', { firmwareVersion: 'R029', batteryLevel: null }]]);
-    const render = loadRenderSingleDeviceList({ scaleInfoByDeviceId: metadata, latestBattery: 77 });
+    const render = loadRenderSingleDeviceList({ scaleInfoByDeviceId: metadata });
     const html = render([{ id: 'A', name: 'Scale A', state: 'disconnected' }], '', '', 'Scale');
     assert.doesNotMatch(html, /R029|77/);
 
@@ -199,6 +238,16 @@ test('USB power state is rendered from the per-device setting and suppresses bat
     const html = render([{ id: 'A', name: 'Scale A', state: 'connected' }], '', '', 'Scale');
     assert.match(html, />USB</);
     assert.doesNotMatch(html, /<battery>77<\/battery>/);
+});
+
+test('staged USB power is visibly distinguished until save', () => {
+    const render = loadRenderSingleDeviceList({
+        scaleInfoByDeviceId: new Map([['A', { batteryLevel: 77 }]]),
+        usbPoweredByDevice: { A: true },
+        pendingChanges: { rea: { skalePoweredByUsbByDevice: { A: true } } },
+    });
+    const html = render([{ id: 'A', name: 'Scale A', state: 'connected' }], '', '', 'Scale');
+    assert.match(html, />USB \(pending\)</);
 });
 
 test('native USB control remains absent when the backend does not expose it', () => {
@@ -267,7 +316,7 @@ function loadUpdateScaleDeviceSetting({
         'renderDeviceListFromCache',
         'updateReaSetting',
         'deviceStateCache',
-        `${extractFunction('hasSkaleUsbSetting')}
+        `const hasSkaleUsbSetting = ${hasSkaleUsbSetting.toString()};
          const updateScaleDeviceSetting = ${update};\nreturn updateScaleDeviceSetting;`,
     )(
         settingsCache,
@@ -341,6 +390,12 @@ function loadFlushPendingChanges({
         'setDe1Settings',
         'renderDeviceListFromCache',
         `let scaleInfoRequestGeneration = 0;
+         const invalidateScaleInfo = () => {
+             scaleInfoRequestGeneration += 1;
+             scaleInfoByDeviceId.clear();
+             scaleInfoInFlight.clear();
+         };
+         const shouldInvalidateScaleInfoAfterWrite = ${shouldInvalidateScaleInfoAfterWrite.toString()};
          function resetPendingChanges() {
              pendingChanges.rea = {};
              pendingChanges.de1 = {};
@@ -368,12 +423,14 @@ function loadScaleInfoAndSaveLifecycle({
     deviceStateCache,
     setReaSettings,
 }) {
-    const infoStart = source.indexOf('const scaleInfoByDeviceId = new Map();');
-    const infoEnd = source.indexOf('// Render generic loading state', infoStart);
     const flush = extractFunction('flushPendingChanges');
+    const lifecycle = createScaleInfoLifecycle({
+        getScaleInfo,
+        getDeviceState: () => deviceStateCache,
+        logger: { warn() {}, debug() {} },
+    });
     return new Function(
-        'getScaleInfo',
-        'deviceStateCache',
+        'lifecycle',
         'logger',
         'setReaSettings',
         'saveSettingsBackup',
@@ -383,7 +440,11 @@ function loadScaleInfoAndSaveLifecycle({
              pendingChanges = { rea: {}, de1: {}, de1Advanced: {}, workflow: {} };
          }
          async ${flush}
-         ${source.slice(infoStart, infoEnd)}
+         const refreshScaleInfo = lifecycle.refreshScaleInfo;
+         const scaleInfoByDeviceId = lifecycle.scaleInfoByDeviceId;
+         const scaleInfoInFlight = lifecycle.scaleInfoInFlight;
+         const invalidateScaleInfo = lifecycle.invalidate;
+         const shouldInvalidateScaleInfoAfterWrite = ${shouldInvalidateScaleInfoAfterWrite.toString()};
          return {
              refreshScaleInfo,
              scaleInfoByDeviceId,
@@ -393,8 +454,7 @@ function loadScaleInfoAndSaveLifecycle({
              flushPendingChanges,
          };`,
     )(
-        getScaleInfo,
-        deviceStateCache,
+        lifecycle,
         { warn() {}, debug() {} },
         setReaSettings,
         () => {},
@@ -531,6 +591,23 @@ test('Preferred preserves the existing updateReaSetting call behavior', async ()
     assert.equal(renders, 2);
 });
 
+test('scale info API requests the connected-scale endpoint and preserves status', async () => {
+    const match = apiSource.match(/export async function getScaleInfo\(\) \{[\s\S]*?\n\}/);
+    assert.ok(match);
+    let request;
+    const getScaleInfo = new Function('fetch', 'API_BASE_URL',
+        `${match[0].replace('export ', '')}\nreturn getScaleInfo;`)(async url => {
+        request = url;
+        return { ok: true, json: async () => ({ firmwareVersion: 'R029' }) };
+    }, 'http://localhost:8080/api/v1');
+    assert.deepEqual(await getScaleInfo(), { firmwareVersion: 'R029' });
+    assert.equal(request, 'http://localhost:8080/api/v1/scale/info');
+
+    const unavailable = new Function('fetch', 'API_BASE_URL',
+        `${match[0].replace('export ', '')}\nreturn getScaleInfo;`)(async () => ({ ok: false, status: 404 }), 'http://localhost:8080/api/v1');
+    await assert.rejects(unavailable(), error => error.status === 404);
+});
+
 function loadPopup({ settings, device, getTranslation }) {
     const title = { textContent: '' };
     const content = { innerHTML: '' };
@@ -539,8 +616,8 @@ function loadPopup({ settings, device, getTranslation }) {
     const nodes = { 'scale-device-settings-title': title, 'scale-device-settings-content': content,
         'scale-device-settings-modal': { showModal() { shown += 1; } } };
     const open = new Function('settingsCache', 'deviceStateCache', 'document', 'getTranslation', 'escapeHtml', 'translatePage',
-        `${extractFunction('getScaleDeviceSetting')}
-${extractFunction('hasSkaleUsbSetting')}
+        `const getScaleDeviceSetting = ${getScaleDeviceSetting.toString()};
+const hasSkaleUsbSetting = ${hasSkaleUsbSetting.toString()};
 ${extractFunction('renderScalePopupToggle')}
 return (${extractAssignedFunction('openScaleDeviceSettings')});`)(
         { rea: settings }, { devices: [device] }, { getElementById: id => nodes[id] }, getTranslation,

@@ -31,6 +31,8 @@ import { adoptFromMachine, diffUserSettings, restorePatches } from './settings-r
 import { escapeHtml, pluginViewModel, pluginStatusLabel, pluginNavEntries,
          pluginIdFromCategory, pluginCategoryFor, pluginStatus, isManagedPluginSource,
          minutesSince, shouldCheckPluginUpdates, isPluginSettingVisible, pluginUiUrl } from './plugin-view.js';
+import { createScaleInfoLifecycle, getScaleDeviceSetting, hasSkaleUsbSetting,
+         shouldInvalidateScaleInfoAfterWrite } from './scale-device-details.js';
 
 // The DE1 caps the fan-threshold MMR item at 50 °C (min 0, max 50 in Decaid's
 // MMRItem table) and clamps a higher write without reporting it, so the machine
@@ -269,10 +271,8 @@ async function flushPendingChanges() {
     if (Object.keys(pendingChanges.rea).length) {
         tasks.push(setReaSettings(pendingChanges.rea).then(() => {
             // The USB write can succeed even when an unrelated settings write fails.
-            if (usbPowerSettingsChanged) {
-                scaleInfoRequestGeneration += 1;
-                scaleInfoByDeviceId.clear();
-                scaleInfoInFlight.clear();
+            if (shouldInvalidateScaleInfoAfterWrite({ reaSucceeded: true, usbPowerSettingsChanged })) {
+                invalidateScaleInfo();
                 renderDeviceListFromCache();
             }
         }));
@@ -322,51 +322,15 @@ let deviceStateCache = {
     scanning: false,
     initialized: false
 };
-const scaleInfoByDeviceId = new Map();
-const scaleInfoInFlight = new Map();
-let scaleInfoRequestGeneration = 0;
-let scaleInfoDeviceId = null;
-
-async function refreshScaleInfo(connectedScaleId) {
-    if (scaleInfoDeviceId !== connectedScaleId) {
-        scaleInfoRequestGeneration += 1;
-        scaleInfoDeviceId = connectedScaleId;
-        scaleInfoByDeviceId.clear();
-        scaleInfoInFlight.clear();
-    }
-    if (!connectedScaleId) return;
-    if (scaleInfoByDeviceId.has(connectedScaleId)) return;
-    if (scaleInfoInFlight.has(connectedScaleId)) return;
-    const generation = scaleInfoRequestGeneration;
-    const request = getScaleInfo();
-    scaleInfoInFlight.set(connectedScaleId, request);
-    try {
-        const info = await request;
-        if (generation !== scaleInfoRequestGeneration ||
-            scaleInfoDeviceId !== connectedScaleId ||
-            !deviceStateCache.devices.some(d =>
-                d.id === connectedScaleId &&
-                d.state === 'connected' &&
-                d.available !== false
-            )) {
-            return;
-        }
-        scaleInfoByDeviceId.set(connectedScaleId, info || {});
-        renderDeviceListFromCache();
-    } catch (error) {
-        if (generation === scaleInfoRequestGeneration) {
-            if ([404, 405, 501, 503].includes(error?.status)) {
-                scaleInfoByDeviceId.set(connectedScaleId, {});
-            } else {
-                logger.warn(`Could not load scale info for ${connectedScaleId}:`, error);
-            }
-        }
-    } finally {
-        if (scaleInfoInFlight.get(connectedScaleId) === request) {
-            scaleInfoInFlight.delete(connectedScaleId);
-        }
-    }
-}
+const scaleInfoLifecycle = createScaleInfoLifecycle({
+    getScaleInfo,
+    getDeviceState: () => deviceStateCache,
+    renderDeviceListFromCache: () => renderDeviceListFromCache(),
+    logger,
+    isMounted: () => Boolean(document.getElementById('bluetooth-scale-devices-container')),
+});
+const { refreshScaleInfo, scaleInfoByDeviceId } = scaleInfoLifecycle;
+const invalidateScaleInfo = () => scaleInfoLifecycle.invalidate();
 
 // Render generic loading state
 function renderLoadingState(title) {
@@ -9982,12 +9946,12 @@ function renderDeviceListFromCache() {
                         device.name.toLowerCase().includes('weight')))
     );
 
-    const connectedScale = scales.find(device => device.state === 'connected' && device.available !== false);
-    refreshScaleInfo(connectedScale?.id || null);
     renderDeviceList('bluetooth-machine-devices-container', machines, 'Machine',
         settingsCache.rea?.preferredMachineId || '', 'preferredMachineId');
     renderDeviceList('bluetooth-scale-devices-container', scales, 'Scale',
         settingsCache.rea?.preferredScaleId || '', 'preferredScaleId');
+    const connectedScale = scales.find(device => device.state === 'connected' && device.available !== false);
+    refreshScaleInfo(connectedScale?.id || null);
 }
 
 // Bluetooth Functions
@@ -10349,20 +10313,6 @@ function renderScalePopupToggle(title, description, enabled, inputAttributes) {
     `;
 }
 
-function getScaleDeviceSetting(settings, key, deviceId) {
-    if (Object.prototype.hasOwnProperty.call(settings || {}, key)) {
-        return settings?.[key]?.[deviceId] === true;
-    }
-    return undefined;
-}
-
-function hasSkaleUsbSetting(settings, device) {
-    const values = settings?.skalePoweredByUsbByDevice;
-    return typeof device?.name === 'string' && device.name.toLowerCase().includes('skale') &&
-        Object.prototype.hasOwnProperty.call(settings || {}, 'skalePoweredByUsbByDevice') &&
-        values !== null && typeof values === 'object' && !Array.isArray(values);
-}
-
 // Render Bluetooth Scale settings
 export function renderBluetoothScaleSettings(settings) {
     // Render devices from WebSocket cache on initial render
@@ -10556,20 +10506,27 @@ function renderSingleDeviceList(devices, preferredId = '', settingKey = '', type
                 'skalePoweredByUsbByDevice',
                 device.id,
             ) === true;
+        const usbPowerPending = type === 'Scale' && isConnected &&
+            Object.prototype.hasOwnProperty.call(pendingChanges.rea, 'skalePoweredByUsbByDevice') &&
+            pendingChanges.rea.skalePoweredByUsbByDevice?.[device.id] === true;
         const safeId = (device.id || '').replace(/'/g, "\\'");
         const safeName = (device.name || '').replace(/'/g, "\\'");
         const safeSettingKey = settingKey.replace(/'/g, "\\'");
         const firmware = deviceInfo.firmwareVersion
-            ? `<span class="text-[18px] text-[var(--text-primary)] opacity-60">${getTranslation('Firmware')} ${escapeHtml(deviceInfo.firmwareVersion)}</span>`
+            ? `<span class="text-[18px] text-[var(--text-primary)] opacity-60"><span data-i18n-key="Firmware">${getTranslation('Firmware')}</span> ${escapeHtml(deviceInfo.firmwareVersion)}</span>`
             : '';
-        const batteryLevel = !usbPowered && Number.isFinite(deviceInfo.batteryLevel)
-            ? deviceInfo.batteryLevel
-            : null;
+        const liveBattery = type === 'Scale' && isConnected &&
+            typeof window.getLatestScaleBattery === 'function'
+            ? window.getLatestScaleBattery()
+            : undefined;
+        const batteryLevel = !usbPowered && Number.isFinite(liveBattery)
+            ? liveBattery
+            : (!usbPowered && Number.isFinite(deviceInfo.batteryLevel) ? deviceInfo.batteryLevel : null);
         const batteryBadge = batteryLevel !== null && batteryLevel !== undefined
             ? renderBatteryBadge(batteryLevel)
             : '';
         const usbBadge = usbPowered
-            ? '<span class="text-[20px] font-bold px-[16px] py-[6px] rounded-full bg-[var(--button-primary-bg)] text-white">USB</span>'
+            ? `<span class="text-[20px] font-bold px-[16px] py-[6px] rounded-full bg-[var(--button-primary-bg)] text-white" data-i18n-key="${usbPowerPending ? 'USB (pending)' : 'USB'}">${usbPowerPending ? 'USB (pending)' : 'USB'}</span>`
             : '';
 
         const dotClass = isConnected ? 'bg-green-500'
