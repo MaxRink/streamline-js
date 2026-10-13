@@ -6,9 +6,20 @@
 // the hidden elements, and switching back to the built-in option just shows them.
 // -/+ are caught before the tile's own handlers. Every change goes to the plugin
 // through callMode(); nothing is written to the profile or workflow from here.
+//
+// Presets keep the long-press menu the built-in ones have (Apply, Enter value,
+// Save current here, Revert), with the user's edits kept per plugin and mode on
+// this device, plus any items the plugin declares in `menu`.
 
 import { callMode, isModeCallBusy } from './plugin-surfaces-ui.js';
-import { clampModeValue, stepModeValue, formatModeValue } from './plugin-modes.js';
+import {
+    clampModeValue, stepModeValue, formatModeValue,
+    sanitizeEdits, effectivePresets, withPresetEdit, presetMenuModel,
+} from './plugin-modes.js';
+import { setupPressAndHold, showToast } from './ui.js';
+import { openContextMenu } from './context-menu.js';
+import { getTranslation } from './i18n.js';
+import { logger } from './logger.js';
 
 const TILE_DOM = {
     temperature: { minus: 'temp-minus', plus: 'temp-plus', value: 'temp-value', presets: ['temp-presets'], title: 'BREW' },
@@ -26,6 +37,29 @@ const active = {}; // tile -> { plugin, surface, value, valueEl, presetButtons, 
 const wired = new Set();
 let started = false;
 
+// The user's preset edits for one mode, on this device only.
+function editsKey(plugin, surface) {
+    return `plugin-mode-presets:${plugin.id}:${surface.id}`;
+}
+
+function readEdits(plugin, surface) {
+    try {
+        const raw = localStorage.getItem(editsKey(plugin, surface));
+        return sanitizeEdits(surface, raw === null ? null : JSON.parse(raw));
+    } catch {
+        return sanitizeEdits(surface, null);
+    }
+}
+
+function writeEdits(plugin, surface, edits) {
+    try {
+        if (edits.every(n => n === null)) localStorage.removeItem(editsKey(plugin, surface));
+        else localStorage.setItem(editsKey(plugin, surface), JSON.stringify(edits));
+    } catch (error) {
+        logger.warn('Plugin mode preset edit not saved:', error);
+    }
+}
+
 function clearTile(tile) {
     const state = active[tile];
     if (!state) return;
@@ -42,27 +76,80 @@ function apply(tile, number, { immediate }) {
     callMode(state.plugin, state.surface, state.value, { immediate });
 }
 
-async function openNumpad(tile) {
+// `initial` and `onConfirm` default to editing the mode's own value.
+async function openNumpad(tile, { initial, onConfirm } = {}) {
     const state = active[tile];
     if (!state) return;
     const { plugin, surface } = state;
+    const start = initial === undefined ? state.value : initial;
     const module = await import('./numpad-modal.js');
     module.initNumpadModal();
-    const input = { value: String(state.value), setAttribute() {}, getAttribute() { return null; }, dispatchEvent() {} };
+    const input = { value: String(start), setAttribute() {}, getAttribute() { return null; }, dispatchEvent() {} };
     module.openModal(input, {
         // Per plugin and mode, so two plugins on one tile keep their own previous-value pills.
         fieldType: `plugin-mode-${String(plugin.id)}:${surface.id}`.replace(/[^A-Za-z0-9_.:-]/g, '_'),
         config: {
             title: `${TILE_DOM[tile].title} ${surface.label}`,
             unit: surface.unit || '',
-            defaultValue: String(state.value),
+            defaultValue: String(start),
             min: surface.min,
             max: surface.max,
             // The "." key becomes +/- when only whole numbers are asked for and negatives are possible.
             signed: surface.min < 0 && surface.decimals === 0,
         },
-        onConfirm: raw => apply(tile, parseFloat(raw), { immediate: true }),
+        onConfirm: onConfirm || (raw => apply(tile, parseFloat(raw), { immediate: true })),
     });
+}
+
+function savePresetEdit(tile, index, value) {
+    const state = active[tile];
+    if (!state) return;
+    const { plugin, surface } = state;
+    writeEdits(plugin, surface, withPresetEdit(surface, readEdits(plugin, surface), index, value));
+    draw(tile, plugin, surface, { keepValue: true });
+}
+
+// The long press of a plugin preset: the built-in preset menu, then the plugin's items.
+function openPresetMenu(tile, button, index) {
+    const state = active[tile];
+    if (!state) return;
+    const { plugin, surface } = state;
+    const fmt = n => formatModeValue(surface, n);
+    const model = presetMenuModel(surface, index, readEdits(plugin, surface), state.value);
+    const items = [];
+    let divided = false; // one divider between the built-in items and the plugin's
+    for (const entry of model) {
+        if (entry.id === 'menu' && !divided && items.length) {
+            items.push({ divider: true });
+            divided = true;
+        }
+        if (entry.id === 'apply') {
+            items.push({ label: getTranslation('Apply {value}').replace('{value}', fmt(entry.value)),
+                onSelect: () => apply(tile, entry.value, { immediate: true }) });
+        } else if (entry.id === 'enter') {
+            items.push({ label: getTranslation('Enter value'), onSelect: () => openNumpad(tile, {
+                initial: entry.value,
+                onConfirm: raw => {
+                    const n = parseFloat(raw);
+                    if (!Number.isFinite(n)) return;
+                    savePresetEdit(tile, index, n);
+                    showToast(`Preset saved as ${fmt(clampModeValue(surface, n))}`, 2000, 'success');
+                },
+            }) });
+        } else if (entry.id === 'save') {
+            items.push({ label: getTranslation('Save current ({value}) here').replace('{value}', fmt(entry.value)),
+                disabled: entry.disabled, onSelect: () => savePresetEdit(tile, index, entry.value) });
+        } else if (entry.id === 'revert') {
+            items.push({ label: getTranslation('Revert to {value}').replace('{value}', fmt(entry.value)),
+                danger: true, disabled: entry.disabled, onSelect: () => {
+                    savePresetEdit(tile, index, null);
+                    showToast(`Preset reverted to ${fmt(entry.value)}`, 2000, 'info');
+                } });
+        } else {
+            items.push({ label: entry.label, onSelect: () => apply(tile, entry.value, { immediate: true }) });
+        }
+    }
+    openContextMenu(button, items);
 }
 
 function paint(tile) {
@@ -77,7 +164,7 @@ function paint(tile) {
     }
 }
 
-function draw(tile, plugin, surface) {
+function draw(tile, plugin, surface, { keepValue = false } = {}) {
     const dom = TILE_DOM[tile];
     const valueEl = dom && document.getElementById(dom.value);
     if (!valueEl || !document.getElementById(dom.minus)) return;
@@ -86,7 +173,7 @@ function draw(tile, plugin, surface) {
     // newer than the plugin's answer, so keep it instead of snapping back.
     const before = active[tile];
     const keep = before && before.plugin.id === plugin.id && before.surface.id === surface.id
-        && isModeCallBusy(plugin, surface);
+        && (keepValue || isModeCallBusy(plugin, surface));
     clearTile(tile);
     const state = { plugin, surface, value: clampModeValue(surface, keep ? before.value : surface.value),
         overlay: [], restore: [], presetButtons: [], valueEl: null };
@@ -130,16 +217,25 @@ function draw(tile, plugin, surface) {
         const mineRow = document.createElement('div');
         mineRow.dataset.pluginSurface = `mode-presets:${tile}`;
         mineRow.className = first.className.replace(/\bhidden\b/, '').trim();
-        for (const preset of surface.presets) {
+        const shown = effectivePresets(surface, readEdits(plugin, surface));
+        // With nothing but "Apply" to offer, a long press would only repeat the tap.
+        const hasMenu = presetMenuModel(surface, 0, null, state.value).length > 1;
+        shown.forEach((preset, index) => {
             const button = document.createElement('button');
             button.type = 'button';
             if (template) button.className = template.className.replace(/\bpreset-active\b/, '').trim();
             button.textContent = formatModeValue(surface, preset);
             button.dataset.modeValue = String(preset);
-            button.addEventListener('click', () => apply(tile, preset, { immediate: true }));
+            const onTap = () => apply(tile, preset, { immediate: true });
+            if (hasMenu) {
+                button.classList.add('no-select', 'has-context-menu');
+                setupPressAndHold(button, onTap, () => openPresetMenu(tile, button, index));
+            } else {
+                button.addEventListener('click', onTap);
+            }
             mineRow.appendChild(button);
             state.presetButtons.push(button);
-        }
+        });
         for (const row of rows) {
             const before = row.style.display;
             row.style.display = 'none';

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTileModes, createCallQueue, clampModeValue, stepModeValue, formatModeValue } from '../src/modules/plugin-modes.js';
+import { planTileModes, createCallQueue, clampModeValue, stepModeValue, formatModeValue, sanitizeEdits, effectivePresets, withPresetEdit, presetMenuModel } from '../src/modules/plugin-modes.js';
 
 const mode = (plugin, tile, id = 'm') => ({ plugin: { id: plugin }, surface: { id, kind: 'tile-mode', tile } });
 
@@ -134,4 +134,33 @@ test('call queue: busy(key) covers debounce, in flight and the newest waiting', 
     assert.equal(await b, true);
     await h.tick();
     assert.equal(h.queue.busy('t'), false);
+});
+
+const withPresets = { ...pct, presets: [-5, -2, 2, 5] };
+
+test('preset edits: the user value wins per slot, bad edits are ignored, null clears', () => {
+    assert.deepEqual(sanitizeEdits(withPresets, [null, 3, 'x', 99, 7]), [null, 3, null, 20]);
+    assert.deepEqual(sanitizeEdits(withPresets, 'junk'), [null, null, null, null]);
+    assert.deepEqual(effectivePresets(withPresets, [null, 3]), [-5, 3, 2, 5]);
+    const edited = withPresetEdit(withPresets, null, 2, 8);
+    assert.deepEqual(edited, [null, null, 8, null]);
+    assert.deepEqual(withPresetEdit(withPresets, edited, 2, null), [null, null, null, null]);
+    assert.deepEqual(withPresetEdit(withPresets, edited, 9, 1), edited);
+});
+
+test('preset menu: built-in items, revert only after an edit, plugin items last, no editing when locked', () => {
+    const ids = model => model.map(m => m.id);
+    const plain = presetMenuModel(withPresets, 1, null, 4);
+    assert.deepEqual(ids(plain), ['apply', 'enter', 'save', 'revert']);
+    assert.equal(plain.find(m => m.id === 'revert').disabled, true);
+    assert.equal(plain.find(m => m.id === 'save').value, 4);
+    const edited = presetMenuModel({ ...withPresets, menu: [{ label: 'Reset', value: 0 }] }, 1, [null, 9], 4);
+    assert.deepEqual(ids(edited), ['apply', 'enter', 'save', 'revert', 'menu']);
+    assert.equal(edited[0].value, 9);                       // the edit is what applies
+    assert.equal(edited.find(m => m.id === 'revert').value, -2); // revert goes to the plugin's own
+    assert.equal(edited.find(m => m.id === 'revert').disabled, false);
+    const locked = presetMenuModel({ ...withPresets, presetsEditable: false, menu: [{ label: 'Reset', value: 0 }] }, 0, null, NaN);
+    assert.deepEqual(ids(locked), ['apply', 'menu']);
+    assert.equal(presetMenuModel({ ...withPresets, presetsEditable: false }, 0, null, 0).length, 1);
+    assert.equal(presetMenuModel(withPresets, 0, null, NaN).find(m => m.id === 'save').disabled, true);
 });

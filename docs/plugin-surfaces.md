@@ -183,6 +183,8 @@ A `tile-mode` lets a plugin add its own option to a left-column tile, the way th
 | `step` | what the tile's `-` / `+` change by, rounded to `decimals`, at least 10^-`decimals` and at most `max - min`, default 1 (`step` 0.4 with `decimals` 0 is dropped; 0.5 rounds up to 1) |
 | `decimals` | digits shown, 0 to 2, default 0 |
 | `presets` | up to 4 numbers shown in the tile's preset row while the mode is selected; only Brew, Drink, Flush and Steam have a preset row, Grind and Dose ignore them |
+| `menu` | optional, up to 4 `{ "label": "Reset to 0%", "value": 0 }` (label 24 characters, `value` clamped to `min`..`max`); extra items in each preset's long-press menu |
+| `presetsEditable` | optional, `false` to stop the user changing the presets from that menu (default `true`) |
 | `action` | required, a `call`; a mode without a valid one is dropped |
 
 While the mode is selected the tile shows `value` and `unit`, `-` / `+` step by `step`, tapping the value opens the
@@ -198,6 +200,11 @@ Rules:
 - A mode on a tile replaces a `tile-line` on that tile, since both use the space under the label. On `steam`
   the toggle goes on the line under the built-in `Time | Flow` toggle; choosing a built-in steam mode ends a
   plugin mode, and a mode there takes the place of whichever of steam's preset rows is showing.
+- Long-pressing a plugin preset opens the same menu as the built-in presets: *Apply*, *Enter value*, *Save current
+  here* and *Revert to* (the plugin's own value). The user's edits are kept per plugin and mode on that device, and
+  override the plugin's preset until reverted; the plugin only ever sees the number when it is applied. Your `menu`
+  items follow, and choosing one is a `call` with that item's number. Set `presetsEditable: false` to leave only
+  *Apply* and your items. A tile with no preset row (Grind, Dose) has no menu.
 - While a mode is selected the tile's own value and preset row are hidden, not changed: they keep following the
   machine, and selecting the built-in option shows them again. A mode with no `presets` leaves that row empty.
 - The selected mode is not remembered: after a reload the tile shows its built-in mode. What the plugin applied

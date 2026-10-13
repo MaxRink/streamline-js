@@ -230,3 +230,15 @@ test('reserved endpoint ids are neither parsed nor callable', () => {
         assert.equal(callableEndpoint({ api: [{ id, type: 'http' }] }, id), false, id);
     }
 });
+
+test('tile-mode: menu items are label and number, capped, clamped; presetsEditable only when false', () => {
+    const m = ok([mode({ menu: [
+        { label: 'Reset to 0%', value: 0 }, { label: 'Hot', value: 99 }, { label: '', value: 1 },
+        { label: 'x', value: 'n' }, null, 'str', { label: 'Four', value: '3' }, { label: 'Five', value: 4 }, { label: 'Six', value: 5 },
+    ] })])[0];
+    assert.deepEqual(m.menu, [{ label: 'Reset to 0%', value: 0 }, { label: 'Hot', value: 20 }, { label: 'Four', value: 3 }, { label: 'Five', value: 4 }]);
+    assert.equal('presetsEditable' in m, false);
+    assert.equal(ok([mode({ presetsEditable: false })])[0].presetsEditable, false);
+    assert.equal('presetsEditable' in ok([mode({ presetsEditable: true })])[0], false);
+    assert.equal('menu' in ok([mode({ menu: 'x' })])[0], false);
+});

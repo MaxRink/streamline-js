@@ -34,6 +34,48 @@ export function formatModeValue(mode, value) {
     return `${mode.min < 0 && n > 0 ? '+' : ''}${text}${mode.unit || ''}`;
 }
 
+// The user's edits to a mode's presets: an array of numbers or null (not edited),
+// one per preset slot. Anything else in it is ignored.
+export function sanitizeEdits(mode, edits) {
+    const out = mode.presets.map(() => null);
+    if (Array.isArray(edits)) {
+        mode.presets.forEach((_, i) => {
+            const n = edits[i];
+            if (typeof n === 'number' && Number.isFinite(n)) out[i] = clampModeValue(mode, n);
+        });
+    }
+    return out;
+}
+
+// What the preset row shows: the user's edit where there is one, else the plugin's.
+export function effectivePresets(mode, edits) {
+    const clean = sanitizeEdits(mode, edits);
+    return mode.presets.map((preset, i) => (clean[i] === null ? preset : clean[i]));
+}
+
+// `edits` with slot `index` set to `value` (clamped), or cleared with null.
+export function withPresetEdit(mode, edits, index, value) {
+    const next = sanitizeEdits(mode, edits);
+    if (index >= 0 && index < next.length) next[index] = value === null ? null : clampModeValue(mode, value);
+    return next;
+}
+
+// The long-press menu of preset `index` as plain descriptors; the tile module
+// turns them into menu items. Editing items are left out when the plugin says
+// its presets are not editable, and Revert is disabled until the slot was edited.
+export function presetMenuModel(mode, index, edits, current) {
+    const clean = sanitizeEdits(mode, edits);
+    const shown = effectivePresets(mode, clean)[index];
+    const items = [{ id: 'apply', value: shown }];
+    if (mode.presetsEditable !== false) {
+        items.push({ id: 'enter', value: shown });
+        items.push({ id: 'save', value: current, disabled: !Number.isFinite(current) });
+        items.push({ id: 'revert', value: mode.presets[index], disabled: clean[index] === null, danger: true });
+    }
+    for (const item of mode.menu || []) items.push({ id: 'menu', label: item.label, value: item.value });
+    return items;
+}
+
 // Sends one payload per key at a time, newest wins. `request` resolves:
 //   false  `send` rejected (or timed out);
 //   null   superseded: a newer payload replaced it before it was sent, or it was
