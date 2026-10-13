@@ -49,6 +49,6 @@ An invalid action drops the action only; the surface still shows, inert.
   with `returnTo`) or `overlay`. Anything else, and `overlay` until it exists, behaves as `page`.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
   `targetDoseWeight`, `targetYield`, `grinderSetting`, `brewTemperature`. `value` is a finite number or a string
-  of up to 20 characters. The skin clamps to the same range the tile and numpad use.
+  of up to 20 characters; anything else drops the action. This answer is only checked for shape.
 
 Nothing else can be written: no machine commands, no profile changes.
