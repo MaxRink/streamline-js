@@ -6920,6 +6920,7 @@ function setupPluginCard(cardEl, pluginId, plugins) {
 // PR #588: secure values are returned as { isSet } state, never plaintext.
 let visualizerPasswordIsSet = false;
 let visualizerServerSettingSupported = false;
+let visualizerServerUrl = DEFAULT_VISUALIZER_SERVER_URL;
 
 function visualizerErrorText(error, action = 'Visualizer request') {
     const message = String(error?.message || error || '').trim();
@@ -6988,7 +6989,6 @@ function setupVisualizerEventListeners() {
 
     if (serverUrlInput) serverUrlInput.disabled = true;
 
-    let savedServerUrl = DEFAULT_VISUALIZER_SERVER_URL;
     const setStatus = (message, error = false) => {
         if (!statusDiv) return;
         statusDiv.textContent = message || '';
@@ -7068,7 +7068,7 @@ function setupVisualizerEventListeners() {
     serverUrlInput?.addEventListener('input', () => {
         try {
             const current = normalizeVisualizerServerUrl(serverUrlInput.value);
-            if (!visualizerServerUrlsEqual(current, savedServerUrl)) clearCredentialsForServerChange();
+            if (!visualizerServerUrlsEqual(current, visualizerServerUrl)) clearCredentialsForServerChange();
             else setStatus('');
         } catch {
             setStatus(getTranslation('Enter a valid HTTPS Visualizer server URL.'), true);
@@ -7086,7 +7086,7 @@ function setupVisualizerEventListeners() {
             serverUrlInput?.focus();
             return;
         }
-        const serverChanged = !visualizerServerUrlsEqual(serverUrl, savedServerUrl);
+        const serverChanged = !visualizerServerUrlsEqual(serverUrl, visualizerServerUrl);
         const username = usernameInput.value.trim();
         const password = passwordInput.value; // Don't trim password as spaces might be valid
 
@@ -7104,7 +7104,7 @@ function setupVisualizerEventListeners() {
             try {
                 const { setPluginSettings } = await import('../modules/api.js');
                 await setPluginSettings('visualizer.reaplugin', { ServerUrl: serverUrl });
-                savedServerUrl = serverUrl;
+                visualizerServerUrl = serverUrl;
                 clearCredentialsForServerChange();
                 ui.showToast(getTranslation('Server saved. Enter credentials for this server.'), 3500, 'info');
             } catch (error) {
@@ -7188,7 +7188,7 @@ function setupVisualizerEventListeners() {
 
         try {
             await setPluginSettings(pluginId, settingsPayload);
-            savedServerUrl = serverUrl;
+            visualizerServerUrl = serverUrl;
             setStatus(`${getTranslation('Active Visualizer server')}: ${serverUrl}`);
             ui.showToast('Visualizer settings saved successfully', 3000, 'success');
         } catch (error) {
@@ -7241,7 +7241,7 @@ async function loadVisualizerSettings() {
         }
         // Keep this module-local baseline in sync with the plugin value loaded
         // from Decaid before the user edits the form.
-        savedServerUrl = serverUrl;
+        visualizerServerUrl = serverUrl;
 
         if (savedSettings && savedSettings.Username) {
             usernameInput.value = savedSettings.Username;
