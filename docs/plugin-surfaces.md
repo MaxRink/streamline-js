@@ -46,7 +46,7 @@ that does not validate is dropped, and the rest still shows.
 
 - At most 3 surfaces per plugin, 1 `header-button`, and 1 `tile-hint` and 1 `tile-line` per tile; extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
-- Only one plugin `header-button` is drawn in total across all plugins; the first loaded plugin wins.
+- Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
 - `id` is 1 to 40 characters of `A-Z a-z 0-9 _ -` and unique within the answer.
 - `image` must be `https:` without credentials.
 - Unknown `kind`s are ignored, so a newer plugin on an older skin shows less rather than failing.
