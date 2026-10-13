@@ -24,7 +24,7 @@ that does not validate is dropped, and the rest still shows.
 
 ## When it is read
 
-- On dashboard load, when the window regains focus, and at most once a minute.
+- On dashboard load, every minute, and when the window regains focus or the dashboard becomes visible (at most once per 2 s).
 - A read that fails or takes longer than 2 s hides that plugin's surfaces; it never blocks the dashboard.
 - `header-button` is drawn before the system buttons. `tile-hint` and `tile-line` are drawn without moving the tile: a line under the label, a hint under the value.
 - Actions on tile surfaces are not wired yet; they are shown, inert.
@@ -44,6 +44,7 @@ that does not validate is dropped, and the rest still shows.
 
 - At most 3 surfaces per plugin, 1 `header-button`, and 1 `tile-hint` and 1 `tile-line` per tile; extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
+- Only one plugin `header-button` is drawn in total across all plugins; the first loaded plugin wins.
 - `id` is 1 to 40 characters of `A-Z a-z 0-9 _ -` and unique within the answer.
 - `image` must be `https:` without credentials.
 - Unknown `kind`s are ignored, so a newer plugin on an older skin shows less rather than failing.
@@ -57,6 +58,6 @@ An invalid action drops the action only; the surface still shows, inert.
   with `returnTo`) or `overlay`. Anything else, and `overlay` until it exists, behaves as `page`.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
   `targetDoseWeight`, `targetYield`, `grinderSetting`, `brewTemperature`. `value` is a finite number or a string
-  of up to 20 characters. The skin clamps to the same range the tile and numpad use.
+  of up to 20 characters; anything else drops the action. This answer is only checked for shape.
 
 Nothing else can be written: no machine commands, no profile changes.

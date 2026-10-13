@@ -14,6 +14,7 @@ import { pluginUiUrl } from '../settings/plugin-view.js';
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
 const MIN_GAP_MS = 2000; // focus + visibilitychange can both fire
+const MAX_PLUGIN_HEADER_BUTTONS = 1; // across all plugins
 
 // Same look as the DYE and Settings buttons; width is content-driven so a
 // plugin label is not cut to the 135px a system label gets.
@@ -47,6 +48,8 @@ async function readSurfaces(plugin) {
         const answer = await withTimeout(callPluginEndpoint(plugin.id, 'skin', null, 'GET'), READ_TIMEOUT_MS);
         return parseSkinAnswer(answer).surfaces;
     } catch (error) {
+        // callPluginEndpoint already logs the failure at error level; here it is
+        // only hidden so one broken plugin cannot affect the others.
         logger.debug(`Plugin surfaces: ${plugin.id} skin not read:`, error?.message);
         return [];
     }
@@ -124,9 +127,15 @@ function render(entries) {
     const container = document.getElementById('header-right-controls');
     const anchor = container?.firstChild;
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
+    let headerButtons = 0;
     for (const { plugin, surface } of entries) {
         if (surface.kind === 'header-button') {
-            if (container) container.insertBefore(buildButton(plugin, surface), anchor);
+            // One plugin button in total, first loaded plugin wins: the header has
+            // no room for more when the DYE2 button is off.
+            if (container && headerButtons < MAX_PLUGIN_HEADER_BUTTONS) {
+                container.insertBefore(buildButton(plugin, surface), anchor);
+                headerButtons += 1;
+            }
             continue;
         }
         const slot = `${surface.kind}:${surface.tile}`;
@@ -171,5 +180,11 @@ export function initPluginSurfaces() {
     window.addEventListener('focus', refreshIfDue);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') refreshIfDue();
+    });
+    // Returning from a sub-page: a surface rendered while the page was hidden
+    // must be placed again, so forget the last drawn answer.
+    document.addEventListener('streamline:mainpagevisible', () => {
+        lastKey = '';
+        refreshIfDue();
     });
 }

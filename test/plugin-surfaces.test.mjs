@@ -33,6 +33,16 @@ test('unknown kinds, bad ids and duplicate ids are dropped; the rest survive', (
     assert.deepEqual(s.map(x => x.text), ['one']);
 });
 
+test('a non-string id (an array that stringifies to a valid id) is dropped', () => {
+    const s = ok([
+        { id: ['b'], kind: 'tile-line', tile: 'dose', text: 'array' },
+        { id: 'b', kind: 'tile-line', tile: 'drink', text: 'string' },
+        { id: ['b'], kind: 'tile-line', tile: 'grind', text: 'array duplicate' },
+        { id: 7, kind: 'tile-line', tile: 'grind', text: 'number' },
+    ]);
+    assert.deepEqual(s.map(x => x.text), ['string']);
+});
+
 test('limits: one header button, one hint and one line per tile, three surfaces', () => {
     const btn = id => ({ id, kind: 'header-button', label: 'B' });
     assert.equal(ok([btn('a'), btn('b')]).length, 1);
