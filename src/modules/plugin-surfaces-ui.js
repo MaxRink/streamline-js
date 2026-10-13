@@ -49,8 +49,9 @@ async function readSurfaces(plugin) {
         const answer = await withTimeout(callPluginEndpoint(plugin.id, 'skin', null, 'GET'), READ_TIMEOUT_MS);
         return parseSkinAnswer(answer).surfaces;
     } catch (error) {
-        // callPluginEndpoint already logs the failure at error level; here it is
-        // only hidden so one broken plugin cannot affect the others.
+        // callPluginEndpoint logs an HTTP failure at error level; a timeout is
+        // only logged here, at debug. Either way the plugin is just hidden, so
+        // one broken plugin cannot affect the others.
         logger.debug(`Plugin surfaces: ${plugin.id} skin not read:`, error?.message);
         return [];
     }
@@ -173,8 +174,9 @@ function render(entries) {
     let headerButtons = 0;
     for (const { plugin, surface } of entries) {
         if (surface.kind === 'header-button') {
-            // One plugin button in total, first loaded plugin wins: the header has
-            // no room for more when the DYE2 button is off.
+            // One plugin button in total, the first plugin in Decaid's list whose
+            // read succeeded wins: the header has no room for more when the DYE2
+            // button is off.
             if (container && headerButtons < MAX_PLUGIN_HEADER_BUTTONS) {
                 container.insertBefore(buildButton(plugin, surface), anchor);
                 headerButtons += 1;
@@ -230,7 +232,10 @@ export function initPluginSurfaces() {
     // Returning from a sub-page: a surface rendered while the page was hidden
     // must be placed again, so forget the last drawn answer.
     document.addEventListener('streamline:mainpagevisible', () => {
+        // Not refreshIfDue: a hidden refresh just before returning would put this
+        // one inside the 2 s gap and leave the tiles undrawn until the next minute.
+        // `running` already stops overlapping reads.
         lastKey = '';
-        refreshIfDue();
+        refreshPluginSurfaces();
     });
 }
