@@ -1,3 +1,4 @@
+import { currentBeanContext } from '../src/modules/bean-selection.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -324,6 +325,23 @@ function lift(module, patterns) {
         assert.ok(!('targetYield' in sent));
         assert.ok(!('grinderSetting' in sent), 'the grind tile is not DYE2-owned');
         assert.ok(!('profile' in puts[0]));
+    });
+
+    test('coffee picker selection is cleared for the following shot without changing dose or grind', async () => {
+        const context = {
+            targetDoseWeight: 18, targetYield: 36, grinderSetting: '21',
+            ...currentBeanContext({ id: 'bean', name: 'Lot', roaster: 'Roaster' }, { id: 'batch', beanId: 'bean' }),
+        };
+        const { clearDyeWorkflowContext, puts } = build(context);
+        assert.equal(context.beanBatchId, 'batch');
+        assert.equal(await clearDyeWorkflowContext(), true);
+        const followingShot = { ...context, ...puts[0].context };
+        assert.equal(followingShot.beanBatchId, null);
+        assert.equal(followingShot.coffeeName, null);
+        assert.equal(followingShot.coffeeRoaster, null);
+        assert.equal(followingShot.targetDoseWeight, 18);
+        assert.equal(followingShot.targetYield, 36);
+        assert.equal(followingShot.grinderSetting, '21');
     });
 
     test('grinderSetting goes only when the whole plugin is switched off', async () => {
