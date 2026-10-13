@@ -33,10 +33,14 @@ test('unknown kinds, bad ids and duplicate ids are dropped; the rest survive', (
     assert.deepEqual(s.map(x => x.text), ['one']);
 });
 
-test('limits: one header button, three surfaces', () => {
+test('limits: one header button, one hint and one line per tile, three surfaces', () => {
     const btn = id => ({ id, kind: 'header-button', label: 'B' });
     assert.equal(ok([btn('a'), btn('b')]).length, 1);
-    const lines = ['a', 'b', 'c', 'd', 'e'].map(id => ({ id, kind: 'tile-line', tile: 'dose', text: id }));
+    const hint = (id, tile) => ({ id, kind: 'tile-hint', tile, text: id });
+    assert.deepEqual(ok([hint('a', 'dose'), hint('b', 'dose'), hint('c', 'grind')]).map(s => s.id), ['a', 'c']);
+    assert.equal(ok([hint('a', 'dose'), { id: 'b', kind: 'tile-line', tile: 'dose', text: 'b' }]).length, 2);
+    const tiles = ['dose', 'drink', 'grind', 'temperature'];
+    const lines = tiles.map(tile => ({ id: tile, kind: 'tile-line', tile, text: tile }));
     assert.equal(ok(lines).length, MAX_SURFACES);
 });
 

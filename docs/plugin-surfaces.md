@@ -26,7 +26,8 @@ that does not validate is dropped, and the rest still shows.
 
 - On dashboard load, when the window regains focus, and at most once a minute.
 - A read that fails or takes longer than 2 s hides that plugin's surfaces; it never blocks the dashboard.
-- Only `header-button` is drawn so far, before the system buttons. Tile surfaces are parsed but not yet shown.
+- `header-button` is drawn before the system buttons. `tile-hint` and `tile-line` are drawn without moving the tile: a line under the label, a hint under the value.
+- Actions on tile surfaces are not wired yet; they are shown, inert.
 
 ## Kinds
 
@@ -41,7 +42,8 @@ that does not validate is dropped, and the rest still shows.
 
 ## Limits
 
-- At most 3 surfaces per plugin and 1 `header-button`; extras are dropped in order.
+- At most 3 surfaces per plugin, 1 `header-button`, and 1 `tile-hint` and 1 `tile-line` per tile; extras are dropped in order.
+- If two plugins ask for the same tile slot, the first one wins.
 - `id` is 1 to 40 characters of `A-Z a-z 0-9 _ -` and unique within the answer.
 - `image` must be `https:` without credentials.
 - Unknown `kind`s are ignored, so a newer plugin on an older skin shows less rather than failing.

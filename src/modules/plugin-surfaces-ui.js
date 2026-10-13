@@ -19,7 +19,19 @@ const MIN_GAP_MS = 2000; // focus + visibilitychange can both fire
 // plugin label is not cut to the 135px a system label gets.
 const BUTTON_CLASS = 'settings-button flex justify-center items-center min-h-0 h-[53.7px] whitespace-nowrap border-[1.5px] border-solid border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] rounded-[22.5px] text-[21px] font-semibold';
 
+// Where each tile's surfaces go. Both are placed without moving anything: the
+// 72px control row has ~17px of empty space under the label and ~17px of gap
+// under the buttons, so a line sits under the label and a hint under the value.
+const TILES = {
+    grind: { section: 'grind-section', label: 'grind-label', control: 'grind-minus' },
+    dose: { section: 'dose-section', label: 'dose-label', control: 'dose-in-minus' },
+    drink: { section: 'drink-section', label: 'drink-label', control: 'drink-out-minus' },
+    temperature: { section: 'brew-section', label: 'brew-label', control: 'temp-minus' },
+};
+const MUTED = 'var(--low-contrast-white)';
+
 let started = false;
+let touchedSections = [];
 let running = false;
 let lastRun = 0;
 let lastKey = '';
@@ -33,7 +45,7 @@ function withTimeout(promise, ms) {
 async function readSurfaces(plugin) {
     try {
         const answer = await withTimeout(callPluginEndpoint(plugin.id, 'skin', null, 'GET'), READ_TIMEOUT_MS);
-        return parseSkinAnswer(answer).surfaces.filter(s => s.kind === 'header-button');
+        return parseSkinAnswer(answer).surfaces;
     } catch (error) {
         logger.debug(`Plugin surfaces: ${plugin.id} skin not read:`, error?.message);
         return [];
@@ -69,13 +81,57 @@ function buildButton(plugin, surface) {
     return button;
 }
 
+function buildTileSurface(surface) {
+    const el = document.createElement('span');
+    el.dataset.pluginSurface = surface.id;
+    el.dataset.agentId = `plugin-tile:${surface.tile}:${surface.kind}`;
+    el.textContent = surface.text;
+    el.title = surface.title || surface.text;
+    // Display only for now: actions on tile surfaces arrive with the `set` step.
+    el.style.cssText = 'position:absolute;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;';
+    return el;
+}
+
+function placeTileSurface(surface) {
+    const tile = TILES[surface.tile];
+    const el = buildTileSurface(surface);
+    if (surface.kind === 'tile-hint') {
+        const parent = document.getElementById(tile.control)?.parentElement;
+        if (!parent) return null;
+        el.style.cssText += `left:50%;transform:translateX(-50%);top:73px;max-width:246px;height:17px;line-height:17px;`
+            + `padding:0 10px;border-radius:9px;font-size:13px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
+        parent.appendChild(el);
+        return el;
+    }
+    const section = document.getElementById(tile.section);
+    const label = document.getElementById(tile.label);
+    if (!section || !label) return null;
+    if (!section.style.position) {
+        section.style.position = 'relative';
+        touchedSections.push(section);
+    }
+    el.style.cssText += `left:0;top:${label.offsetTop + label.offsetHeight + 1}px;width:${label.offsetWidth}px;`
+        + `font-size:14px;line-height:17px;color:${MUTED};`;
+    section.appendChild(el);
+    return el;
+}
+
 function render(entries) {
+    document.querySelectorAll('[data-plugin-surface]').forEach(el => el.remove());
+    touchedSections.forEach(el => { el.style.position = ''; });
+    touchedSections = [];
+
     const container = document.getElementById('header-right-controls');
-    if (!container) return;
-    container.querySelectorAll('[data-plugin-surface]').forEach(el => el.remove());
-    const anchor = container.firstChild;
+    const anchor = container?.firstChild;
+    const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
     for (const { plugin, surface } of entries) {
-        container.insertBefore(buildButton(plugin, surface), anchor);
+        if (surface.kind === 'header-button') {
+            if (container) container.insertBefore(buildButton(plugin, surface), anchor);
+            continue;
+        }
+        const slot = `${surface.kind}:${surface.tile}`;
+        if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
+        if (placeTileSurface(surface)) usedSlots.add(slot);
     }
 }
 
