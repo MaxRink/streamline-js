@@ -30,19 +30,25 @@ export function isPluginSettingVisible(schema) {
 
 // Pass the actual skin address, including its assigned port, explicitly.
 // Cross-origin referrers can lose the path/query or be absent in a WebView.
-export function pluginUiUrl(plugin, apiBaseUrl, currentUrl) {
+// `returnPage` is the skin page the plugin returns to (settings by default, or
+// null for the dashboard); `view` selects a screen inside the plugin's own UI.
+export function pluginUiUrl(plugin, apiBaseUrl, currentUrl, { view = '', returnPage = 'settings' } = {}) {
     const endpoints = Array.isArray(plugin?.api) ? plugin.api : [];
     if (!endpoints.some(e => e?.type === 'http' && e?.id === 'ui')) return null;
     const uiUrl = `${apiBaseUrl}/plugins/${encodeURIComponent(plugin.id)}/ui`;
-    if (!currentUrl) return uiUrl;
-    try {
-        const returnTo = new URL(currentUrl);
-        if (!['http:', 'https:'].includes(returnTo.protocol) || returnTo.username || returnTo.password) return uiUrl;
-        returnTo.searchParams.set('page', 'settings');
-        return `${uiUrl}?returnTo=${encodeURIComponent(returnTo.href)}`;
-    } catch {
-        return uiUrl;
+    const params = [];
+    if (currentUrl) {
+        try {
+            const returnTo = new URL(currentUrl);
+            if (['http:', 'https:'].includes(returnTo.protocol) && !returnTo.username && !returnTo.password) {
+                if (returnPage) returnTo.searchParams.set('page', returnPage);
+                else returnTo.searchParams.delete('page');
+                params.push(`returnTo=${encodeURIComponent(returnTo.href)}`);
+            }
+        } catch { /* no returnTo: the plugin falls back to its own default */ }
     }
+    if (view) params.push(`view=${encodeURIComponent(view)}`);
+    return params.length ? `${uiUrl}?${params.join('&')}` : uiUrl;
 }
 
 // Only these two kinds are checkable: updateAllPlugins skips everything else
