@@ -79,7 +79,7 @@ function parseAction(raw, kind) {
 }
 
 function parseSurface(raw) {
-    if (!raw || typeof raw !== 'object' || !ID_RE.test(raw.id)) return null;
+    if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !ID_RE.test(raw.id)) return null;
     const { id, kind } = raw;
     const action = parseAction(raw.action, kind);
 
