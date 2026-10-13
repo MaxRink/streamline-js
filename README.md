@@ -319,9 +319,11 @@ line on a tile, and an extra **mode** for a tile. A button opens the plugin's ow
 set that tile's value when you tap it.
 
 A mode appears as a small toggle under the tile's name, like `°C | %` under **Brew**. Select the plugin's
-option and the tile shows the plugin's value with its own four presets. `-` / `+` step it, and tapping
-the value lets you type any number, including a negative one. Select the first option to get the normal
-tile back. Modes can go on Grind, Dose, Drink, Brew, Steam and Flush.
+option and the tile shows the plugin's value. `-` / `+` step it, and tapping the value lets you type
+a number; the number pad offers a `±` key for negative numbers when the mode works in whole numbers.
+Brew, Drink, Flush and Steam also show the plugin's own presets (up to four); Grind and Dose have no
+preset row. Select the first option to get the normal tile back. Modes can go on Grind, Dose, Drink,
+Brew, Steam and Flush, and the Steam one is hidden while steam is in Auto.
 
 All of these look like the built-in controls, and disappear when the plugin is switched off or does not
 answer. Plugin authors: see [docs/plugin-surfaces.md](docs/plugin-surfaces.md).

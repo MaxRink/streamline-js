@@ -130,8 +130,10 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 ## Checklist
 
 - Manifest has `permissions: ["api"]` and an http endpoint for every id you use in `skin` (`skin`, `ui`, and any
-  `call` endpoint).
+  `call` endpoint). A `call` endpoint is not named `settings`, `enable`, `disable`, `source`, `update` or
+  `install`.
 - `skin` answers quickly (the skin gives it 2 s) and never needs the machine to be connected.
+- A `call` endpoint answers within about 5 s; the skin gives up after that and shows what `skin` says.
 - Every `call` endpoint validates its number; the skin sends what the user typed within `min`..`max`, but anyone can
   POST to your endpoint.
 - Answer `skin` with the value you actually applied; that is what the tile shows next.
@@ -146,7 +148,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `tile-line` | under a tile's label | `tile`, `text` (required, 40) |
 | `tile-mode` | an option in the toggle under a tile's label | see [Tile modes](#tile-modes) |
 
-`tile` is one of `dose`, `drink`, `grind`, `temperature`. Lengths are characters. Text is shown with
+`tile` is one of `dose`, `drink`, `grind`, `temperature`; a `tile-mode` can also be on `steam` or `flush`. Lengths are characters. Text is shown with
 `textContent`, never as HTML.
 
 ## Limits
@@ -180,7 +182,7 @@ A `tile-mode` lets a plugin add its own option to a left-column tile, the way th
 | `min`, `max` | required, `min < max`, each within -9999..9999 and a multiple of 10^-`decimals` (`min` 0.4 with `decimals` 0 is dropped) |
 | `step` | what the tile's `-` / `+` change by, rounded to `decimals`, at least 10^-`decimals` and at most `max - min`, default 1 (`step` 0.4 with `decimals` 0 is dropped; 0.5 rounds up to 1) |
 | `decimals` | digits shown, 0 to 2, default 0 |
-| `presets` | up to 4 numbers shown in the tile's preset row while the mode is selected; tiles without a preset row ignore them |
+| `presets` | up to 4 numbers shown in the tile's preset row while the mode is selected; only Brew, Drink, Flush and Steam have a preset row, Grind and Dose ignore them |
 | `action` | required, a `call`; a mode without a valid one is dropped |
 
 While the mode is selected the tile shows `value` and `unit`, `-` / `+` step by `step`, tapping the value opens the
@@ -200,6 +202,9 @@ Rules:
   machine, and selecting the built-in option shows them again. A mode with no `presets` leaves that row empty.
 - The selected mode is not remembered: after a reload the tile shows its built-in mode. What the plugin applied
   stays in effect, and the tile shows the real result.
+- A `steam` mode is not drawn while the built-in steam mode is Auto (Auto Steam Calculator), because Auto owns
+  the steam `-` / `+`; a selected steam mode is dropped when Auto is switched on, and the toggle comes back
+  when Auto is left.
 - Without the plugin, or with it off, the tile is exactly as it is today.
 - The skin never writes anything for a mode; it only calls your endpoint. Changes to the profile or workflow are
   your plugin's to make, through Decaid's API.
@@ -228,11 +233,13 @@ An invalid action drops the action only; the surface still shows, inert.
 
 - **`call`**: `{ "type": "call", "endpoint": "apply", "field": "percent" }`, on a `tile-mode` only.
   The skin sends `POST /api/v1/plugins/{id}/{endpoint}` with the JSON body `{ "<field>": <number> }`. `endpoint`
-  must be an http endpoint your manifest declares and is never `skin`, `settings`, `enable`, `disable`,
-  `source`, `update` or `install` (Decaid serves those routes itself, so they never reach your endpoint); `field` is a name of letters, digits and
-  `_` starting with a letter, up to 40 characters. The reply body is ignored; a non-2xx status or a timeout is
-  logged and the tile goes back to what `skin` says. Repeated `-` / `+` presses are sent at most about every
-  300 ms, and only one call per tile is in flight, newest wins.
+  must be an http endpoint your manifest declares and is never one of `skin`, `settings`, `enable`, `disable`,
+  `source`, `update` or `install` (Decaid serves those routes itself, so they never reach your endpoint).
+  `field` is a name of letters, digits and `_` starting with a letter, up to 40 characters. The reply body is
+  ignored. A non-2xx status is logged, and a call that does not answer within about 5 s is given up; either way the
+  tile goes back to what `skin` says. `-` / `+` presses are sent after the user pauses for about 300 ms (only the
+  last number is sent); presets and numpad entry are sent immediately. Only one call per tile is in flight, and
+  the newest wins.
 
 Nothing else can be written: no machine commands, and no profile changes other than the remembered dose, yield,
 grind and the profile temperature that `set` itself writes (see the `brewTemperature` note above).
