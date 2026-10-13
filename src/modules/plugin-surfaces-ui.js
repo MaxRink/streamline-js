@@ -32,9 +32,11 @@ const TILES = {
     drink: { section: 'drink-section', label: 'drink-label', control: 'drink-out-minus' },
     temperature: { section: 'brew-section', label: 'brew-label', control: 'temp-minus' },
     flush: { section: 'flush-section', label: 'flush-label', control: 'flush-minus' },
+    // Only a tile-mode goes on steam (the parser takes no hint or line for it). Its
+    // label block already holds the Time | Flow toggle, so the mode toggle goes in
+    // the free line under that, and `label` is the toggle itself.
+    steam: { section: 'steam-section', label: 'steam-mode-toggle', control: 'steam-minus' },
 };
-// `steam` can take a mode too, but its label slot already holds the steam mode
-// toggle; plugin options are added there in a later change.
 const MUTED = 'var(--low-contrast-white)';
 
 let started = false;
@@ -171,7 +173,7 @@ function placeTileSurface(plugin, surface) {
 function builtinLabel(tile) {
     if (tile === 'temperature') return getTempUnit() === 'F' ? '°F' : '°C';
     if (tile === 'dose' || tile === 'drink') return 'g';
-    if (tile === 'flush') return 's';
+    if (tile === 'flush' || tile === 'steam') return 's';
     return document.getElementById(TILES[tile].label)?.textContent.trim() || '';
 }
 
@@ -211,14 +213,16 @@ function paintToggle(tile) {
 // which is not interactive, to give a touch target.
 function placeModeToggle(tile, modes) {
     const { section, label: labelId } = TILES[tile];
-    const sectionEl = document.getElementById(section);
     const label = document.getElementById(labelId);
+    // Steam's toggle sits in its own block, which is what the line is placed in.
+    const sectionEl = tile === 'steam' ? label?.parentElement : document.getElementById(section);
     if (!sectionEl || !label) return false;
     if (!sectionEl.style.position) {
         sectionEl.style.position = 'relative';
         touchedSections.push(sectionEl);
     }
-    const hit = 24;
+    // Over the label there is room to grow upward; over steam's toggle there is not.
+    const hit = tile === 'steam' ? 17 : 24;
     const top = label.offsetTop + label.offsetHeight + 1;
     const root = document.createElement('div');
     root.dataset.pluginSurface = `mode:${tile}`;
@@ -247,6 +251,11 @@ function placeModeToggle(tile, modes) {
         root.appendChild(button);
     });
     sectionEl.appendChild(root);
+    if (tile === 'steam' && !label.dataset.pluginModeWired) {
+        // Choosing a built-in steam mode ends a plugin one.
+        label.dataset.pluginModeWired = '1';
+        label.addEventListener('click', () => setSelectedMode('steam', null));
+    }
     return true;
 }
 
