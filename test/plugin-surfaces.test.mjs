@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, skinPlugins, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -123,4 +123,110 @@ test('only loaded plugins with an http skin endpoint are asked', () => {
     ];
     assert.deepEqual(skinPlugins(plugins).map(p => p.id), ['a']);
     assert.deepEqual(skinPlugins(null), []);
+});
+
+const mode = over => ({ id: 'pct', kind: 'tile-mode', tile: 'temperature', label: '%', unit: '%', value: 5,
+    min: -20, max: 20, step: 1, decimals: 0, presets: [-5, -2, 2, 5],
+    action: { type: 'call', endpoint: 'apply', field: 'percent' }, ...over });
+
+test('tile-mode: the documented example parses as written', () => {
+    assert.deepEqual(ok([mode()])[0], {
+        id: 'pct', kind: 'tile-mode', tile: 'temperature', label: '%', unit: '%', value: 5,
+        min: -20, max: 20, step: 1, decimals: 0, presets: [-5, -2, 2, 5],
+        action: { type: 'call', endpoint: 'apply', field: 'percent' },
+    });
+});
+
+test('tile-mode: any left-column tile, defaults, numeric strings, and numbers clamped to min..max', () => {
+    for (const tile of ['dose', 'drink', 'grind', 'temperature', 'steam', 'flush']) assert.equal(ok([mode({ tile })]).length, 1);
+    assert.equal(ok([mode({ tile: 'hotwater' })]).length, 0);
+    const m = ok([mode({ step: undefined, decimals: undefined, unit: undefined, value: '99', presets: [-50, '3', 'x', null, 1, 2, 4] })])[0];
+    assert.equal(m.step, 1);
+    assert.equal(m.decimals, 0);
+    assert.equal('unit' in m, false);
+    assert.equal(m.value, 20);
+    assert.deepEqual(m.presets, [-20, 3, 1, 2]); // junk skipped, four at most
+});
+
+test('tile-mode: a mode that cannot be stepped, shown or called is dropped', () => {
+    for (const bad of [
+        { label: '' }, { label: 5 }, { value: 'x' }, { value: undefined },
+        { min: 5, max: 5 }, { min: 10, max: -10 }, { min: -10000 }, { max: 10000 }, { min: 'a' },
+        { step: 0 }, { step: -1 }, { step: 41 }, { decimals: 3 }, { decimals: 1.5 },
+        { action: undefined }, { action: { type: 'open', view: 'main' } },
+        { action: { type: 'set', field: 'targetYield', value: 36 } },
+        { action: { type: 'call', endpoint: 'skin', field: 'percent' } },
+        { action: { type: 'call', endpoint: 'bad id', field: 'percent' } },
+        { action: { type: 'call', endpoint: 'apply', field: '1x' } },
+        { action: { type: 'call', endpoint: 'apply', field: 'a b' } },
+    ]) assert.equal(ok([mode(bad)]).length, 0, JSON.stringify(bad));
+});
+
+test('tile-mode: label and unit are capped, one mode per tile', () => {
+    const m = ok([mode({ label: 'abcdefghij', unit: 'abcdef' })])[0];
+    assert.equal(m.label, 'abcdef');
+    assert.equal(m.unit, 'abc');
+    const two = ok([mode(), mode({ id: 'other' }), mode({ id: 'dose-m', tile: 'dose' })]);
+    assert.deepEqual(two.map(x => x.id), ['pct', 'dose-m']);
+});
+
+test('call is only valid on a tile-mode; the mode may share a tile with a hint and a line', () => {
+    const call = { type: 'call', endpoint: 'apply', field: 'percent' };
+    const s = ok([
+        { id: 'h', kind: 'tile-hint', tile: 'temperature', text: 'x', action: call },
+        { id: 'b', kind: 'header-button', label: 'x', action: call },
+        mode(),
+    ]);
+    assert.deepEqual(s.map(x => [x.id, 'action' in x]), [['h', false], ['b', false], ['pct', true]]);
+    const same = ok([
+        { id: 'h', kind: 'tile-hint', tile: 'temperature', text: 'x' },
+        { id: 'l', kind: 'tile-line', tile: 'temperature', text: 'x' },
+        mode(),
+    ]);
+    assert.equal(same.length, 3);
+});
+
+test('callableEndpoint: only an http endpoint the plugin declares, never skin', () => {
+    const plugin = { api: [{ id: 'skin', type: 'http' }, { id: 'apply', type: 'http' }, { id: 'stream', type: 'websocket' }] };
+    assert.equal(callableEndpoint(plugin, 'apply'), true);
+    assert.equal(callableEndpoint(plugin, 'skin'), false);
+    assert.equal(callableEndpoint(plugin, 'stream'), false);
+    assert.equal(callableEndpoint(plugin, 'other'), false);
+    assert.equal(callableEndpoint({}, 'apply'), false);
+    assert.equal(callableEndpoint(plugin, 5), false);
+});
+
+test('tile-mode: step finer than decimals is dropped; a valid step is rounded to decimals', () => {
+    for (const bad of [{ step: 0.4, decimals: 0 }, { step: 0.004, decimals: 2 }, { step: 0.04, decimals: 1 }, { step: 0.2, decimals: 0 }]) {
+        assert.equal(ok([mode(bad)]).length, 0, JSON.stringify(bad));
+    }
+    assert.equal(ok([mode({ step: 0.01, decimals: 2 })])[0].step, 0.01);
+    assert.equal(ok([mode({ step: 0.5, decimals: 1 })])[0].step, 0.5);
+    assert.equal(ok([mode({ step: 1.4, decimals: 0 })])[0].step, 1);
+    assert.equal(ok([mode({ step: 0.5, decimals: 0 })])[0].step, 1); // rounds up to the finest step shown
+    assert.equal(ok([mode({ step: 41, decimals: 0 })]).length, 0);
+});
+
+test('tile-mode: min and max must fit decimals', () => {
+    assert.equal(ok([mode({ min: 0.4, max: 10, decimals: 0 })]).length, 0);
+    assert.equal(ok([mode({ min: 0, max: 9.5, decimals: 0 })]).length, 0);
+    assert.equal(ok([mode({ min: 0.5, max: 9.5, decimals: 1, step: 0.5 })]).length, 1);
+    assert.equal(ok([mode({ min: 0.125, max: 9, decimals: 2 })]).length, 0);
+});
+
+test('tile-mode: value and presets are clamped and rounded to decimals', () => {
+    const m = ok([mode({ min: 0, max: 10, decimals: 1, step: 0.1, value: 3.14159, presets: [0.26, 99, -3, '1.04'] })])[0];
+    assert.equal(m.value, 3.1);
+    assert.deepEqual(m.presets, [0.3, 10, 0, 1]);
+    assert.equal(ok([mode({ value: 4.6 })])[0].value, 5);
+    assert.deepEqual(ok([mode({ presets: [1.4, 2.5] })])[0].presets, [1, 3]);
+});
+
+test('reserved endpoint ids are neither parsed nor callable', () => {
+    for (const id of ['skin', 'settings', 'enable', 'disable', 'source', 'update', 'install']) {
+        assert.ok(RESERVED_ENDPOINTS.includes(id), id);
+        const action = { type: 'call', endpoint: id, field: 'percent' };
+        assert.equal(ok([mode({ action })]).length, 0, id);
+        assert.equal(callableEndpoint({ api: [{ id, type: 'http' }] }, id), false, id);
+    }
 });
