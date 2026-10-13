@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -194,4 +194,39 @@ test('callableEndpoint: only an http endpoint the plugin declares, never skin', 
     assert.equal(callableEndpoint(plugin, 'other'), false);
     assert.equal(callableEndpoint({}, 'apply'), false);
     assert.equal(callableEndpoint(plugin, 5), false);
+});
+
+test('tile-mode: step finer than decimals is dropped; a valid step is rounded to decimals', () => {
+    for (const bad of [{ step: 0.4, decimals: 0 }, { step: 0.004, decimals: 2 }, { step: 0.04, decimals: 1 }, { step: 0.2, decimals: 0 }]) {
+        assert.equal(ok([mode(bad)]).length, 0, JSON.stringify(bad));
+    }
+    assert.equal(ok([mode({ step: 0.01, decimals: 2 })])[0].step, 0.01);
+    assert.equal(ok([mode({ step: 0.5, decimals: 1 })])[0].step, 0.5);
+    assert.equal(ok([mode({ step: 1.4, decimals: 0 })])[0].step, 1);
+    assert.equal(ok([mode({ step: 0.5, decimals: 0 })])[0].step, 1); // rounds up to the finest step shown
+    assert.equal(ok([mode({ step: 41, decimals: 0 })]).length, 0);
+});
+
+test('tile-mode: min and max must fit decimals', () => {
+    assert.equal(ok([mode({ min: 0.4, max: 10, decimals: 0 })]).length, 0);
+    assert.equal(ok([mode({ min: 0, max: 9.5, decimals: 0 })]).length, 0);
+    assert.equal(ok([mode({ min: 0.5, max: 9.5, decimals: 1, step: 0.5 })]).length, 1);
+    assert.equal(ok([mode({ min: 0.125, max: 9, decimals: 2 })]).length, 0);
+});
+
+test('tile-mode: value and presets are clamped and rounded to decimals', () => {
+    const m = ok([mode({ min: 0, max: 10, decimals: 1, step: 0.1, value: 3.14159, presets: [0.26, 99, -3, '1.04'] })])[0];
+    assert.equal(m.value, 3.1);
+    assert.deepEqual(m.presets, [0.3, 10, 0, 1]);
+    assert.equal(ok([mode({ value: 4.6 })])[0].value, 5);
+    assert.deepEqual(ok([mode({ presets: [1.4, 2.5] })])[0].presets, [1, 3]);
+});
+
+test('reserved endpoint ids are neither parsed nor callable', () => {
+    for (const id of ['skin', 'settings', 'enable', 'disable', 'source', 'update', 'install']) {
+        assert.ok(RESERVED_ENDPOINTS.includes(id), id);
+        const action = { type: 'call', endpoint: id, field: 'percent' };
+        assert.equal(ok([mode({ action })]).length, 0, id);
+        assert.equal(callableEndpoint({ api: [{ id, type: 'http' }] }, id), false, id);
+    }
 });
