@@ -10632,6 +10632,7 @@ window.updateScaleDeviceSetting = function(deviceId, enabled) {
     if (enabled) values[deviceId] = true;
     else delete values[deviceId];
     updateReaSetting(key, values, false);
+    renderDeviceListFromCache();
 };
 
 
