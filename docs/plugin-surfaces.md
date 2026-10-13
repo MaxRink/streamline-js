@@ -59,9 +59,10 @@ An invalid action drops the action only; the surface still shows, inert.
   `view` is the same id charset as above. `presentation` is a hint: `page` (default, same-frame navigation
   with `returnTo`) or `overlay`. Anything else, and `overlay` until it exists, behaves as `page`.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
-  `targetDoseWeight` (1 to 120), `targetYield` (1 to 200), `grinderSetting` (0 to 9999) or `brewTemperature`
-  (70 to 110, **degrees Celsius**). `value` is a number or a numeric string; it is clamped to that range and
-  rounded to hundredths. It is applied exactly as if the user had typed it into the tile, so **the active profile
+  `targetDoseWeight` (1 to 30), `targetYield` (1 to 2000), `grinderSetting` (0 to 9999) or `brewTemperature`
+  (70 to 105, **degrees Celsius**). The maximums are the ones the tile enforces when the user types a value;
+  the minimums are stricter than the tile's 0. `value` is a number or a numeric string; it is clamped to that
+  range and rounded to hundredths. It goes through the same setters as a tile edit, so **the active profile
   remembers it** until it is changed again.
 
   > **`brewTemperature` flattens the profile.** The tile's setter gives *every step* of the profile the same
@@ -69,4 +70,5 @@ An invalid action drops the action only; the surface still shows, inert.
   > profile then remembers it. If your plugin needs to keep the shape, for example an offset of the whole curve,
   > do not use `set`: make the change from your plugin's own page or endpoint and write the profile yourself.
 
-Nothing else can be written: no machine commands, no profile changes.
+Nothing else can be written: no machine commands, and no profile changes other than the remembered dose, yield,
+grind and the profile temperature that `set` itself writes (see the `brewTemperature` note above).

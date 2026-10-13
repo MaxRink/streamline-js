@@ -316,8 +316,8 @@ export function applyPluginSet(field, value) {
     if (n === null) return false;
     const dose = parseFloat(document.getElementById('dose-in-value')?.textContent);
     const drink = parseFloat(document.getElementById('drink-out-value')?.textContent);
-    markTileInteraction();
     if (field === 'grinderSetting') {
+        markTileInteraction();
         updateGrindValue(n);
         updateGrindDisplay({ grinderSetting: String(n) });
         flashElement(document.getElementById('grind-value'));
@@ -326,12 +326,14 @@ export function applyPluginSet(field, value) {
     if (field === 'brewTemperature') {
         // Celsius, like the workflow. Same setter as the tile: every step of the
         // profile gets this temperature.
+        markTileInteraction();
         updateTemperatureValue(n);
         updateTemperatureDisplay(n);
         flashElement(document.getElementById('temp-value'));
         return true;
     }
     if (isNaN(dose) || isNaN(drink)) return false;
+    markTileInteraction();
     if (field === 'targetDoseWeight') {
         updateDoseValue('in', n);
         updateDrinkOutPresetsDisplay(n, drink);

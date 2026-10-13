@@ -10,15 +10,18 @@ export const SKIN_VERSION = 1;
 export const MAX_SURFACES = 3;      // per plugin, all kinds together
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
-// The fields `set` may write, with the same ranges the numpad offers.
+// The fields `set` may write. Each maximum is the one the tile itself enforces when
+// the user types a value (ui.js makeEditable handlers; brew temperature also caps
+// the +/- buttons at 105). The tile's minimum is 0; a plugin may not go below the
+// minimum listed here, which is stricter than the tile.
 // brewTemperature is in degrees Celsius. Applying it sets every step of the
 // profile to that one value (the tile's own behaviour), flattening a profile
 // that has temperature steps; see docs/plugin-surfaces.md.
 export const SET_LIMITS = {
-    targetDoseWeight: { min: 1, max: 120 },
-    targetYield: { min: 1, max: 200 },
+    targetDoseWeight: { min: 1, max: 30 },
+    targetYield: { min: 1, max: 2000 },
     grinderSetting: { min: 0, max: 9999 },
-    brewTemperature: { min: 70, max: 110 },
+    brewTemperature: { min: 70, max: 105 },
 };
 export const SET_FIELDS = Object.keys(SET_LIMITS);
 export const PRESENTATIONS = ['page', 'overlay'];
@@ -57,8 +60,8 @@ function parseOpen(action) {
 // A finite number (or numeric string) clamped to the field's range, to
 // hundredths; null when it is not a number or the field is not settable.
 export function clampSetValue(field, value) {
+    if (!Object.prototype.hasOwnProperty.call(SET_LIMITS, field)) return null;
     const limits = SET_LIMITS[field];
-    if (!limits) return null;
     const n = typeof value === 'number' ? value
         : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
     if (!Number.isFinite(n)) return null;
