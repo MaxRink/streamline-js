@@ -2671,16 +2671,26 @@ export async function verifyVisualizerCredentials(username, password, serverUrl)
         if (!response.ok) {
             let detail = '';
             try {
-                const err = await response.json();
-                detail = err?.detail || err?.error || '';
-            } catch { /* non-JSON error body */ }
-            return { valid: false, error: detail || `API Error: ${response.status}` };
+                const body = await response.json();
+                detail = typeof body?.error === 'string' ? body.error :
+                    typeof body?.message === 'string' ? body.message : '';
+            } catch {
+                // A proxy or TLS failure may return no JSON body.
+            }
+            const error = new Error(detail || `API Error: ${response.status}`);
+            error.status = response.status;
+            throw error;
         }
         const result = await response.json();
-        return { valid: result.valid === true, error: result.error || null };
+        if (!result?.valid && typeof result?.error === 'string' && result.error) {
+            const error = new Error(result.error);
+            error.status = 401;
+            throw error;
+        }
+        return result.valid;
     } catch (error) {
-        logger.error('Failed to verify Visualizer credentials:', error.message);
-        return { valid: false, error: error.message || 'Connection failed' };
+        logger.error('Failed to verify Visualizer credentials:', error);
+        throw error;
     }
 }
 
