@@ -11,3 +11,11 @@ test('current bean context is a partial workflow update', () => {
     assert.deepEqual(currentBeanContext({ id: 'bean', name: 'Lot', roaster: 'Roaster' }, { id: 'batch', roastDate: '2026-10-11' }), { beanBatchId: 'batch', coffeeName: 'Lot', coffeeRoaster: 'Roaster' });
     assert.equal(currentBeanContext(null, { id: 'batch' }), null);
 });
+
+test('missing coffee labels use the nullable workflow representation', () => {
+    for (const value of [undefined, null, '']) {
+        assert.deepEqual(currentBeanContext({ id: 'bean', name: value, roaster: value }, { id: 'batch' }), {
+            beanBatchId: 'batch', coffeeName: null, coffeeRoaster: null,
+        });
+    }
+});

@@ -340,23 +340,6 @@ function setupHistoryLongPress() {
             btn?.addEventListener(ev, (e) => e.stopPropagation()));
     });
 
-    if (!document.getElementById('current-bean-selection-btn')) {
-        const beanButton = document.createElement('button');
-        beanButton.id = 'current-bean-selection-btn';
-        beanButton.type = 'button';
-        beanButton.textContent = getTranslation('Select current coffee batch');
-        beanButton.className = "settings-button mx-auto my-2 flex items-center justify-center rounded-[22.5px] border-[1.5px] border-solid border-[var(--mimoja-blue-v2)] px-3 py-2 font-['Inter'] text-[18px] font-semibold text-[var(--mimoja-blue-v2)]";
-        beanButton.dataset.i18nKey = 'Select current coffee batch';
-        ['pointerdown', 'mousedown', 'touchstart'].forEach(event => beanButton.addEventListener(event, e => e.stopPropagation()));
-        beanButton.addEventListener('click', () => openBeanSelectionModal({
-            onSaved: () => showToast(getTranslation('Current workflow coffee updated'), 2400, 'success'),
-        }).catch(error => {
-            logger.warn('Coffee batch selection failed:', error);
-            showToast(getTranslation('Could not open coffee selection'), 4000, 'error');
-        }));
-        panel.append(beanButton);
-    }
-
     setupPressAndHold(panel, () => {}, () => {
         const items = [
             {
@@ -376,9 +359,9 @@ function setupHistoryLongPress() {
             { label: getTranslation('Assisted dial-in analysis'), onSelect: () => openAssistedDialIn('analyze') },
             { label: getTranslation('Assisted dial-in feedback'), onSelect: () => openAssistedDialIn('feedback') },
             {
-                label: getTranslation('Select current coffee batch'),
+                label: getTranslation('Select coffee batch for next shot'),
                 onSelect: () => openBeanSelectionModal({
-                    onSaved: () => showToast(getTranslation('Current workflow coffee updated'), 2400, 'success'),
+                    onSaved: () => showToast(getTranslation('Coffee for next shot updated'), 2400, 'success'),
                 }).catch(error => {
                     logger.warn('Coffee batch selection failed:', error);
                     showToast(getTranslation('Could not open coffee selection'), 4000, 'error');

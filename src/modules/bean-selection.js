@@ -11,7 +11,7 @@ export function currentBeanContext(bean, batch) {
     if (typeof bean?.id !== 'string' || !bean.id || typeof batch?.id !== 'string' || !batch.id || (batch.beanId != null && String(batch.beanId) !== bean.id)) return null;
     return {
         beanBatchId: String(batch.id),
-        coffeeName: String(bean.name || ''),
-        coffeeRoaster: String(bean.roaster || ''),
+        coffeeName: bean.name ? String(bean.name) : null,
+        coffeeRoaster: bean.roaster ? String(bean.roaster) : null,
     };
 }

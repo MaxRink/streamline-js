@@ -2,18 +2,18 @@ import { getBeans, getBeanBatches, updateWorkflow } from './api.js';
 import { getTranslation } from './i18n.js';
 import { selectableBeans, selectableBatches, currentBeanContext } from './bean-selection.js';
 
-/** Select and persist the current workflow bean batch only; historical shots are untouched. */
+/** Select the bean batch for the next shot; normal workflow cleanup clears it afterward. */
 export async function openBeanSelectionModal({ onSaved } = {}) {
     const token = { active: true, generation: 0 };
     const dialog = document.createElement('dialog');
-    dialog.setAttribute('aria-label', getTranslation('Select coffee batch'));
+    dialog.setAttribute('aria-labelledby', 'bean-selection-heading');
     dialog.className = 'rounded-2xl bg-[var(--background-color)] p-6 text-[var(--text-primary)]';
     dialog.innerHTML = `<form method="dialog" class="flex w-[min(92vw,640px)] flex-col gap-5">
-      <h2 class="text-[26px]">${getTranslation('Select coffee batch')}</h2>
+      <h2 id="bean-selection-heading" class="text-[26px]">${getTranslation('Select coffee batch for next shot')}</h2>
       <label class="flex flex-col gap-2"><span>${getTranslation('Coffee')}</span><select name="bean" class="rounded-lg p-3 text-black" required><option value="">${getTranslation('Choose coffee')}</option></select></label>
       <label class="flex flex-col gap-2"><span>${getTranslation('Batch')}</span><select name="batch" class="rounded-lg p-3 text-black" required disabled><option value="">${getTranslation('Choose batch')}</option></select></label>
       <p data-status aria-live="polite">${getTranslation('Loading coffee catalog…')}</p>
-      <div class="flex justify-end gap-3"><button value="cancel" class="rounded-lg p-3">${getTranslation('Cancel')}</button><button type="button" data-save class="rounded-lg p-3" disabled>${getTranslation('Use for current workflow')}</button></div>
+      <div class="flex justify-end gap-3"><button value="cancel" formnovalidate class="rounded-lg p-3">${getTranslation('Cancel')}</button><button type="button" data-save class="rounded-lg p-3" disabled>${getTranslation('Use for next shot')}</button></div>
     </form>`;
     document.body.appendChild(dialog);
     const form = dialog.querySelector('form');
@@ -57,12 +57,13 @@ export async function openBeanSelectionModal({ onSaved } = {}) {
         save.disabled = true;
         beanSelect.disabled = true;
         batchSelect.disabled = true;
-        status.textContent = getTranslation('Saving current workflow…');
+        status.textContent = getTranslation('Saving coffee for next shot…');
         try {
             await updateWorkflow({ context });
             if (token.active) { onSaved?.(context); dialog.close(); }
-        } catch (_) { if (token.active) { save.disabled = false; beanSelect.disabled = false; batchSelect.disabled = false; status.textContent = getTranslation('Could not save current workflow'); } }
+        } catch (_) { if (token.active) { save.disabled = false; beanSelect.disabled = false; batchSelect.disabled = false; status.textContent = getTranslation('Could not save coffee for next shot'); } }
     });
+    dialog.showModal();
     try {
         beans = selectableBeans(await getBeans(false));
         if (!token.active) return dialog;
@@ -76,6 +77,5 @@ export async function openBeanSelectionModal({ onSaved } = {}) {
         if (!token.active) return dialog;
         status.textContent = getTranslation('Could not load coffee catalog');
     }
-    dialog.showModal();
     return dialog;
 }
