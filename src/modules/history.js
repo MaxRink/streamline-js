@@ -327,6 +327,11 @@ async function copyMd(md) {
 //
 // Summary actions load measurements only when selected; plugin actions can open
 // directly from a selected shot even when its measurements are not cached.
+let dialInAvailable = false;
+function refreshDialInAvailability() {
+    getPlugins().then(plugins => { dialInAvailable = !!findAssistedDialInPlugin(plugins); });
+}
+
 function setupHistoryLongPress() {
     const panel = document.getElementById('shot-history-panel');
     if (!panel) return;
@@ -340,7 +345,13 @@ function setupHistoryLongPress() {
             btn?.addEventListener(ev, (e) => e.stopPropagation()));
     });
 
+    refreshDialInAvailability();
     setupPressAndHold(panel, () => {}, () => {
+        // Dial-in entries only appear when the plugin is installed and loaded, so
+        // nobody taps one just to get a "not installed" toast. Uses the cached
+        // answer so the menu opens instantly; the refresh catches installs for next time.
+        const hasDialIn = dialInAvailable;
+        refreshDialInAvailability();
         const items = [
             {
                 label: getTranslation('Discuss with Derek'),
@@ -356,8 +367,6 @@ function setupHistoryLongPress() {
                     if (md != null) copyMd(md);
                 },
             },
-            { label: getTranslation('Assisted dial-in analysis'), onSelect: () => openAssistedDialIn('analyze') },
-            { label: getTranslation('Assisted dial-in feedback'), onSelect: () => openAssistedDialIn('feedback') },
             {
                 label: getTranslation('Select coffee batch for next shot'),
                 onSelect: () => openBeanSelectionModal({
@@ -367,16 +376,22 @@ function setupHistoryLongPress() {
                     showToast(getTranslation('Could not open coffee selection'), 4000, 'error');
                 }),
             },
-            {
-                label: getTranslation('Capture bean weight'),
-                onSelect: () => openBeanScaleCaptureModal({
-                    onCapture: capture => openAssistedDialIn('feedback', capture),
-                }).catch(error => {
-                    logger.warn('Bean scale capture failed:', error);
-                    showToast(getTranslation('Could not open bean scale capture'), 4000, 'error');
-                }),
-            },
         ];
+        if (hasDialIn) {
+            items.push(
+                { label: getTranslation('Assisted dial-in analysis'), onSelect: () => openAssistedDialIn('analyze') },
+                { label: getTranslation('Assisted dial-in feedback'), onSelect: () => openAssistedDialIn('feedback') },
+                {
+                    label: getTranslation('Capture bean weight'),
+                    onSelect: () => openBeanScaleCaptureModal({
+                        onCapture: capture => openAssistedDialIn('feedback', capture),
+                    }).catch(error => {
+                        logger.warn('Bean scale capture failed:', error);
+                        showToast(getTranslation('Could not open bean scale capture'), 4000, 'error');
+                    }),
+                },
+            );
+        }
         // Manual upload: the one on screen, whichever the user has paged to.
         // Offered whenever Visualizer is switched on — with auto-upload off this
         // is the only way up, and with it on it re-sends a shot that was missed.
