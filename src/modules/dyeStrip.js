@@ -874,6 +874,16 @@ function wireOnce() {
         loadDyeStripData().then(() => { if (currentMode !== 'P') renderStrip(currentMode); }).catch(() => {});
     };
     window.addEventListener('focus', repoll);
+    // A plugin said the workflow changed (DYE2 may have written it). Leading call
+    // plus one trailing call, at least 2 s apart.
+    let lastRepoll = 0;
+    let repollTimer = null;
+    document.addEventListener('streamline:workflow-refresh', () => {
+        if (repollTimer) return;
+        const wait = 2000 - (Date.now() - lastRepoll);
+        if (wait <= 0) { lastRepoll = Date.now(); repoll(); return; }
+        repollTimer = setTimeout(() => { repollTimer = null; lastRepoll = Date.now(); repoll(); }, wait);
+    });
     document.addEventListener('visibilitychange', repoll);
     // The DYE button is a same-frame top-level nav away to the DYE2 plugin (see
     // openPluginOverlay); returning via the browser Back button restores this page

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -321,4 +321,21 @@ test('live names a websocket endpoint; it is only used when the plugin declares 
     assert.equal(liveEndpoint(plugin, { endpoint: 'other' }), null);
     assert.equal(liveEndpoint({}, { endpoint: 'changed' }), null);
     assert.equal(liveEndpoint(plugin, null), null);
+});
+
+test('pushWants: only {"what":"skin"} skips the workflow re-read', () => {
+    const both = { skin: true, workflow: true };
+    assert.deepEqual(pushWants('{"what":"skin"}'), { skin: true, workflow: false });
+    assert.deepEqual(pushWants({ what: 'skin' }), { skin: true, workflow: false });
+    assert.deepEqual(pushWants('{"what":"workflow"}'), both);
+    assert.deepEqual(pushWants('{}'), both);
+    assert.deepEqual(pushWants('not json'), both);
+    assert.deepEqual(pushWants(undefined), both);
+    assert.deepEqual(pushWants('null'), both);
+    assert.deepEqual(pushWants('"skin"'), both);
+});
+
+test('an empty surfaces list with live is a valid answer', () => {
+    assert.deepEqual(parseSkinAnswer({ version: 1, surfaces: [], live: { endpoint: 'changed' } }),
+        { surfaces: [], live: { endpoint: 'changed' } });
 });

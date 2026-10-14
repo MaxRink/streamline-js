@@ -730,7 +730,7 @@ export function connectPluginPush(pluginId, endpoint, onPush) {
         const socket = new ReconnectingWebSocket(
             `${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(endpoint)}`,
             [], { reconnectInterval: 5000, maxReconnectInterval: 60000 });
-        socket.onmessage = () => { try { onPush(); } catch (error) { logger.warn('Plugin push handler failed:', error); } };
+        socket.onmessage = (event) => { try { onPush(event?.data); } catch (error) { logger.warn('Plugin push handler failed:', error); } };
         return socket;
     });
 }
