@@ -428,6 +428,20 @@ test('numpad input: a call asks for the number with the stock numpad; limits are
     assert.equal(mode?.action?.input, undefined);
 });
 
+test('size: medium and large are kept on hints, lines and modes; anything else is the default', () => {
+    const hint = size => ok([{ id: 'h', kind: 'tile-hint', tile: 'dose', text: 'x', size }])[0];
+    assert.equal(hint('large').size, 'large');
+    assert.equal(hint('medium').size, 'medium');
+    for (const v of ['small', 'huge', 'LARGE', 3, null, undefined, {}]) assert.equal('size' in hint(v), false, String(v));
+    assert.equal(ok([{ id: 'l', kind: 'tile-line', tile: 'grind', text: 'x', size: 'large' }])[0].size, 'large');
+    const mode = size => ok([{ id: 'm', kind: 'tile-mode', tile: 'steam', label: 'A', value: 10, min: 1, max: 60, step: 1, decimals: 0,
+        presets: [], size, action: { type: 'call', endpoint: 'e', field: 'f' } }])[0];
+    assert.equal(mode('large').size, 'large');
+    assert.equal('size' in mode('x'), false);
+    // buttons take no size
+    assert.equal('size' in ok([{ id: 'b', kind: 'header-button', label: 'B', size: 'large' }])[0], false);
+});
+
 test('ratio-action: open or call only, one per answer, drawn by the skin', () => {
     const r = (extra, id = 'r') => ok([{ id, kind: 'ratio-action', ...extra }]);
     const open = { type: 'open', view: 'ratio', presentation: 'overlay' };

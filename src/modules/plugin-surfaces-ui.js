@@ -10,7 +10,7 @@ import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
@@ -45,6 +45,20 @@ const TILES = {
     hotwater: { section: 'hotwater-section', label: 'hot-water-mode-toggle', control: 'hot-water-vol-minus' },
 };
 const MUTED = 'var(--low-contrast-white)';
+
+// Text steps a plugin may ask for with `size`. `large` is the built-in Time | Flow
+// toggle's 21px on a 24px line. font/line: a line or toggle; pillFont/pill: a hint's
+// pill; hit: the touch height (grows upward over the label, which is not interactive);
+// hitDown: the same on tiles whose label is a control, where it grows downward.
+// `small` is the original look and must not change.
+const SIZE_SPEC = {
+    small: { font: 14, line: 17, pillFont: 13, pill: 17, hit: 24, hitDown: 17 },
+    medium: { font: 17, line: 20, pillFont: 15, pill: 20, hit: 32, hitDown: 28 },
+    large: { font: 21, line: 24, pillFont: 19, pill: 24, hit: 40, hitDown: 32 },
+};
+const DOWN_TILES = ['steam', 'hotwater', 'flush']; // the label (or toggle) above is a control
+const sizeAbove = size => SURFACE_SIZES[Math.max(0, SURFACE_SIZES.indexOf(size) - 1)];
+const largestSize = sizes => sizes.reduce((a, b) => (SURFACE_SIZES.indexOf(b) > SURFACE_SIZES.indexOf(a) ? b : a), 'small');
 
 let started = false;
 let touchedSections = [];
@@ -354,10 +368,15 @@ function buildTileSurface(plugin, surface) {
     return { root, el };
 }
 
-function placeTileSurface(plugin, surface) {
+function placeTileSurface(plugin, surface, size = surface.size || 'small') {
     const tile = TILES[surface.tile];
+    const spec = SIZE_SPEC[size];
     const { root, el } = buildTileSurface(plugin, surface);
-    const hit = surface.action ? 24 : 17; // the visible pill/line is 17px
+    // A hint is a pill, a line plain text; the visible part is `visible` px high.
+    const visible = surface.kind === 'tile-hint' ? spec.pill : spec.line;
+    const hit = surface.action ? spec.hit : visible;
+    // Text that does not fit at this step is drawn one step smaller.
+    const fits = () => size === 'small' || el.scrollWidth <= el.clientWidth + 1;
     root.style.position = 'absolute';
     root.style.overflow = surface.action ? 'visible' : 'hidden';
 
@@ -369,15 +388,17 @@ function placeTileSurface(plugin, surface) {
         // between the minus and plus buttons.
         root.style.left = '50%';
         root.style.transform = 'translateX(-50%)';
-        root.style.top = `${72 + 17 - hit}px`;
+        root.style.top = `${72 + visible - hit}px`;
         root.style.width = surface.action ? '100px' : 'auto';
         root.style.maxWidth = '246px';
         root.style.height = `${hit}px`;
         root.style.zIndex = '1';
-        el.style.cssText += `max-width:100%;height:17px;line-height:17px;padding:0 10px;border-radius:9px;`
-            + `font-size:13px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
+        // A bigger pill may be wider than the 100px touch box; it is still part of the button.
+        el.style.cssText += `max-width:${size === 'small' ? '100%' : '246px'};height:${visible}px;line-height:${visible}px;padding:0 ${size === 'small' ? 10 : 12}px;border-radius:${Math.ceil(visible / 2)}px;`
+            + `font-size:${spec.pillFont}px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
         if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--mimoja-blue-v2);';
         parent.appendChild(root);
+        if (!fits()) { root.remove(); return placeTileSurface(plugin, surface, sizeAbove(size)); }
         return root;
     }
     const section = document.getElementById(tile.section);
@@ -389,14 +410,15 @@ function placeTileSurface(plugin, surface) {
     }
     const top = label.offsetTop + label.offsetHeight + 1;
     root.style.left = '0';
-    root.style.top = `${top + 17 - hit}px`;
+    root.style.top = `${top + spec.line - hit}px`;
     root.style.width = `${label.offsetWidth}px`;
     root.style.height = `${hit}px`;
     root.style.zIndex = '1';
     if (surface.action) root.style.justifyContent = 'flex-start';
-    el.style.cssText += `width:100%;font-size:14px;line-height:17px;color:${MUTED};`;
+    el.style.cssText += `width:100%;font-size:${spec.font}px;line-height:${spec.line}px;color:${MUTED};`;
     if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;';
     section.appendChild(root);
+    if (!fits()) { root.remove(); return placeTileSurface(plugin, surface, sizeAbove(size)); }
     return root;
 }
 
@@ -460,7 +482,9 @@ function paintToggle(tile) {
 // over the label, which is not interactive, to give a touch target. The root is
 // wider than the label by the free gap before the -/+ control so three options fit;
 // it ignores pointer events itself so that gap never steals a tap.
-function placeModeToggle(tile, modes) {
+function placeModeToggle(tile, modes, size = largestSize(modes.map(m => m.surface.size || 'small'))) {
+    const spec = SIZE_SPEC[size];
+    const down = DOWN_TILES.includes(tile);
     const { section, label: labelId } = TILES[tile];
     const label = document.getElementById(labelId);
     // Steam's toggle sits in its own block, which is what the line is placed in.
@@ -471,7 +495,8 @@ function placeModeToggle(tile, modes) {
         touchedSections.push(sectionEl);
     }
     // Over the label there is room to grow upward; over steam's toggle there is not.
-    const hit = tile === 'steam' || tile === 'hotwater' ? 17 : 24;
+    // A bigger step on the tiles whose label is a control grows downward instead.
+    const hit = size === 'small' ? (tile === 'steam' || tile === 'hotwater' ? 17 : 24) : (down ? spec.hitDown : spec.hit);
     const extra = tile === 'steam' || tile === 'hotwater' ? 14 : 30;
     // Never run under the -/+ control: the row is cut at the free space before it
     // (measured, because the page may be scaled), less a few px of air.
@@ -488,9 +513,11 @@ function placeModeToggle(tile, modes) {
     root.dataset.pluginSurface = `mode:${tile}`;
     root.dataset.agentId = `plugin-tile:${tile}:tile-mode`;
     root.setAttribute('role', 'group');
-    root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${width}px;height:${hit}px;`
-        + `z-index:1;display:flex;align-items:flex-end;gap:${tile === 'steam' || tile === 'hotwater' || tile === 'flush' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
-        + `font-size:14px;line-height:17px;color:${MUTED};`;
+    // Text sits at the bottom of a root that grows upward, and at the top of one that grows downward.
+    const growsDown = size !== 'small' && down;
+    root.style.cssText = `position:absolute;left:0;top:${growsDown ? top : top + spec.line - hit}px;width:${width}px;height:${hit}px;`
+        + `z-index:1;display:flex;align-items:${growsDown ? 'flex-start' : 'flex-end'};gap:${tile === 'steam' || tile === 'hotwater' || tile === 'flush' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
+        + `font-size:${spec.font}px;line-height:${spec.line}px;color:${MUTED};`;
 
     const options = [...(tileHasBuiltinOption(tile) ? [{ key: '', label: builtinLabel(tile), title: '' }] : []),
         ...modes.map(m => ({ key: m.key, label: m.surface.label, title: m.surface.label }))];
@@ -506,13 +533,18 @@ function placeModeToggle(tile, modes) {
         button.textContent = opt.label;
         button.dataset.modeKey = opt.key;
         // Fills the root's height; the text sits at the bottom like a tile-line.
-        button.style.cssText = `background:none;border:0;padding:${hit - 17}px 0 0;box-sizing:border-box;cursor:pointer;font:inherit;`
-            + 'height:100%;min-width:32px;line-height:17px;text-align:center;overflow:hidden;text-overflow:ellipsis;pointer-events:auto;';
+        button.style.cssText = `background:none;border:0;padding:${growsDown ? 0 : hit - spec.line}px 0 0;box-sizing:border-box;cursor:pointer;font:inherit;`
+            + `height:100%;min-width:32px;line-height:${spec.line}px;text-align:center;overflow:hidden;text-overflow:ellipsis;pointer-events:auto;`;
         if (opt.title) button.title = opt.title;
         button.addEventListener('click', () => setSelectedMode(tile, opt.key || null));
         root.appendChild(button);
     });
     sectionEl.appendChild(root);
+    // An option cut short at this step: draw the whole toggle one step smaller.
+    if (size !== 'small' && [...root.querySelectorAll('button')].some(b => b.scrollWidth > b.clientWidth + 1)) {
+        root.remove();
+        return placeModeToggle(tile, modes, sizeAbove(size));
+    }
     if ((tile === 'steam' || tile === 'hotwater' || tile === 'flush') && !label.dataset.pluginModeWired) {
         // Choosing a built-in steam mode ends a plugin one; on flush, which has no
         // built-in option in the row, a tap on the label does.
