@@ -169,7 +169,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 
 ## Limits
 
-- At most 3 surfaces per plugin, 1 `header-button`, and 1 `tile-hint` and 1 `tile-line` per tile; extras are dropped in order.
+- At most 8 surfaces per plugin, 1 `header-button`, and 1 `tile-hint` and 1 `tile-line` per tile; extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
 - Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
 - Only one `screensaver-button` is drawn in total across all plugins, first plugin wins, as for `header-button`.
@@ -274,6 +274,17 @@ An invalid action drops the action only; the surface still shows, inert.
   number. It steps the value the tile shows (grind shows one decimal, so steps finer than 0.1 round with it),
   and a plugin `tile-mode` on the same tile owns that tile's value, so do not step it. Not allowed on a `tile-mode`
   or a header button. Use it for a pill such as "+0.5 g" when your plugin does not need to know the current value.
+  Once the value is stored the skin reads `skin` again, so the plugin's pills reflect the new number (no
+  `workflow-refresh` is sent).
+- **`stepsize`**: `{ "type": "stepsize", "field": "targetDoseWeight", "sizes": [1, 0.5, 0.1] }` on `tile-hint` and
+  `tile-line` only. `field` is `targetDoseWeight` or `targetYield` (grind has its own step setting, brew
+  temperature is not steppable). `sizes` has 1 to 4 numbers, each greater than 0 and at most 10, rounded to
+  hundredths; anything else drops the action. The pill changes what the tile's own `-` / `+` move by: each tap
+  moves to the next size and wraps. The skin draws the pill text itself (`±0.5 g`, from the size stored on this
+  device; your `text` is ignored), and the choice is kept per field in this device's local storage, not synced.
+  The size applies only while a `stepsize` surface for that field is drawn; when the plugin goes away the
+  tile's step is 1 again. The numpad and presets are unaffected. A plugin `tile-mode` on the tile intercepts
+  `-` / `+` itself, so the step size has no effect while a mode is selected.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
   `targetDoseWeight` (1 to 30), `targetYield` (1 to 2000), `grinderSetting` (0 to 9999) or `brewTemperature`
   (70 to 105, **degrees Celsius**). The maximums are the ones the tile enforces when the user types a value;
@@ -304,3 +315,13 @@ An invalid action drops the action only; the surface still shows, inert.
 
 Nothing else can be written: no machine commands, and no profile changes other than the remembered dose, yield,
 grind and the profile temperature that `set` itself writes (see the `brewTemperature` note above).
+
+## Notes on ratio keeping
+
+- Keeping a ratio while the dose changes is only possible as a dose `tile-mode` (the plugin owns the value and
+  can write yield), or as a pill with `call` + `active` + `live` that tells the plugin to hold the ratio and
+  shows its state.
+- Tapping the ratio to enter a new one needs an overlay (`open` with `presentation: "overlay"`); a pill cannot
+  take numeric input.
+- Whether the Decaid plugin runtime can read the scale snapshot or machine state is not promised here; do not
+  depend on it.

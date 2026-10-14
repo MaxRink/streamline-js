@@ -22,6 +22,7 @@ import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation,
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
 import { stepValue, formatRatio } from './value-format.js';
+import { resolveStepSize } from './plugin-surfaces.js';
 import { clampSetValue } from './plugin-surfaces.js';
 
 
@@ -376,10 +377,33 @@ export async function applyPluginSetAsync(field, value) {
 // `set` (so it is clamped and becomes the profile's override). False when the
 // tile is not showing a number yet.
 const STEP_VALUE_IDS = { targetDoseWeight: 'dose-in-value', targetYield: 'drink-out-value', grinderSetting: 'grind-value' };
-export function applyPluginStep(field, by) {
+
+// Plugin `stepsize`: the dose / yield -/+ step, kept per field on this device
+// (plain localStorage, not the synchronized KV). It applies only while a
+// stepsize surface for the field is drawn; otherwise the step is 1.
+const STEPSIZE_KEY = field => `plugin-stepsize:${field}`;
+let drawnStepSizes = {}; // field -> offered sizes, set by the surface renderer
+export function setDrawnStepSizes(map) { drawnStepSizes = map || {}; }
+export function getStoredStepSize(field) {
+    try {
+        const n = parseFloat(localStorage.getItem(STEPSIZE_KEY(field)));
+        return Number.isFinite(n) ? n : null;
+    } catch (e) { return null; }
+}
+export function storeStepSize(field, size) {
+    try { localStorage.setItem(STEPSIZE_KEY(field), String(size)); } catch (e) { /* non-fatal */ }
+}
+export function activeStepSize(field) {
+    const sizes = drawnStepSizes[field];
+    if (!sizes) return 1;
+    return resolveStepSize(sizes, getStoredStepSize(field));
+}
+
+// A plugin `step` resolving true once the stored write has settled.
+export async function applyPluginStepAsync(field, by) {
     const current = parseFloat(document.getElementById(STEP_VALUE_IDS[field])?.textContent);
     if (isNaN(current) || !Number.isFinite(by)) return false;
-    return applyPluginSet(field, current + by);
+    return applyPluginSetAsync(field, current + by);
 }
 
 export function updateGrindValue(newValue) {
@@ -667,7 +691,7 @@ function setupValueAdjuster(minusBtnId, plusBtnId, valueElId, step, min, formatt
         if (!valueEl) return;
         let currentValue = parseFloat(valueEl.textContent);
         if (currentValue > min) {
-            currentValue = stepValue(currentValue, getStep(), -1);
+            currentValue = stepValue(currentValue, getStep(), -1, min);
             valueEl.textContent = format(currentValue);
             scheduleUpdate(currentValue);
             if (afterUpdate) afterUpdate(format(currentValue));
@@ -2598,7 +2622,7 @@ export function initUI(callbacks) {
         });
     }
 
-    setupValueAdjuster('drink-out-minus', 'drink-out-plus', 'drink-out-value', 1, 0, (val) => `${val}g`, (val) => { updateDoseValue('out', val); updateDrinkRatio(); }, syncDrinkOutPresets);
+    setupValueAdjuster('drink-out-minus', 'drink-out-plus', 'drink-out-value', () => activeStepSize('targetYield'), 0, (val) => `${val}g`, (val) => { updateDoseValue('out', val); updateDrinkRatio(); }, syncDrinkOutPresets);
     {
         const tempMinusBtn = document.getElementById('temp-minus');
         const tempPlusBtn = document.getElementById('temp-plus');
@@ -2607,7 +2631,7 @@ export function initUI(callbacks) {
             tempPlusBtn.addEventListener('click', incrementBrewTemp);
         }
     }
-    setupValueAdjuster('dose-in-minus', 'dose-in-plus', 'dose-in-value', 1, 0, (val) => `${val}g`, (val) => { updateDoseValue('in', val); updateDrinkRatio(); }, syncDrinkOutPresets);
+    setupValueAdjuster('dose-in-minus', 'dose-in-plus', 'dose-in-value', () => activeStepSize('targetDoseWeight'), 0, (val) => `${val}g`, (val) => { updateDoseValue('in', val); updateDrinkRatio(); }, syncDrinkOutPresets);
     setupValueAdjuster('grind-minus', 'grind-plus', 'grind-value', () => grindStep, 0, (val) => grindStep === 1 ? String(Math.round(val)) : val.toFixed(1), updateGrindValue);
     setupValueAdjuster('flush-minus', 'flush-plus', 'flush-value', 1, 0, (val) => `${val}s`, (val) => {
         updateFlushValue(val);

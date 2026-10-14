@@ -9,11 +9,13 @@
 import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants } from './plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
+    nextStepSize, resolveStepSize, formatStepSize } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSetAsync, applyPluginStep, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive } from './ui.js';
+import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
+    getStoredStepSize, storeStepSize, setDrawnStepSizes } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -221,7 +223,22 @@ function bindAction(el, plugin, action, surface) {
         }
     } else if (action?.type === 'step') {
         el.addEventListener('click', () => {
-            if (!applyPluginStep(action.field, action.by)) logger.warn('Plugin step not applied:', action.field);
+            applyPluginStepAsync(action.field, action.by).then(applied => {
+                if (!applied) logger.warn('Plugin step not applied:', action.field);
+                else refreshPluginSurfaces();
+            });
+        });
+    } else if (action?.type === 'stepsize') {
+        el.addEventListener('click', () => {
+            const next = nextStepSize(action.sizes, resolveStepSize(action.sizes, getStoredStepSize(action.field)));
+            storeStepSize(action.field, next);
+            document.querySelectorAll('[data-stepsize-field]').forEach(node => {
+                if (node.dataset.stepsizeField !== action.field) return;
+                node.textContent = formatStepSize(next);
+                if (node.parentElement && node.parentElement !== document.body && node.parentElement.tagName === 'BUTTON') {
+                    node.parentElement.title = node.parentElement.dataset.customTitle || node.textContent;
+                }
+            });
         });
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
@@ -238,8 +255,13 @@ function bindAction(el, plugin, action, surface) {
 function buildTileSurface(plugin, surface) {
     const el = document.createElement('span');
     el.textContent = surface.text;
+    if (surface.action?.type === 'stepsize') {
+        // Drawn from this device's stored size, so a redraw keeps it correct.
+        el.dataset.stepsizeField = surface.action.field;
+        el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field)));
+    }
     el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    const title = surface.title || surface.text;
+    const title = surface.title || el.textContent;
     // Switched on: the skin's blue and bold, so a lock or a chosen option reads at a glance.
     if (surface.active) el.dataset.active = '1';
 
@@ -255,6 +277,7 @@ function buildTileSurface(plugin, surface) {
     root.dataset.pluginSurface = surface.id;
     root.dataset.agentId = `plugin-tile:${surface.tile}:${surface.kind}`;
     root.title = title;
+    if (surface.title) root.dataset.customTitle = surface.title;
     return { root, el };
 }
 
@@ -464,6 +487,7 @@ function render(rawEntries) {
 
     const container = document.getElementById('header-right-controls');
     const anchor = container?.firstChild;
+    const drawnSizes = {};
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
     let headerButtons = 0;
     let saverButtons = 0;
@@ -505,8 +529,13 @@ function render(rawEntries) {
         if (surface.kind === 'tile-line' && modeTiles.has(surface.tile)) continue;
         const slot = `${surface.kind}:${surface.tile}`;
         if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
-        if (placeTileSurface(plugin, surface)) usedSlots.add(slot);
+        if (placeTileSurface(plugin, surface)) {
+            usedSlots.add(slot);
+            const a = surface.action;
+            if (a?.type === 'stepsize' && !drawnSizes[a.field]) drawnSizes[a.field] = a.sizes;
+        }
     }
+    setDrawnStepSizes(drawnSizes);
 
     if (!mainHidden) {
         for (const tile of modeTiles) {
