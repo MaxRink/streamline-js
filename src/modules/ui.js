@@ -2,7 +2,6 @@ import { autoSteamPitcherLabel, compactAutoSteamTargetLabel, shouldKeepAutoSteam
 import { manualSteamMode, steamModeCycle } from './auto-steam-capability.js';
 import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver, getSaverBrightness } from './api.js';
 import { openDB, getSetting } from './idb.js';
-import { deriveSleepButtonAction, isWakePending } from './screensaver-policy.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
 import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine, isSaverButtonVisible } from './screensaver-policy.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
