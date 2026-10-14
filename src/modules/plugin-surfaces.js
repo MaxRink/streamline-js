@@ -232,6 +232,18 @@ function parseLive(raw) {
     return { endpoint };
 }
 
+// What a live push asks for. A body of {"what":"skin"} means only the skin answer
+// changed; anything else (including "workflow", no body, or junk) means both the
+// skin and the workflow tiles should be re-read.
+export function pushWants(data) {
+    let body = data;
+    if (typeof data === 'string') {
+        try { body = JSON.parse(data); } catch { body = null; }
+    }
+    const skinOnly = !!body && typeof body === 'object' && body.what === 'skin';
+    return { skin: true, workflow: !skinOnly };
+}
+
 // -> the endpoint id when `plugin` declares it as a websocket, else null.
 export function liveEndpoint(plugin, live) {
     const id = live?.endpoint;

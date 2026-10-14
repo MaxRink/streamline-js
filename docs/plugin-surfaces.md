@@ -36,6 +36,11 @@ that does not validate is dropped, and the rest still shows.
   300 ms and re-read the workflow for the tiles. A stream of messages still refreshes about every 300 ms. If the
   user has just edited a tile, the tile re-read waits until the edit has settled (a few seconds) instead of
   being dropped. Use it for a value that moves (a scale weight) or when your plugin has just written the workflow.
+  The message body may be JSON `{"what":"skin"}` to say that only your `skin` answer changed; the skin then does not
+  re-read the workflow. Any other body (`{"what":"workflow"}`, no body, text that is not JSON) re-reads both.
+  A plugin that only wants to push (for example decent-sync) declares an http `skin` endpoint and a websocket
+  endpoint, with `api` and `emit` in `permissions`, and answers `{"version":1,"surfaces":[],"live":{"endpoint":"changed"}}`;
+  empty `surfaces` with `live` is valid. A push that re-reads the workflow (anything but `{"what":"skin"}`) also makes the DYE strip re-read its data.
   Messages should be sent when something changed, not on a timer faster than a second. Without `live`, or if the
   socket cannot open, the minute poll above still applies.
 - Tile surfaces are placed from the label's measured size, so they are only drawn while the dashboard is visible;
@@ -284,7 +289,8 @@ An invalid action drops the action only; the surface still shows, inert.
   ignored. A non-2xx status is logged, and a call that does not answer within about 5 s is given up; either way the
   tile goes back to what `skin` says. `-` / `+` presses are sent after the user pauses for about 300 ms (only the
   last number is sent); presets and numpad entry are sent immediately. Only one call per tile is in flight, and
-  the newest wins.
+  the newest wins. After a call succeeds the skin also re-reads the workflow and repaints the dose, yield, grind and
+  temperature tiles, so the plugin must answer the call only after its own `PUT /workflow` has completed.
 
 Nothing else can be written: no machine commands, and no profile changes other than the remembered dose, yield,
 grind and the profile temperature that `set` itself writes (see the `brewTemperature` note above).

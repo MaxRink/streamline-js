@@ -20,7 +20,7 @@ import { setMachineModel, isBengleMachine, setRefillKitPresent, isRefillKitPrese
 import { classifyStopReason, canonicalStopReason, STOP_TARGET_WEIGHT, STOP_TARGET_VOLUME, STOP_PROFILE_ENDED } from './stop-reason.js';
 import { resolveMilkProbePresence, MILK_PROBE_ABSENT_AFTER_MS, selectMilkProbeSensorId } from './steam-mode.js';
 import { readTimeToReadyFrame, heatingSecondsLeft } from './heating-countdown.js';
-import { workflowTileValues, changedTileValues } from './workflow-watch.js';
+import { workflowTileValues, tilesToPaint } from './workflow-watch.js';
 import { isCupWarmerOn, readCupWarmerTarget, resolvePrewarm, getCupWarmerState, setCupWarmerState, patchCupWarmerState, invalidateCupWarmerState, onCupWarmerStateChange, CUP_WARMER_TARGET_KEY } from './cup-warmer.js';
 import { openDB, setSetting } from './idb.js';
 import { openContextMenu } from './context-menu.js';
@@ -1776,6 +1776,9 @@ const WORKFLOW_EDIT_GUARD_MS = 5000;
 let lastWorkflowTiles = null;
 let lastWorkflowRefreshAt = 0;
 let workflowWatchStarted = false;
+// Set by a plugin's workflow-refresh; cleared only once a read has succeeded, so
+// a refresh skipped by the sub-page/edit/gap guards still repaints later.
+let pendingForcedRefresh = false;
 
 const WORKFLOW_TILE_PAINTERS = {
     grind: v => ui.updateGrindDisplay({ grinderSetting: String(v) }),
@@ -1819,6 +1822,9 @@ async function refreshWorkflowTiles() {
     const now = Date.now();
     if (now - lastWorkflowRefreshAt < WORKFLOW_REFRESH_MIN_GAP_MS) return;
     lastWorkflowRefreshAt = now;
+    // Captured before the await: a force raised while this read is in flight
+    // belongs to a later read and must survive it.
+    const force = pendingForcedRefresh;
 
     let workflow;
     try {
@@ -1829,8 +1835,16 @@ async function refreshWorkflowTiles() {
     }
     if (!workflow) return;
 
+    // The user touched a tile while the read was in flight. Painting (or moving
+    // the baseline) would overwrite that edit with the older server value, so
+    // drop this read and keep the force for a retry after the guard.
+    if (ui.msSinceTileInteraction() < WORKFLOW_EDIT_GUARD_MS) {
+        if (pendingForcedRefresh) refreshWorkflowTilesSoon();
+        return;
+    }
+    if (force) pendingForcedRefresh = false;
     const tiles = workflowTileValues(workflow);
-    const changed = changedTileValues(lastWorkflowTiles, tiles);
+    const changed = tilesToPaint(lastWorkflowTiles, tiles, { force });
     lastWorkflowTiles = tiles;
     const keys = Object.keys(changed);
     if (keys.length === 0) return;
@@ -1857,7 +1871,14 @@ function startWorkflowWatch() {
     });
     window.addEventListener('focus', refreshWorkflowTiles);
     // A plugin that changed the workflow and said so (plugin surfaces' `live`).
-    document.addEventListener('streamline:workflow-refresh', refreshWorkflowTilesSoon);
+    document.addEventListener('streamline:workflow-refresh', () => {
+        pendingForcedRefresh = true;
+        refreshWorkflowTilesSoon();
+    });
+    // The refresh may have been skipped while on a sub-page; repaint on return.
+    document.addEventListener('streamline:mainpagevisible', () => {
+        if (pendingForcedRefresh) refreshWorkflowTilesSoon();
+    });
 }
 
 async function isShotBlockedByNoScale() {

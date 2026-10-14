@@ -8,11 +8,11 @@
 
 import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL } from './api.js';
 import { logger } from './logger.js';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint } from './plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSet, applyPluginStep, isAutoSteamMode } from './ui.js';
+import { applyPluginSetAsync, applyPluginStep, isAutoSteamMode } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -186,7 +186,10 @@ function bindAction(el, plugin, action, surface) {
         });
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
-            if (!applyPluginSet(action.field, action.value)) logger.warn('Plugin set not applied:', action.field);
+            applyPluginSetAsync(action.field, action.value).then(applied => {
+                if (!applied) logger.warn('Plugin set not applied:', action.field);
+                else refreshPluginSurfaces();
+            });
         });
     }
 }
@@ -393,6 +396,8 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
         // Otherwise read skin again and redraw even if the answer is unchanged, so
         // a number the plugin refused snaps back.
         if (sent !== null) { lastKey = ''; refreshPluginSurfaces(); }
+        // The plugin answers after its own PUT /workflow, so the tiles can be re-read.
+        if (sent === true) document.dispatchEvent(new Event('streamline:workflow-refresh'));
         return sent === true;
     }).catch(() => false);
 }
@@ -506,12 +511,17 @@ const PUSH_DEBOUNCE_MS = 300;
 const liveSockets = new Map(); // plugin id -> endpoint
 let pushTimer = null;
 
-function onPush() {
+let pushWantsWorkflow = false;
+
+function onPush(data) {
+    if (pushWants(data).workflow) pushWantsWorkflow = true;
     if (pushTimer) return;
     pushTimer = setTimeout(() => {
         pushTimer = null;
+        const workflow = pushWantsWorkflow;
+        pushWantsWorkflow = false;
         refreshPluginSurfaces();
-        document.dispatchEvent(new Event('streamline:workflow-refresh'));
+        if (workflow) document.dispatchEvent(new Event('streamline:workflow-refresh'));
     }, PUSH_DEBOUNCE_MS);
 }
 
