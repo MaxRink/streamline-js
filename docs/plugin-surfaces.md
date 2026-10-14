@@ -159,6 +159,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `kind` | Where | Fields |
 |---|---|---|
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
+| `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
 | `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active` |
 | `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active` |
 | `tile-mode` | an option in the toggle under a tile's label | see [Tile modes](#tile-modes) |
@@ -171,9 +172,18 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 - At most 3 surfaces per plugin, 1 `header-button`, and 1 `tile-hint` and 1 `tile-line` per tile; extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
 - Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
+- Only one `screensaver-button` is drawn in total across all plugins, first plugin wins, as for `header-button`.
 - `id` is 1 to 40 characters of `A-Z a-z 0-9 _ -` and unique within the answer.
 - `image` must be `https:` without credentials.
 - Unknown `kind`s are ignored, so a newer plugin on an older skin shows less rather than failing.
+
+## Screensaver button
+
+A `screensaver-button` is drawn at the top centre of the screensaver, for a plugin page worth reaching while the machine sleeps. It takes an `open` action only (`page` or `overlay`); without one it is dropped.
+
+- It never wakes the machine and sends no machine command. A tap on it is not a tap on the saver, so the saver stays up. The saver is left only by waking the machine, which the plugin button does not do; the user taps the saver elsewhere, as before.
+- Pressing it brings the panel back to the user's brightness (display only) so the page can be read. With `overlay`, closing the dialog dims the panel again if the machine is still asleep. With `page`, the skin is left; on return the first snapshot raises the saver and dims again, and boot sends no wake.
+- It is not shown on the black screen saver (brightness 0), so an invisible target is never tappable.
 
 ## Tile modes
 

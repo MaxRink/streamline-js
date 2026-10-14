@@ -73,6 +73,9 @@ export function getLastDisplayState() {
 }
 // Brightness to return to on wake, captured just before we dim.
 let brightnessBeforeDim = null;
+// The level the last restoreDisplay() sent. A dim that follows before the display
+// socket reports it back would otherwise find only the saver level in lastDisplayState.
+let lastRestoredBrightness = null;
 let updateWebSocket = null;
 let updateWebSocketReady = false;
 
@@ -2688,6 +2691,10 @@ export function dimDisplay() {
         const current = lastDisplayState?.requestedBrightness;
         if (typeof current === 'number' && current !== getSaverBrightness()) {
             brightnessBeforeDim = current;
+        } else if (brightnessBeforeDim === null && lastRestoredBrightness !== null
+            && lastRestoredBrightness !== getSaverBrightness()) {
+            // restore -> quick re-dim: the socket has not echoed the restored level yet.
+            brightnessBeforeDim = lastRestoredBrightness;
         }
         sendDisplayCommand({
             command: 'setBrightness',
@@ -2707,10 +2714,12 @@ export function restoreDisplay() {
         // to its app_brightness setting for the same reason (de1plus/utils.tcl:496).
         // The remembered level is the fallback: it survives an app restart, where
         // the in-memory capture does not.
+        const level = brightnessBeforeDim ?? rememberedBrightness ?? 100;
         sendDisplayCommand({
             command: 'setBrightness',
-            brightness: brightnessBeforeDim ?? rememberedBrightness ?? 100
+            brightness: level
         });
+        lastRestoredBrightness = level;
         brightnessBeforeDim = null;
     } catch (error) {
         logger.error('Error restoring display:', error);
