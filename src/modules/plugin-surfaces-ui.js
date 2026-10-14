@@ -163,14 +163,16 @@ function openOverlay(plugin, action, pageUrl, onClose) {
     dialog.appendChild(closeButton);
 
     let timer = null;
-    const finish = () => {
+    // `fallback`: the overlay never became ready and the page is opened instead.
+    // onClose (re-dim) must not run then, or the page opens at saver brightness.
+    const finish = (event, fallback = false) => {
         clearTimeout(timer);
         window.removeEventListener('message', onMessage);
         dialog.removeEventListener('close', finish);
         if (dialog.open) dialog.close();
         dialog.remove();
         overlayOpen = false;
-        if (onClose) onClose();
+        if (onClose && !fallback) onClose();
         // The page may have changed the workflow; the tiles read it again.
         refreshPluginSurfaces();
         document.dispatchEvent(new Event('streamline:workflow-refresh'));
@@ -196,7 +198,7 @@ function openOverlay(plugin, action, pageUrl, onClose) {
     }
     timer = setTimeout(() => {
         logger.warn('Plugin overlay did not report ready, opening as a page:', plugin.id);
-        finish();
+        finish(null, true);
         window.location.assign(pageUrl);
     }, OVERLAY_READY_MS);
 }
