@@ -246,8 +246,8 @@ function draw(tile, plugin, surface, { keepValue = false } = {}) {
     });
     // A second line under the value (a flow beside a time) on the tiles whose box
     // holds two lines. Both lines open the numpad; the call carries both numbers.
-    if (dom.ownBox && surface.second) {
-        mine.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[110px] flex flex-col items-center text-center text-[var(--text-primary)]';
+    if (surface.second) {
+        mine.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[110px] flex flex-col items-center text-center text-[var(--text-primary)] leading-tight';
         mine.removeAttribute('role');
         mine.removeAttribute('tabindex');
         mine.style.cursor = '';

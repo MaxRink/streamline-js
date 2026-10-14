@@ -1,11 +1,12 @@
 // plugin-modes.js -- pure helpers for plugin `tile-mode` surfaces (see
 // docs/plugin-surfaces.md). DOM-free so node:test can import it.
 
-// Three options fit the 112px label column. Every tile but steam has a built-in
-// option in the row, so it takes two plugin options. On steam the skin's own
-// Time | Flow toggle already ends a plugin mode, so the row holds plugin options only.
+// Three options fit the 112px label column. Most tiles have a built-in option in
+// the row, so they take two plugin options. Steam and flush have none: on steam the
+// skin's own Time | Flow toggle ends a plugin mode, on flush a tap on the label does,
+// so their row holds plugin options only.
 export const MAX_OPTIONS_PER_TILE = 3;
-export const tileHasBuiltinOption = tile => tile !== 'steam';
+export const tileHasBuiltinOption = tile => tile !== 'steam' && tile !== 'flush';
 export const pluginOptionCapacity = tile => MAX_OPTIONS_PER_TILE - (tileHasBuiltinOption(tile) ? 1 : 0);
 
 // Entries are { plugin, surface } in Decaid's plugin order. Returns the modes each

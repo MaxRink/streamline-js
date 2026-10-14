@@ -44,7 +44,7 @@ test('a non-string id (an array that stringifies to a valid id) is dropped', () 
     assert.deepEqual(s.map(x => x.text), ['string']);
 });
 
-test('limits: one header button, one hint and one line per tile, eight surfaces', () => {
+test('limits: one header button, one hint and one line per tile, up to three modes, sixteen surfaces', () => {
     const btn = id => ({ id, kind: 'header-button', label: 'B' });
     assert.equal(ok([btn('a'), btn('b')]).length, 1);
     const hint = (id, tile) => ({ id, kind: 'tile-hint', tile, text: id });
@@ -53,13 +53,16 @@ test('limits: one header button, one hint and one line per tile, eight surfaces'
     const tiles = ['dose', 'drink', 'grind', 'temperature'];
     const lines = tiles.map(tile => ({ id: tile, kind: 'tile-line', tile, text: tile }));
     assert.equal(ok(lines).length, 4);
-    assert.equal(MAX_SURFACES, 12);
-    const modes = ['x', 'y', 'z', 'w'].map(id => ({ id, kind: 'tile-mode', tile: 'steam', label: id, value: 1, min: 0, max: 9, step: 1,
+    assert.equal(MAX_SURFACES, 16);
+    const modeOn = (tile, ids) => ids.map(id => ({ id: tile + id, kind: 'tile-mode', tile, label: id, value: 1, min: 0, max: 9, step: 1,
         action: { type: 'call', endpoint: 'e', field: 'f' } }));
-    const many = [btn('b'), ...tiles.flatMap(t => [hint(`h${t}`, t), { id: `l${t}`, kind: 'tile-line', tile: t, text: t }]), ...modes];
+    const hintsAndLines = [btn('b'), ...tiles.flatMap(t => [hint(`h${t}`, t), { id: `l${t}`, kind: 'tile-line', tile: t, text: t }])];
     // 1 button + 4 hints + 4 lines + 3 steam modes (the fourth is over the per-tile limit) = 12
-    assert.equal(ok(many).length, 12);
-    assert.deepEqual(ok(many).filter(s => s.kind === 'tile-mode').map(s => s.id), ['x', 'y', 'z']);
+    const twelve = [...hintsAndLines, ...modeOn('steam', ['x', 'y', 'z', 'w'])];
+    assert.equal(ok(twelve).length, 12);
+    assert.deepEqual(ok(twelve).filter(s => s.kind === 'tile-mode').map(s => s.id), ['steamx', 'steamy', 'steamz']);
+    // 3 flush modes and 3 more on dose make 18 slots, capped at MAX_SURFACES
+    assert.equal(ok([...twelve, ...modeOn('flush', ['a', 'b', 'c']), ...modeOn('dose', ['a', 'b', 'c'])]).length, 16);
 });
 
 const stepsize = (over = {}, kind = 'tile-hint') => ({ id: 'ss', kind, tile: 'dose', text: 'x',

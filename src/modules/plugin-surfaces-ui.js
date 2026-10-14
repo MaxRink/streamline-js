@@ -366,6 +366,14 @@ function setSelectedMode(tile, key) {
 function paintToggle(tile) {
     const root = document.querySelector(`[data-plugin-surface="mode:${tile}"]`);
     if (!root) return;
+    if (tile === 'flush') {
+        // The way back to the built-in flush is the label: say so while a mode is on.
+        const label = document.getElementById(TILES.flush.label);
+        if (label) {
+            label.style.cursor = selectedMode.flush ? 'pointer' : '';
+            label.title = selectedMode.flush ? 'Tap to go back to the normal flush' : '';
+        }
+    }
     root.querySelectorAll('button').forEach(b => {
         const on = (b.dataset.modeKey || '') === (selectedMode[tile] || '');
         b.setAttribute('aria-pressed', String(on));
@@ -392,13 +400,23 @@ function placeModeToggle(tile, modes) {
     // Over the label there is room to grow upward; over steam's toggle there is not.
     const hit = tile === 'steam' ? 17 : 24;
     const extra = tile === 'steam' ? 14 : 30;
+    // Never run under the -/+ control: the row is cut at the free space before it
+    // (measured, because the page may be scaled), less a few px of air.
+    let width = label.offsetWidth + extra;
+    const control = document.getElementById(TILES[tile].control);
+    const labelBox = label.getBoundingClientRect();
+    if (control && labelBox.width > 0) {
+        const scale = labelBox.width / label.offsetWidth;
+        const room = (control.getBoundingClientRect().left - labelBox.left) / scale - 6;
+        if (room > label.offsetWidth) width = Math.min(width, Math.floor(room));
+    }
     const top = label.offsetTop + label.offsetHeight + 1;
     const root = document.createElement('div');
     root.dataset.pluginSurface = `mode:${tile}`;
     root.dataset.agentId = `plugin-tile:${tile}:tile-mode`;
     root.setAttribute('role', 'group');
-    root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${label.offsetWidth + extra}px;height:${hit}px;`
-        + `z-index:1;display:flex;align-items:flex-end;gap:${tile === 'steam' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
+    root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${width}px;height:${hit}px;`
+        + `z-index:1;display:flex;align-items:flex-end;gap:${tile === 'steam' || tile === 'flush' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
         + `font-size:14px;line-height:17px;color:${MUTED};`;
 
     const options = [...(tileHasBuiltinOption(tile) ? [{ key: '', label: builtinLabel(tile), title: '' }] : []),
@@ -422,13 +440,14 @@ function placeModeToggle(tile, modes) {
         root.appendChild(button);
     });
     sectionEl.appendChild(root);
-    if (tile === 'steam' && !label.dataset.pluginModeWired) {
-        // Choosing a built-in steam mode ends a plugin one.
+    if ((tile === 'steam' || tile === 'flush') && !label.dataset.pluginModeWired) {
+        // Choosing a built-in steam mode ends a plugin one; on flush, which has no
+        // built-in option in the row, a tap on the label does.
         label.dataset.pluginModeWired = '1';
-        label.addEventListener('click', () => setSelectedMode('steam', null));
+        label.addEventListener('click', () => setSelectedMode(tile, null));
         // The built-in toggle also switches on Enter and Space.
         label.addEventListener('keydown', event => {
-            if (event.key === 'Enter' || event.key === ' ') setSelectedMode('steam', null);
+            if (event.key === 'Enter' || event.key === ' ') setSelectedMode(tile, null);
         });
     }
     return true;
