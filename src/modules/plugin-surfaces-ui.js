@@ -10,7 +10,7 @@ import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
@@ -186,6 +186,14 @@ function openOverlay(plugin, action, pageUrl, onClose) {
         const type = event.data?.type;
         if (type === 'streamline:ready') clearTimeout(timer);
         else if (type === 'streamline:close') finish();
+        else if (type === 'streamline:numpad') {
+            // The page asks for the stock numpad; the answer goes back to that frame only.
+            const input = parseNumpadInput(event.data);
+            const reply = value => frame.contentWindow?.postMessage(
+                { type: 'streamline:numpad-result', id: ['string', 'number'].includes(typeof event.data?.id) ? event.data.id : null, value }, event.origin === 'null' ? '*' : event.origin);
+            if (!input) { reply(null); return; }
+            openPluginNumpad(plugin, 'overlay', input).then(reply);
+        }
     };
     window.addEventListener('message', onMessage);
     dialog.addEventListener('close', finish);
@@ -207,8 +215,61 @@ function openOverlay(plugin, action, pageUrl, onClose) {
     }, OVERLAY_READY_MS);
 }
 
+// The skin's stock full-screen numpad, for a plugin: resolves to the number the user
+// confirmed (clamped and rounded to `input`), or null on cancel. One at a time.
+// `key` names the previous-values list, so a plugin's numbers never mix with the
+// skin's own fields.
+let pluginNumpadOpen = false;
+async function openPluginNumpad(plugin, key, input) {
+    if (pluginNumpadOpen) return null;
+    pluginNumpadOpen = true;
+    try {
+        const module = await import('./numpad-modal.js');
+        module.initNumpadModal();
+        return await new Promise(resolve => {
+            let settled = false;
+            const done = value => { if (!settled) { settled = true; resolve(value); } };
+            const mock = { value: String(input.value), setAttribute() {}, getAttribute() { return null; }, dispatchEvent() {} };
+            module.openModal(mock, {
+                fieldType: `plugin-input-${String(plugin.id)}:${key}`.replace(/[^A-Za-z0-9_.:-]/g, '_'),
+                config: {
+                    title: input.title || plugin.name || 'Enter value',
+                    unit: input.unit || '',
+                    defaultValue: String(input.value),
+                    min: input.min,
+                    max: input.max,
+                    signed: input.min < 0 && input.decimals === 0,
+                },
+                onConfirm: raw => {
+                    const n = parseFloat(raw);
+                    done(Number.isFinite(n) ? clampInput(input, n) : null);
+                },
+            });
+            // Cancel and Escape close the dialog without a confirm.
+            const dialog = document.getElementById('numpad-modal-overlay');
+            if (dialog) dialog.addEventListener('close', () => setTimeout(() => done(null), 0), { once: true });
+        });
+    } catch (e) {
+        logger.warn('Plugin numpad failed:', e);
+        return null;
+    } finally {
+        pluginNumpadOpen = false;
+    }
+}
+
+const clampInput = (input, n) => Math.round(Math.min(input.max, Math.max(input.min, n)) * 10 ** input.decimals) / 10 ** input.decimals;
+
 function bindAction(el, plugin, action, surface) {
-    if (action?.type === 'call') {
+    if (action?.type === 'call' && action.input) {
+        // The user types the number: the skin's own numpad, then the same call.
+        el.addEventListener('click', async () => {
+            const number = await openPluginNumpad(plugin, surface.id, action.input);
+            if (number === null) return;
+            callMode(plugin, surface, number, { immediate: true }).then(sent => {
+                if (!sent) logger.warn('Plugin call not delivered:', surface.id);
+            });
+        });
+    } else if (action?.type === 'call') {
         // A fixed number to the plugin's own endpoint; `skin` is read again after,
         // so the plugin's answer decides what the pill says next.
         el.addEventListener('click', () => {

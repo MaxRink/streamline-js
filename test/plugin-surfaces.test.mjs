@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+import { parseNumpadInput, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
     nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
@@ -390,6 +390,34 @@ test('screensaver-button: one per answer, independent of the header button', () 
     assert.deepEqual(ok([s('a'), s('b')]).map(x => x.id), ['a']);
     const h = { id: 'h', kind: 'header-button', label: 'H' };
     assert.equal(ok([h, s('a')]).length, 2);
+});
+
+test('numpad input: a call asks for the number with the stock numpad; limits are strict', () => {
+    const call = input => ({ type: 'call', endpoint: 'ratio', field: 'ratio', input });
+    const good = { title: 'Ratio', unit: 'x', min: 1, max: 5, decimals: 1, value: 2.5 };
+    for (const [kind, extra] of [['tile-hint', { tile: 'drink', text: 'Set' }], ['tile-line', { tile: 'dose', text: 'Set' }], ['ratio-action', {}]]) {
+        const [s] = ok([{ id: 'n', kind, ...extra, action: call(good) }]);
+        assert.deepEqual(s.action, call(good), kind);
+    }
+    // value is optional (starts at min), clamped and rounded; title and unit are optional and capped
+    assert.deepEqual(parseNumpadInput({ min: 0, max: 10 }), { min: 0, max: 10, decimals: 0, value: 0 });
+    assert.equal(parseNumpadInput({ min: 0, max: 10, decimals: 1, value: 99 }).value, 10);
+    assert.equal(parseNumpadInput({ min: 0, max: 10, decimals: 1, value: 2.26 }).value, 2.3);
+    assert.equal(parseNumpadInput({ min: 0, max: 10, title: 'x'.repeat(60), unit: 'y'.repeat(60) }).title.length, 24);
+    assert.equal(parseNumpadInput({ min: 0, max: 10, unit: 'y'.repeat(60) }).unit.length, 6);
+    for (const bad of [null, 'x', {}, { min: 5, max: 5 }, { min: 6, max: 5 }, { min: 0, max: 100000 }, { min: -100000, max: 1 },
+        { min: 0, max: 1, decimals: 3 }, { min: 0, max: 1, decimals: 0.5 }, { min: 'a', max: 1 }]) {
+        assert.equal(parseNumpadInput(bad), null, JSON.stringify(bad));
+    }
+    // a bad input drops the action, and the fixed-value form still works
+    const [bad] = ok([{ id: 'n', kind: 'tile-hint', tile: 'dose', text: 'Set', action: call({ min: 3, max: 1 }) }]);
+    assert.equal(bad.action, undefined);
+    const [fixed] = ok([{ id: 'n', kind: 'tile-hint', tile: 'dose', text: 'Set', action: { type: 'call', endpoint: 'ratio', field: 'ratio', value: 2 } }]);
+    assert.equal(fixed.action.value, 2);
+    // a tile-mode never takes it: it already sends what the user chose
+    const [mode] = ok([{ id: 'm', kind: 'tile-mode', tile: 'steam', label: 'A', value: 10, min: 1, max: 60, step: 1, decimals: 0,
+        presets: [], action: call(good) }]);
+    assert.equal(mode?.action?.input, undefined);
 });
 
 test('ratio-action: open or call only, one per answer, drawn by the skin', () => {

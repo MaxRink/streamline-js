@@ -157,11 +157,37 @@ export function formatStepSize(size, field) {
 // A hint or line sends a fixed number with its tap (`value`, required there); a
 // tile-mode sends whatever the user chose, so it declares none.
 const CALL_VALUE_MAX = 99999;
+
+// `input` asks the user for the number with the skin's own full-screen numpad:
+// { title (24), unit (6), min, max, decimals (0-2), value (the starting number) }.
+// Used by a call's `input` and by an overlay's `streamline:numpad` request, so both
+// are limited alike. Anything off drops it (null): a numpad with no usable range
+// would let a plugin put arbitrary numbers in front of the user.
+export const NUMPAD_LIMITS = { title: 24, unit: 6, bound: CALL_VALUE_MAX, decimals: 2 };
+export function parseNumpadInput(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const min = toNumber(raw.min), max = toNumber(raw.max);
+    if (min === null || max === null || min >= max
+        || Math.abs(min) > NUMPAD_LIMITS.bound || Math.abs(max) > NUMPAD_LIMITS.bound) return null;
+    const decimals = raw.decimals == null ? 0 : raw.decimals;
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > NUMPAD_LIMITS.decimals) return null;
+    const start = toNumber(raw.value);
+    const clamp = n => roundTo(Math.min(max, Math.max(min, n)), decimals);
+    const title = cleanText(raw.title, NUMPAD_LIMITS.title);
+    const unit = cleanText(raw.unit, NUMPAD_LIMITS.unit);
+    return { ...(title && { title }), ...(unit && { unit }), min, max, decimals, value: clamp(start === null ? min : start) };
+}
+
 function parseCall(action, { withValue = false } = {}) {
     const { endpoint, field } = action;
     if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
     if (typeof field !== 'string' || !FIELD_RE.test(field)) return null;
     if (!withValue) return { type: 'call', endpoint, field };
+    // A numpad input replaces the fixed number: the user types it.
+    if (action.input !== undefined) {
+        const input = parseNumpadInput(action.input);
+        return input ? { type: 'call', endpoint, field, input } : null;
+    }
     const value = toNumber(action.value);
     if (value === null || Math.abs(value) > CALL_VALUE_MAX) return null;
     return { type: 'call', endpoint, field, value: round2(value) };
