@@ -476,6 +476,7 @@ function onScaleReconnect() {
 function onScaleDisconnect() {
     logger.warn('Scale has disconnected.');
     isScaleConnected = false;
+    api.clearLatestScaleReading(); // a plugin's "use the scale" tap must not get the last weight
     window.onScaleConnectionChange?.(false);
     renderScaleDisconnectedText();
     clearScaleAutoRetry();
@@ -1035,7 +1036,8 @@ function handleScaleData(data) {
     const scaleInfoContainer = document.getElementById('scale-info-container');
     const currentWeight = data.weight;
     latestScaleWeight = currentWeight;
-    api.setLatestScaleReading(currentWeight);
+    // A battery-only frame has no weight and must not replace the last real one.
+    if (Number.isFinite(currentWeight)) api.setLatestScaleReading(currentWeight);
     latestScaleWeightFlow = data.weightFlow ?? null; // server-smoothed flow for the chart's weight trace
     const batteryValue = data.batteryLevel ?? data.battery;
     if (batteryValue !== null && batteryValue !== undefined) {

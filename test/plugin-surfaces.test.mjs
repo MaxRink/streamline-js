@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scaleDoseWeight, fitOverlaySize, parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+import { scaleDoseWeight, scaleDoseFor, fitOverlaySize, parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
     nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
@@ -484,6 +484,27 @@ test('set from the scale: dose only, no value; the reading must be a real dose',
     assert.equal(scaleDoseWeight(30), 30);
     assert.equal(scaleDoseWeight(0.96), 1); // rounds into range
     for (const bad of [0, 0.9, 30.1, 200, -3, NaN, Infinity, null, undefined, '18']) assert.equal(scaleDoseWeight(bad), null, String(bad));
+});
+
+test('scale dose: fresh, idle, not straight after a shot, and a real dose', () => {
+    const base = { weight: 18.34, readAt: 100_000, now: 101_000, state: 'idle', espressoEndedAt: null };
+    assert.equal(scaleDoseFor(base), 18.3);
+    assert.equal(scaleDoseFor({ ...base, state: null }), 18.3); // no machine socket yet: the tap is not blocked
+    // age: 3 s is still fresh, one ms more is not
+    assert.equal(scaleDoseFor({ ...base, now: 103_000 }), 18.3);
+    assert.equal(scaleDoseFor({ ...base, now: 103_001 }), null);
+    assert.equal(scaleDoseFor({ ...base, readAt: 0 }), null);
+    assert.equal(scaleDoseFor({ ...base, readAt: NaN }), null);
+    // a weightless frame (undefined/null) and junk never become a dose
+    for (const weight of [undefined, null, NaN, '18', 0, 31, 250]) assert.equal(scaleDoseFor({ ...base, weight }), null, String(weight));
+    // machine busy
+    for (const state of ['espresso', 'skipStep', 'steam', 'steamRinse', 'hotWater', 'flush', 'cleaning', 'descaling', 'airPurge']) {
+        assert.equal(scaleDoseFor({ ...base, state }), null, state);
+    }
+    for (const state of ['idle', 'sleeping', 'heating', 'preheating']) assert.equal(scaleDoseFor({ ...base, state }), 18.3, state);
+    // the cup is still on the scale for 10 s after a shot
+    assert.equal(scaleDoseFor({ ...base, espressoEndedAt: 95_000 }), null);
+    assert.equal(scaleDoseFor({ ...base, espressoEndedAt: 91_000 }), 18.3);
 });
 
 test('overlay size: held to the default dialog and the screen, junk ignored', () => {

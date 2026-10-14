@@ -158,6 +158,20 @@ export function scaleDoseWeight(weight) {
     return w >= SET_LIMITS.targetDoseWeight.min && w <= SET_LIMITS.targetDoseWeight.max ? w : null;
 }
 
+// What a "use the scale" tap may do, as one decision: refused while the machine is making
+// something, when the reading is older than 3 s (a scale that stopped sending), within 10 s
+// of an espresso ending (the full cup is still on the scale), and for a weight that is not
+// a real dose. Pure so the rules can be tested; the caller passes the clock and the state.
+export const SCALE_DOSE = { maxAgeMs: 3000, afterShotMs: 10000 };
+export const NOT_FOR_DOSE_STATES = ['espresso', 'skipStep', 'steam', 'steamRinse', 'hotWater', 'flush',
+    'cleaning', 'descaling', 'airPurge'];
+export function scaleDoseFor({ weight, readAt, now, state, espressoEndedAt }) {
+    if (NOT_FOR_DOSE_STATES.includes(state)) return null;
+    if (!Number.isFinite(readAt) || !Number.isFinite(now) || now - readAt > SCALE_DOSE.maxAgeMs) return null;
+    if (Number.isFinite(espressoEndedAt) && now - espressoEndedAt < SCALE_DOSE.afterShotMs) return null;
+    return scaleDoseWeight(weight);
+}
+
 // The size an overlay asked for with `streamline:size`, held to what the overlay may
 // use: never bigger than the default dialog or the screen, never a sliver. null for junk.
 export const OVERLAY_LIMITS = { maxWidth: 1100, maxHeight: 760, minWidth: 280, minHeight: 160 };

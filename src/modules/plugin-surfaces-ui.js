@@ -6,16 +6,16 @@
 // A failed or slow read hides that plugin's surfaces and never blocks the
 // dashboard. With no plugin answering `skin` nothing is drawn.
 
-import { getFreshScaleReading, getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
+import { getScaleReading, getEspressoEndedAt, getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, scaleDoseWeight, fitOverlaySize } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
 import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
-    getStoredStepSize, storeStepSize, setDrawnStepSizes, setDrawnKeepRatio } from './ui.js';
+    getStoredStepSize, storeStepSize, setDrawnStepSizes, setDrawnKeepRatio, showToast } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -299,13 +299,10 @@ async function openPluginNumpad(plugin, key, input) {
     }
 }
 
-// The dose a "use the scale" tap would set: the scale's fresh reading, only when it is a
-// real dose and the machine is not making anything (a cup on the scale during a shot or a
-// flush is not a dose). null refuses the tap.
-const NOT_FOR_DOSE_STATES = ['espresso', 'steam', 'steamRinse', 'hotWater', 'flush'];
+// The dose a "use the scale" tap would set; the rules are scaleDoseFor's. null refuses the tap.
 function scaleDoseForTap() {
-    if (NOT_FOR_DOSE_STATES.includes(currentMachineState)) return null;
-    return scaleDoseWeight(getFreshScaleReading());
+    const { weight, at } = getScaleReading();
+    return scaleDoseFor({ weight, readAt: at, now: Date.now(), state: currentMachineState, espressoEndedAt: getEspressoEndedAt() });
 }
 
 function bindAction(el, plugin, action, surface) {
@@ -355,7 +352,11 @@ function bindAction(el, plugin, action, surface) {
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
             const value = action.from === 'scale' ? scaleDoseForTap() : action.value;
-            if (value === null) { logger.warn('Plugin set from the scale refused:', surface.id); return; }
+            if (value === null) {
+                logger.warn('Plugin set from the scale refused:', surface.id);
+                showToast('The scale weight cannot be used as the dose right now', 2400, 'info');
+                return;
+            }
             applyPluginSetAsync(action.field, value).then(applied => {
                 if (!applied) logger.warn('Plugin set not applied:', action.field);
                 else refreshPluginSurfaces();
