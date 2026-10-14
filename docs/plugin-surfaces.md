@@ -161,12 +161,35 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
 | `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
-| `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active` |
-| `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active` |
+| `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active`, `size` |
+| `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active`, `size` |
 | `tile-mode` | an option in the toggle under a tile's label | see [Tile modes](#tile-modes) |
 
 `tile` is one of `dose`, `drink`, `grind`, `temperature`; a `tile-mode` can also be on `steam`, `hotwater` or `flush`. Lengths are characters. Text is shown with
 `textContent`, never as HTML.
+
+## Text size
+
+`tile-hint`, `tile-line` and `tile-mode` take an optional `size`: `"small"` (the default, today's look),
+`"medium"` or `"large"`. There are no pixel values; the skin maps each step to fixed numbers so a plugin cannot
+break a tile's layout.
+
+| `size` | line / toggle text | hint pill | touch height (line or toggle / hint) |
+|---|---|---|---|
+| `small` | 14 px on a 17 px line | 13 px in 17 px | 24 / 24 px |
+| `medium` | 17 px on a 20 px line | 15 px in 20 px | 32 / 28 px |
+| `large` | 21 px on a 24 px line (the built-in `Time \| Flow` size) | 19 px in 24 px | 40 / 32 px |
+
+- The touch area grows upward over the label, which is not a control (a line or hint without an action has no
+  touch area, and at `small` the toggles on Steam and Hot Water are 17 px). On Steam, Hot Water and Flush the label
+  is a control, so it grows downward instead (24 px for `medium`, 28 px for `large`), stopping short of the first
+  preset. A hint's pill keeps its bottom edge in place and grows upward.
+- The skin draws the largest step the text fits in: if a line, pill or any option of a toggle would be cut
+  short, the whole surface is drawn one step smaller, down to `small`. Short text earns the bigger sizes: a hint
+  pill fits about five or six characters at `large` and eight at `medium`, and the row of a tile's toggle is only
+  as wide as the space before its `-` button, so several modes need labels of two or three characters to fit at `large`.
+- Several modes on one tile share one row, so the row uses the largest `size` any of them asks for, and then the same fit rule.
+- Other kinds (buttons, `ratio-action`) have no text size. An unknown value is ignored.
 
 ## Limits
 

@@ -26,6 +26,13 @@ export const SET_LIMITS = {
 };
 export const SET_FIELDS = Object.keys(SET_LIMITS);
 export const PRESENTATIONS = ['page', 'overlay'];
+// `size` on a tile hint, line or mode: how big its text is. Three fixed steps, never
+// pixels, so a plugin cannot break a tile's layout; `small` is the default and is
+// not kept. The renderer drops to a smaller step when the text does not fit.
+export const SURFACE_SIZES = ['small', 'medium', 'large'];
+function parseSize(value) {
+    return value === 'medium' || value === 'large' ? value : null;
+}
 // `step` moves the tile's own value by `by`; brew temperature is left out because
 // the tile shows it in the user's unit and a step would have to know which.
 export const STEP_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting'];
@@ -301,6 +308,7 @@ function parseMode(raw, id, action) {
     return { id, kind: 'tile-mode', tile: raw.tile, label, ...(unit && { unit }),
         value: clamp(value), min, max, step, decimals, presets, ...(menu.length && { menu }),
         ...(second && { second }), ...(raw.applyOnSelect === true && { applyOnSelect: true }),
+        ...(parseSize(raw.size) && { size: parseSize(raw.size) }),
         ...(raw.presetsEditable === false && { presetsEditable: false }), action };
 }
 
@@ -347,6 +355,7 @@ function parseSurface(raw) {
         const title = kind === 'tile-hint' ? cleanText(raw.title, CAPS.title) : '';
         // `active` marks a pill or line as switched on (a lock, a chosen option).
         return { id, kind, tile: raw.tile, text, ...(title && { title }),
+            ...(parseSize(raw.size) && { size: parseSize(raw.size) }),
             ...(raw.active === true && { active: true }), ...(action && { action }) };
     }
 
