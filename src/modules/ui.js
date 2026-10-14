@@ -1,9 +1,10 @@
 import { autoSteamPitcherLabel, compactAutoSteamTargetLabel, shouldKeepAutoSteamMode, steamAdjustmentControls } from './auto-steam-flow.js';
 import { manualSteamMode, steamModeCycle } from './auto-steam-capability.js';
-import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver } from './api.js';
+import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver, getSaverBrightness } from './api.js';
 import { openDB, getSetting } from './idb.js';
 import { deriveSleepButtonAction, isWakePending } from './screensaver-policy.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
+import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine, isSaverButtonVisible } from './screensaver-policy.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
 import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync } from './steam-mode.js';
 import { shouldUseNumpad } from './numpad-policy.js';
@@ -23,6 +24,7 @@ import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation,
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
 import { stepValue, formatRatio } from './value-format.js';
+import { resolveStepSize } from './plugin-surfaces.js';
 import { clampSetValue } from './plugin-surfaces.js';
 
 
@@ -235,7 +237,7 @@ function updateDoseValue(type, newValue) {
         payload.profile = { ...activeProfile, target_weight: targetYield };
     }
 
-    updateWorkflow(payload).then(() => {
+    return updateWorkflow(payload).then(() => {
         logger.debug(`Dose ${type} value updated via workflow:`, newValue);
         if (type === 'in') {
             window.app?.saveContextToActiveProfile?.({ targetDoseWeight: parseFloat(newValue) });
@@ -296,7 +298,7 @@ export function updateDrinkOutPresetsDisplay(doseIn, drinkOut) {
 }
 
 export function updateTemperatureValue(newValue) {
-    getWorkflow().then(workflow => {
+    return getWorkflow().then(workflow => {
         if (workflow && workflow.profile && workflow.profile.steps) {
             // Update temperature on ALL steps as number (not string)
             workflow.profile.steps.forEach(step => {
@@ -304,7 +306,7 @@ export function updateTemperatureValue(newValue) {
             });
             
             // Partial update via workflow - only send profile field
-            updateWorkflow({ profile: workflow.profile }).then(() => {
+            return updateWorkflow({ profile: workflow.profile }).then(() => {
                 logger.debug('Temperature updated via workflow:', newValue);
                 // Save it as a per-profile override, same as dose/yield/grind.
                 // The live workflow alone survives an app restart but NOT a
@@ -322,42 +324,88 @@ export function updateTemperatureValue(newValue) {
 // setters a tile edit uses, so it also becomes the active profile's override.
 // Dose and yield are refused (false) until both tiles show numbers: the dose
 // setter reads the other tile's value from the DOM and would send NaN.
-export function applyPluginSet(field, value) {
+function runPluginSet(field, value) {
+    const none = { ok: false, done: Promise.resolve() };
     const n = clampSetValue(field, value);
-    if (n === null) return false;
+    if (n === null) return none;
     const dose = parseFloat(document.getElementById('dose-in-value')?.textContent);
     const drink = parseFloat(document.getElementById('drink-out-value')?.textContent);
     if (field === 'grinderSetting') {
         markTileInteraction();
-        updateGrindValue(n);
+        const done = updateGrindValue(n);
         updateGrindDisplay({ grinderSetting: String(n) });
         flashElement(document.getElementById('grind-value'));
-        return true;
+        return { ok: true, done };
     }
     if (field === 'brewTemperature') {
         // Celsius, like the workflow. Same setter as the tile: every step of the
         // profile gets this temperature.
         markTileInteraction();
-        updateTemperatureValue(n);
+        const done = updateTemperatureValue(n);
         updateTemperatureDisplay(n);
         flashElement(document.getElementById('temp-value'));
-        return true;
+        return { ok: true, done };
     }
-    if (isNaN(dose) || isNaN(drink)) return false;
+    if (isNaN(dose) || isNaN(drink)) return none;
     markTileInteraction();
     if (field === 'targetDoseWeight') {
-        updateDoseValue('in', n);
+        const done = updateDoseValue('in', n);
         updateDrinkOutPresetsDisplay(n, drink);
         flashElement(document.getElementById('dose-in-value'));
-        return true;
+        return { ok: true, done };
     }
     if (field === 'targetYield') {
-        updateDoseValue('out', n);
+        const done = updateDoseValue('out', n);
         updateDrinkOutPresetsDisplay(dose, n);
         flashElement(document.getElementById('drink-out-value'));
-        return true;
+        return { ok: true, done };
     }
-    return false;
+    return none;
+}
+
+export function applyPluginSet(field, value) {
+    return runPluginSet(field, value).ok;
+}
+
+// Same as applyPluginSet, but resolves once the workflow write has settled, so a
+// caller can re-read plugin surfaces after the value has really been stored.
+export async function applyPluginSetAsync(field, value) {
+    const { ok, done } = runPluginSet(field, value);
+    if (ok) await Promise.resolve(done).catch(() => {});
+    return ok;
+}
+
+// A plugin `step`: the tile's value now, moved by `by`, through the same path as
+// `set` (so it is clamped and becomes the profile's override). False when the
+// tile is not showing a number yet.
+const STEP_VALUE_IDS = { targetDoseWeight: 'dose-in-value', targetYield: 'drink-out-value', grinderSetting: 'grind-value' };
+
+// Plugin `stepsize`: the dose / yield -/+ step, kept per field on this device
+// (plain localStorage, not the synchronized KV). It applies only while a
+// stepsize surface for the field is drawn; otherwise the step is 1.
+const STEPSIZE_KEY = field => `plugin-stepsize:${field}`;
+let drawnStepSizes = {}; // field -> offered sizes, set by the surface renderer
+export function setDrawnStepSizes(map) { drawnStepSizes = map || {}; }
+export function getStoredStepSize(field) {
+    try {
+        const n = parseFloat(localStorage.getItem(STEPSIZE_KEY(field)));
+        return Number.isFinite(n) ? n : null;
+    } catch (e) { return null; }
+}
+export function storeStepSize(field, size) {
+    try { localStorage.setItem(STEPSIZE_KEY(field), String(size)); } catch (e) { /* non-fatal */ }
+}
+export function activeStepSize(field) {
+    const sizes = drawnStepSizes[field];
+    if (!sizes) return 1;
+    return resolveStepSize(sizes, getStoredStepSize(field));
+}
+
+// A plugin `step` resolving true once the stored write has settled.
+export async function applyPluginStepAsync(field, by) {
+    const current = parseFloat(document.getElementById(STEP_VALUE_IDS[field])?.textContent);
+    if (isNaN(current) || !Number.isFinite(by)) return false;
+    return applyPluginSetAsync(field, current + by);
 }
 
 export function updateGrindValue(newValue) {
@@ -366,12 +414,13 @@ export function updateGrindValue(newValue) {
             grinderSetting: parseFloat(newValue).toFixed(2)
         }
     };
-    updateWorkflow(workflowUpdate).then(() => {
+    const done = updateWorkflow(workflowUpdate).then(() => {
         logger.debug('Grind value updated successfully:', newValue);
     }).catch(error => {
         logger.error('Failed to update grind value:', error);
     });
     window.app?.saveGrindToActiveProfile?.(parseFloat(newValue).toFixed(2));
+    return done;
 }
 
 export function updateFlushValue(newValue) {
@@ -644,7 +693,7 @@ function setupValueAdjuster(minusBtnId, plusBtnId, valueElId, step, min, formatt
         if (!valueEl) return;
         let currentValue = parseFloat(valueEl.textContent);
         if (currentValue > min) {
-            currentValue = stepValue(currentValue, getStep(), -1);
+            currentValue = stepValue(currentValue, getStep(), -1, min);
             valueEl.textContent = format(currentValue);
             scheduleUpdate(currentValue);
             if (afterUpdate) afterUpdate(format(currentValue));
@@ -1570,6 +1619,7 @@ let currentMachineState = null;
 // Screensaver functionality
 let screensaverActive = false;
 let screensaverElement = null;
+let screensaverButtonSlot = null;
 let screensaverDimOverlay = null;
 let screensaverImages = [];
 let screensaverCurrentIndex = 0;
@@ -1615,6 +1665,17 @@ function isInWebView() {
     const isIOSWebView = isIOS && !isStandalone && !/Safari\//.test(ua);
     const isDecentWebView = ua.includes('Decent');
     return isAndroidWebView || isIOSWebView || isDecentWebView;
+}
+
+/** The element a plugin's screensaver button is drawn into; null before init. */
+export function getScreensaverButtonSlot() {
+    return screensaverButtonSlot;
+}
+
+// Hidden on the black saver (brightness 0): an invisible target must not be tappable.
+function _syncSaverButtonSlot() {
+    if (!screensaverButtonSlot) return;
+    screensaverButtonSlot.style.display = isSaverButtonVisible(getSaverBrightness()) ? 'flex' : 'none';
 }
 
 export async function initScreensaver() {
@@ -1671,9 +1732,22 @@ export async function initScreensaver() {
     // machine. Bind ONCE: a WebView synthesises `click` from a tap, so binding
     // `touchstart` as well (as this did) sent 'idle' twice per tap. The
     // !screensaverActive guard inside wakeFromScreensaver() is the backstop.
-    screensaverElement.addEventListener('click', wakeFromScreensaver);
+    // A plugin's screensaver button is drawn into this slot. Its own handler stops
+    // the click; mayTapWakeMachine() is the second guard, so a tap there never wakes.
+    screensaverButtonSlot = document.createElement('div');
+    screensaverButtonSlot.id = 'screensaver-plugin-slot';
+    screensaverButtonSlot.dataset.pluginSaverSlot = '1';
+    screensaverButtonSlot.style.cssText = 'position:absolute;left:0;right:0;top:6%;display:none;'
+        + 'justify-content:center;pointer-events:none;';
+    screensaverElement.appendChild(screensaverButtonSlot);
+
+    screensaverElement.addEventListener('click', event => {
+        const onPluginControl = !!event.target?.closest?.('[data-plugin-saver-slot]');
+        if (mayTapWakeMachine({ screensaverActive, onPluginControl })) wakeFromScreensaver();
+    });
 
     document.body.appendChild(screensaverElement);
+    document.dispatchEvent(new Event('streamline:screensaverready'));
 
     try {
         await openDB();
@@ -1778,6 +1852,7 @@ export function activateScreensaver() {
         if (screensaverDimOverlay) screensaverDimOverlay.style.display = 'none';
         screensaverElement.style.display = 'flex';
         screensaverActive = true;
+        _syncSaverButtonSlot();
         _syncScreensaverClock();
         return;
     }
@@ -1790,6 +1865,7 @@ export function activateScreensaver() {
     }
     screensaverElement.style.display = 'flex';
     screensaverActive = true;
+    _syncSaverButtonSlot();
     _syncScreensaverClock();
 
     if (screensaverImages.length > 1) {
@@ -2565,7 +2641,7 @@ export function initUI(callbacks) {
         });
     }
 
-    setupValueAdjuster('drink-out-minus', 'drink-out-plus', 'drink-out-value', 1, 0, (val) => `${val}g`, (val) => { updateDoseValue('out', val); updateDrinkRatio(); }, syncDrinkOutPresets);
+    setupValueAdjuster('drink-out-minus', 'drink-out-plus', 'drink-out-value', () => activeStepSize('targetYield'), 0, (val) => `${val}g`, (val) => { updateDoseValue('out', val); updateDrinkRatio(); }, syncDrinkOutPresets);
     {
         const tempMinusBtn = document.getElementById('temp-minus');
         const tempPlusBtn = document.getElementById('temp-plus');
@@ -2574,7 +2650,7 @@ export function initUI(callbacks) {
             tempPlusBtn.addEventListener('click', incrementBrewTemp);
         }
     }
-    setupValueAdjuster('dose-in-minus', 'dose-in-plus', 'dose-in-value', 1, 0, (val) => `${val}g`, (val) => { updateDoseValue('in', val); updateDrinkRatio(); }, syncDrinkOutPresets);
+    setupValueAdjuster('dose-in-minus', 'dose-in-plus', 'dose-in-value', () => activeStepSize('targetDoseWeight'), 0, (val) => `${val}g`, (val) => { updateDoseValue('in', val); updateDrinkRatio(); }, syncDrinkOutPresets);
     setupValueAdjuster('grind-minus', 'grind-plus', 'grind-value', () => grindStep, 0, (val) => grindStep === 1 ? String(Math.round(val)) : val.toFixed(1), updateGrindValue);
     setupValueAdjuster('flush-minus', 'flush-plus', 'flush-value', 1, 0, (val) => `${val}s`, (val) => {
         updateFlushValue(val);

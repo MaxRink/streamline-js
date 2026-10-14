@@ -19,6 +19,8 @@ import {
     deriveScreensaverAction,
     deriveSleepButtonAction,
     isMachineAsleep,
+    mayTapWakeMachine,
+    isSaverButtonVisible,
     isWakePending,
     WAKE_CONFIRM_GRACE_MS,
 } from '../src/modules/screensaver-policy.js';
@@ -259,4 +261,19 @@ test('the first frame after boot dims if the machine is already asleep', () => {
     // previousMachineState starts undefined; an already-sleeping machine must still dim.
     assert.equal(deriveDisplayAction(undefined, 'sleeping'), 'dim');
     assert.equal(deriveDisplayAction(undefined, 'idle'), 'restore');
+});
+
+// --- plugin screensaver button: a plugin control tap never wakes ----------------
+
+test('a tap on the overlay wakes; a tap on a plugin control or an idle overlay does not', () => {
+    assert.equal(mayTapWakeMachine({ screensaverActive: true, onPluginControl: false }), true);
+    assert.equal(mayTapWakeMachine({ screensaverActive: true, onPluginControl: true }), false);
+    assert.equal(mayTapWakeMachine({ screensaverActive: false }), false);
+    assert.equal(mayTapWakeMachine(), false);
+});
+
+test('the plugin saver button is hidden at brightness 0 (black saver)', () => {
+    assert.equal(isSaverButtonVisible(0), false);
+    assert.equal(isSaverButtonVisible(10), true);
+    assert.equal(isSaverButtonVisible(undefined), false);
 });

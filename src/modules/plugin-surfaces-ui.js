@@ -6,19 +6,23 @@
 // A failed or slow read hides that plugin's surfaces and never blocks the
 // dashboard. With no plugin answering `skin` nothing is drawn.
 
-import { getPlugins, callPluginEndpoint, API_BASE_URL } from './api.js';
+import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
+import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
-import { parseSkinAnswer, skinPlugins, callableEndpoint } from './plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
+    nextStepSize, resolveStepSize, formatStepSize } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSet, isAutoSteamMode } from './ui.js';
+import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
+    getStoredStepSize, storeStepSize, setDrawnStepSizes } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
 const CALL_TIMEOUT_MS = 5000; // a hung plugin must not hold a tile's call lane
 const MIN_GAP_MS = 2000; // focus + visibilitychange can both fire
 const MAX_PLUGIN_HEADER_BUTTONS = 1; // across all plugins
+const MAX_PLUGIN_SAVER_BUTTONS = 1; // across all plugins
 
 // Same look as the DYE and Settings buttons; width is content-driven so a
 // plugin label is not cut to the 135px a system label gets.
@@ -59,17 +63,17 @@ function withTimeout(promise, ms) {
 async function readSurfaces(plugin) {
     try {
         const answer = await withTimeout(callPluginEndpoint(plugin.id, 'skin', null, 'GET'), READ_TIMEOUT_MS);
-        return parseSkinAnswer(answer).surfaces;
+        return parseSkinAnswer(answer);
     } catch (error) {
         // callPluginEndpoint logs an HTTP failure at error level; a timeout is
         // only logged here, at debug. Either way the plugin is just hidden, so
         // one broken plugin cannot affect the others.
         logger.debug(`Plugin surfaces: ${plugin.id} skin not read:`, error?.message);
-        return [];
+        return { surfaces: [], live: null };
     }
 }
 
-function buildButton(plugin, surface) {
+function buildButton(plugin, surface, { bind = true } = {}) {
     const button = document.createElement('button');
     button.className = BUTTON_CLASS;
     button.dataset.pluginSurface = `${plugin.id}:${surface.id}`;
@@ -89,18 +93,159 @@ function buildButton(plugin, surface) {
     if (surface.text) button.title = surface.text;
     button.setAttribute('aria-label', surface.text ? `${surface.label}: ${surface.text}` : surface.label);
 
-    bindAction(button, plugin, surface.action);
+    if (bind) bindAction(button, plugin, surface.action, surface);
     return button;
 }
 
-function bindAction(el, plugin, action) {
-    if (action?.type === 'open') {
-        // `presentation` is a hint; only same-frame navigation exists so far.
+// The button on the screensaver. It never commands the machine: the click stops
+// here so the saver's wake handler does not see it. Before the plugin's page opens
+// the panel is brought back (display only, through the display queue); an overlay
+// that closes while the machine is still asleep dims it again. A `page` leaves the
+// skin, and the first snapshot on return raises the saver and dims.
+function buildSaverButton(plugin, surface) {
+    const button = buildButton(plugin, surface, { bind: false });
+    button.dataset.agentId = `plugin-saver:${plugin.id}:${surface.id}`;
+    button.style.pointerEvents = 'auto';
+    const { action } = surface;
+    const url = action?.type === 'open'
+        ? pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null })
+        : null;
+    button.addEventListener('click', event => {
+        event.stopPropagation();
+        if (!url) return;
+        try {
+            restoreDisplay();
+        } catch (error) {
+            logger.warn('Screensaver button: display not restored:', error);
+        }
+        if (action.presentation === 'overlay') {
+            openOverlay(plugin, action, url, () => {
+                if (isMachineAsleep(currentMachineState) && isScreensaverActive()) {
+                    try { dimDisplay(); } catch (error) { logger.warn('Screensaver button: display not dimmed:', error); }
+                }
+            });
+        } else {
+            window.location.assign(url);
+        }
+    });
+    return button;
+}
+
+// The plugin's `ui` page in a dialog over the dashboard. The page must send
+// `{type:'streamline:ready'}` once it has loaded (a CSP `frame-ancestors` block
+// gives no event the skin could catch) and `{type:'streamline:close'}` to close.
+// No ready message in time: drop the dialog and go to the page, as `page` does.
+// The skin draws its own close button and closes on a backdrop tap, because key
+// events go to the frame once it is touched and a tablet has no Escape key.
+const OVERLAY_READY_MS = 3000;
+let overlayOpen = false;
+
+function openOverlay(plugin, action, pageUrl, onClose) {
+    if (overlayOpen) return;
+    const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    const src = pluginUiUrl(plugin, API_BASE_URL, null, { view: action.view, embedTheme: theme });
+    if (!src) return;
+    overlayOpen = true;
+
+    const dialog = document.createElement('dialog');
+    dialog.dataset.agentId = `plugin-overlay:${plugin.id}`;
+    dialog.style.cssText = 'width:min(1100px,94vw);height:min(760px,90vh);max-width:none;max-height:none;padding:0;border:0;border-radius:16px;overflow:hidden;background:var(--bg,#fff);';
+    const frame = document.createElement('iframe');
+    // Scripts and forms run in the plugin's own origin; the frame cannot navigate the skin.
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+    frame.src = src;
+    frame.title = plugin.name || plugin.id;
+    frame.style.cssText = 'display:block;width:100%;height:100%;border:0;';
+    dialog.appendChild(frame);
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = '×';
+    closeButton.setAttribute('aria-label', 'Close');
+    closeButton.style.cssText = 'position:absolute;top:8px;right:8px;width:44px;height:44px;border-radius:22px;border:0;font-size:28px;line-height:1;cursor:pointer;background:rgba(0,0,0,.55);color:#fff;z-index:1;';
+    dialog.appendChild(closeButton);
+
+    let timer = null;
+    // `fallback`: the overlay never became ready and the page is opened instead.
+    // onClose (re-dim) must not run then, or the page opens at saver brightness.
+    const finish = (event, fallback = false) => {
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        dialog.removeEventListener('close', finish);
+        if (dialog.open) dialog.close();
+        dialog.remove();
+        overlayOpen = false;
+        if (onClose && !fallback) onClose();
+        // The page may have changed the workflow; the tiles read it again.
+        refreshPluginSurfaces();
+        document.dispatchEvent(new Event('streamline:workflow-refresh'));
+    };
+    const onMessage = event => {
+        if (event.source !== frame.contentWindow) return;
+        const type = event.data?.type;
+        if (type === 'streamline:ready') clearTimeout(timer);
+        else if (type === 'streamline:close') finish();
+    };
+    window.addEventListener('message', onMessage);
+    dialog.addEventListener('close', finish);
+    closeButton.addEventListener('click', finish);
+    // A tap on the backdrop lands on the dialog itself, never on the frame.
+    dialog.addEventListener('click', event => { if (event.target === dialog) finish(); });
+    document.body.appendChild(dialog);
+    try {
+        dialog.showModal();
+    } catch (e) {
+        logger.warn('Plugin overlay could not open:', e);
+        finish();
+        return;
+    }
+    timer = setTimeout(() => {
+        logger.warn('Plugin overlay did not report ready, opening as a page:', plugin.id);
+        finish(null, true);
+        window.location.assign(pageUrl);
+    }, OVERLAY_READY_MS);
+}
+
+function bindAction(el, plugin, action, surface) {
+    if (action?.type === 'call') {
+        // A fixed number to the plugin's own endpoint; `skin` is read again after,
+        // so the plugin's answer decides what the pill says next.
+        el.addEventListener('click', () => {
+            callMode(plugin, surface, action.value, { immediate: true }).then(sent => {
+                if (!sent) logger.warn('Plugin call not delivered:', surface.id);
+            });
+        });
+    } else if (action?.type === 'open') {
         const url = pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null });
-        if (url) el.addEventListener('click', () => window.location.assign(url));
+        if (url && action.presentation === 'overlay') {
+            el.addEventListener('click', () => openOverlay(plugin, action, url));
+        } else if (url) {
+            el.addEventListener('click', () => window.location.assign(url));
+        }
+    } else if (action?.type === 'step') {
+        el.addEventListener('click', () => {
+            applyPluginStepAsync(action.field, action.by).then(applied => {
+                if (!applied) logger.warn('Plugin step not applied:', action.field);
+                else refreshPluginSurfaces();
+            });
+        });
+    } else if (action?.type === 'stepsize') {
+        el.addEventListener('click', () => {
+            const next = nextStepSize(action.sizes, resolveStepSize(action.sizes, getStoredStepSize(action.field)));
+            storeStepSize(action.field, next);
+            document.querySelectorAll('[data-stepsize-field]').forEach(node => {
+                if (node.dataset.stepsizeField !== action.field) return;
+                node.textContent = formatStepSize(next);
+                if (node.parentElement && node.parentElement !== document.body && node.parentElement.tagName === 'BUTTON') {
+                    node.parentElement.title = node.parentElement.dataset.customTitle || node.textContent;
+                }
+            });
+        });
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
-            if (!applyPluginSet(action.field, action.value)) logger.warn('Plugin set not applied:', action.field);
+            applyPluginSetAsync(action.field, action.value).then(applied => {
+                if (!applied) logger.warn('Plugin set not applied:', action.field);
+                else refreshPluginSurfaces();
+            });
         });
     }
 }
@@ -110,20 +255,29 @@ function bindAction(el, plugin, action) {
 function buildTileSurface(plugin, surface) {
     const el = document.createElement('span');
     el.textContent = surface.text;
+    if (surface.action?.type === 'stepsize') {
+        // Drawn from this device's stored size, so a redraw keeps it correct.
+        el.dataset.stepsizeField = surface.action.field;
+        el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field)));
+    }
     el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    const title = surface.title || surface.text;
+    const title = surface.title || el.textContent;
+    // Switched on: the skin's blue and bold, so a lock or a chosen option reads at a glance.
+    if (surface.active) el.dataset.active = '1';
 
     const root = surface.action ? document.createElement('button') : el;
     if (surface.action) {
         root.appendChild(el);
         root.style.cssText = 'display:flex;align-items:flex-end;justify-content:center;background:none;border:0;padding:0;cursor:pointer;';
-        bindAction(root, plugin, surface.action);
+        bindAction(root, plugin, surface.action, surface);
+        if (surface.action.type === 'call') root.setAttribute('aria-pressed', String(surface.active === true));
     } else {
         root.style.pointerEvents = 'none';
     }
     root.dataset.pluginSurface = surface.id;
     root.dataset.agentId = `plugin-tile:${surface.tile}:${surface.kind}`;
     root.title = title;
+    if (surface.title) root.dataset.customTitle = surface.title;
     return { root, el };
 }
 
@@ -149,6 +303,7 @@ function placeTileSurface(plugin, surface) {
         root.style.zIndex = '1';
         el.style.cssText += `max-width:100%;height:17px;line-height:17px;padding:0 10px;border-radius:9px;`
             + `font-size:13px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
+        if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--mimoja-blue-v2);';
         parent.appendChild(root);
         return root;
     }
@@ -167,6 +322,7 @@ function placeTileSurface(plugin, surface) {
     root.style.zIndex = '1';
     if (surface.action) root.style.justifyContent = 'flex-start';
     el.style.cssText += `width:100%;font-size:14px;line-height:17px;color:${MUTED};`;
+    if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;';
     section.appendChild(root);
     return root;
 }
@@ -279,7 +435,11 @@ const callQueue = createCallQueue({
         callPluginEndpoint(encodeURIComponent(plugin.id), endpoint, body, 'POST'), CALL_TIMEOUT_MS),
 });
 
-const callKey = (plugin, surface) => `${plugin.id}:${surface.tile}`;
+// A mode shares one lane per tile (newest value wins). A fixed-value hint or line
+// is its own lane, so tapping it never supersedes a mode's pending value.
+const callKey = (plugin, surface) => (surface.kind === 'tile-hint' || surface.kind === 'tile-line'
+    ? `${plugin.id}:${surface.id}`
+    : `${plugin.id}:${surface.tile}`);
 
 // True while a call for this mode is being sent or the user is still stepping, so a
 // redraw must keep the value the user is moving rather than the plugin's older one.
@@ -298,6 +458,8 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
         // Otherwise read skin again and redraw even if the answer is unchanged, so
         // a number the plugin refused snaps back.
         if (sent !== null) { lastKey = ''; refreshPluginSurfaces(); }
+        // The plugin answers after its own PUT /workflow, so the tiles can be re-read.
+        if (sent === true) document.dispatchEvent(new Event('streamline:workflow-refresh'));
         return sent === true;
     }).catch(() => false);
 }
@@ -305,7 +467,12 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
 // -> true when everything was drawn. Tile placement measures the label
 // (offsetTop/Height/Width), which is 0 while the main page is display:none, so
 // tiles are skipped then and the caller must not remember the answer as drawn.
-function render(entries) {
+function render(rawEntries) {
+    // A hint or line whose call endpoint the plugin does not declare is drawn
+    // inert, like a surface with no action, so it does not look tappable.
+    const entries = rawEntries.map(e => (e.surface.action?.type === 'call' && e.surface.kind !== 'tile-mode'
+        && !callableEndpoint(e.plugin, e.surface.action.endpoint)
+        ? { ...e, surface: { ...e.surface, action: null } } : e));
     lastEntries = entries;
     const mainHidden = document.getElementById('main-page')?.style.display === 'none';
     document.querySelectorAll('[data-plugin-surface]').forEach(el => {
@@ -320,8 +487,11 @@ function render(entries) {
 
     const container = document.getElementById('header-right-controls');
     const anchor = container?.firstChild;
+    const drawnSizes = {};
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
     let headerButtons = 0;
+    let saverButtons = 0;
+    let saverSlotMissing = false;
 
     // A mode takes the label slot, so a tile-line on that tile is not drawn.
     // A mode whose endpoint cannot be called is never drawn, and neither is a steam
@@ -343,13 +513,29 @@ function render(entries) {
             }
             continue;
         }
+        if (surface.kind === 'screensaver-button') {
+            // One in total, like the header button. The slot is made with the
+            // screensaver; until it exists the render is retried (see below).
+            const slot = getScreensaverButtonSlot();
+            if (!slot) { saverSlotMissing = true; continue; }
+            if (saverButtons < MAX_PLUGIN_SAVER_BUTTONS) {
+                slot.appendChild(buildSaverButton(plugin, surface));
+                saverButtons += 1;
+            }
+            continue;
+        }
         if (mainHidden) continue;
         if (surface.kind === 'tile-mode') continue; // drawn per tile below
         if (surface.kind === 'tile-line' && modeTiles.has(surface.tile)) continue;
         const slot = `${surface.kind}:${surface.tile}`;
         if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
-        if (placeTileSurface(plugin, surface)) usedSlots.add(slot);
+        if (placeTileSurface(plugin, surface)) {
+            usedSlots.add(slot);
+            const a = surface.action;
+            if (a?.type === 'stepsize' && !drawnSizes[a.field]) drawnSizes[a.field] = a.sizes;
+        }
     }
+    setDrawnStepSizes(drawnSizes);
 
     if (!mainHidden) {
         for (const tile of modeTiles) {
@@ -364,7 +550,7 @@ function render(entries) {
         // The answer may have changed the selected mode's value or presets.
         Object.keys(selectedMode).forEach(announceMode);
     }
-    return !mainHidden;
+    return !mainHidden && !saverSlotMissing;
 }
 
 export async function refreshPluginSurfaces() {
@@ -374,9 +560,14 @@ export async function refreshPluginSurfaces() {
     try {
         const plugins = skinPlugins(await getPlugins());
         const entries = [];
+        const live = new Map(); // plugin id -> websocket endpoint it pushes "changed" on
         for (const plugin of plugins) {
-            for (const surface of await readSurfaces(plugin)) entries.push({ plugin, surface });
+            const answer = await readSurfaces(plugin);
+            for (const surface of answer.surfaces) entries.push({ plugin, surface });
+            const endpoint = liveEndpoint(plugin, answer.live);
+            if (endpoint) live.set(plugin.id, endpoint);
         }
+        syncLive(live);
         // Skip the DOM work when nothing changed: a rebuild resizes the header
         // controls, which re-runs the strip fit.
         const key = JSON.stringify(entries.map(e => [e.plugin.id, e.surface]));
@@ -389,6 +580,46 @@ export async function refreshPluginSurfaces() {
     } finally {
         running = false;
         if (refreshAgain) { refreshAgain = false; refreshPluginSurfaces(); }
+    }
+}
+
+// Sockets a plugin asked for with `live`: one per plugin, only while the page is
+// visible. A message re-reads `skin` and asks the tiles to re-read the workflow
+// (the plugin may have changed it). A burst is one read: the wait starts at the
+// first message and is not pushed back by later ones, so a fast stream still
+// refreshes every PUSH_DEBOUNCE_MS.
+const PUSH_DEBOUNCE_MS = 300;
+const liveSockets = new Map(); // plugin id -> endpoint
+let pushTimer = null;
+
+let pushWantsWorkflow = false;
+
+function onPush(data) {
+    if (pushWants(data).workflow) pushWantsWorkflow = true;
+    if (pushTimer) return;
+    pushTimer = setTimeout(() => {
+        pushTimer = null;
+        const workflow = pushWantsWorkflow;
+        pushWantsWorkflow = false;
+        refreshPluginSurfaces();
+        if (workflow) document.dispatchEvent(new Event('streamline:workflow-refresh'));
+    }, PUSH_DEBOUNCE_MS);
+}
+
+function closeLive() {
+    for (const id of liveSockets.keys()) closePluginPush(id);
+    liveSockets.clear();
+}
+
+function syncLive(wanted) {
+    if (document.hidden) { closeLive(); return; }
+    for (const id of [...liveSockets.keys()]) {
+        if (wanted.get(id) !== liveSockets.get(id)) { closePluginPush(id); liveSockets.delete(id); }
+    }
+    for (const [id, endpoint] of wanted) {
+        if (liveSockets.get(id) === endpoint) continue;
+        connectPluginPush(id, endpoint, onPush);
+        liveSockets.set(id, endpoint);
     }
 }
 
@@ -405,12 +636,19 @@ export function initPluginSurfaces() {
     setInterval(refreshPluginSurfaces, REFRESH_MS);
     window.addEventListener('focus', refreshIfDue);
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') refreshIfDue();
+        // Visible again: read now (also reopens the live sockets closed when hidden).
+        if (document.visibilityState === 'visible') refreshPluginSurfaces();
+        else closeLive();
     });
     // Entering or leaving the built-in Auto steam mode: draw again from the last
     // answer, which hides or restores the steam toggle.
     document.addEventListener('streamline:steamautochange', () => {
         if (lastEntries && !render(lastEntries)) lastKey = '';
+    });
+    // The screensaver element is built after the first read on a slow boot.
+    document.addEventListener('streamline:screensaverready', () => {
+        lastKey = '';
+        refreshPluginSurfaces();
     });
     // Returning from a sub-page: a surface rendered while the page was hidden
     // must be placed again, so forget the last drawn answer.
