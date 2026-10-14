@@ -1760,19 +1760,22 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
 // re-reads the document. Re-read it when the user comes back to the app, and on
 // a slow timer for a change made while they are looking at it.
 //
-// Only fields that actually moved on the server get repainted, so a poll landing
-// while the user is mid-edit cannot overwrite the value they are setting -- their
-// tile has not reached the server yet, so it reads as unchanged. A different
-// profile means a wholesale repaint, name included, since a profile switch moves
-// the brew temp and the title together.
-const WORKFLOW_POLL_MS = 60_000;
-const WORKFLOW_REFRESH_MIN_GAP_MS = 2000; // focus + visibilitychange can both fire
-// A tile's push is debounced by a second, so "the server matches my baseline" is
-// not enough to prove the user is not mid-edit: their first press can already
-// have landed while a later one is still pending. Hold off entirely while a tile
-// was touched recently -- repainting then would reassign the very variable the
+// The four main tiles (dose, yield, grind, brew temperature) are painted from the
+// workflow on every read, so the screen shows what Decaid holds, not only what
+// moved since the last read. Only an edit that has not reached Decaid yet is
+// protected: a tile press waiting out its debounce, or a PUT still on the wire.
+// Every successful write the skin makes is followed by a read-back, which is how
+// a change a plugin made in answer to it shows up. A different profile means a
+// wholesale repaint, name included, since a profile switch moves the brew temp and
+// the title together.
+const WORKFLOW_POLL_MS = 15_000;
+const WORKFLOW_REFRESH_MIN_GAP_MS = 250; // focus + visibilitychange can both fire
+// A tile press is pushed after a one second debounce, so a press this recent has
+// not reached Decaid yet: painting now would reassign the very variable the
 // pending push is about to send.
-const WORKFLOW_EDIT_GUARD_MS = 5000;
+const WORKFLOW_EDIT_GUARD_MS = 1100;
+const WORKFLOW_READBACK_FOLLOWUP_MS = 1500; // a plugin reacting to our write
+const tileEditPending = () => ui.msSinceTileInteraction() < WORKFLOW_EDIT_GUARD_MS || api.hasWorkflowWriteInFlight();
 let lastWorkflowTiles = null;
 let lastWorkflowRefreshAt = 0;
 let workflowWatchStarted = false;
@@ -1803,12 +1806,12 @@ export function seedWorkflowTiles(workflow) {
 let workflowRefreshRetry = null;
 function refreshWorkflowTilesSoon() {
     clearTimeout(workflowRefreshRetry);
-    const wait = Math.max(
-        WORKFLOW_EDIT_GUARD_MS - ui.msSinceTileInteraction(),
-        WORKFLOW_REFRESH_MIN_GAP_MS - (Date.now() - lastWorkflowRefreshAt),
-        0);
-    if (wait > 0) workflowRefreshRetry = setTimeout(refreshWorkflowTilesSoon, wait + 50);
-    else refreshWorkflowTiles();
+    const gap = WORKFLOW_REFRESH_MIN_GAP_MS - (Date.now() - lastWorkflowRefreshAt);
+    if (tileEditPending() || gap > 0) {
+        workflowRefreshRetry = setTimeout(refreshWorkflowTilesSoon, 250);
+    } else {
+        refreshWorkflowTiles();
+    }
 }
 
 async function refreshWorkflowTiles() {
@@ -1818,13 +1821,17 @@ async function refreshWorkflowTiles() {
     if (isSubPage()) return;
     // Leaves the snapshot untouched so the change is re-detected on the next tick,
     // once the user has stopped adjusting.
-    if (ui.msSinceTileInteraction() < WORKFLOW_EDIT_GUARD_MS) return;
+    if (tileEditPending()) return;
     const now = Date.now();
     if (now - lastWorkflowRefreshAt < WORKFLOW_REFRESH_MIN_GAP_MS) return;
     lastWorkflowRefreshAt = now;
     // Captured before the await: a force raised while this read is in flight
     // belongs to a later read and must survive it.
-    const force = pendingForcedRefresh;
+    // Every read repaints the four main tiles from the workflow, not only the ones
+    // that moved since the last read: a tile edited on the dashboard never moves the
+    // baseline, so a diff alone left the screen showing a number the workflow no
+    // longer held. The edit guard above is what protects an edit in progress.
+    const force = true;
 
     let workflow;
     try {
@@ -1838,8 +1845,8 @@ async function refreshWorkflowTiles() {
     // The user touched a tile while the read was in flight. Painting (or moving
     // the baseline) would overwrite that edit with the older server value, so
     // drop this read and keep the force for a retry after the guard.
-    if (ui.msSinceTileInteraction() < WORKFLOW_EDIT_GUARD_MS) {
-        if (pendingForcedRefresh) refreshWorkflowTilesSoon();
+    if (tileEditPending()) {
+        refreshWorkflowTilesSoon();
         return;
     }
     if (force) pendingForcedRefresh = false;
@@ -1871,6 +1878,12 @@ function startWorkflowWatch() {
     });
     window.addEventListener('focus', refreshWorkflowTiles);
     // A plugin that changed the workflow and said so (plugin surfaces' `live`).
+    // The skin wrote to Decaid: read it back now, and once more shortly after for a
+    // plugin that answers the write by changing the workflow itself.
+    api.onWorkflowUpdated(() => {
+        refreshWorkflowTilesSoon();
+        setTimeout(refreshWorkflowTilesSoon, WORKFLOW_READBACK_FOLLOWUP_MS);
+    });
     document.addEventListener('streamline:workflow-refresh', () => {
         pendingForcedRefresh = true;
         refreshWorkflowTilesSoon();

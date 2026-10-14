@@ -114,7 +114,7 @@ test('a profile switch shows up as a title change', () => {
         const refresh = new Function(
             'isSubPage', 'ui', 'getWorkflow', 'logger', 'loadInitialData',
             'workflowTileValues', 'tilesToPaint',
-            'WORKFLOW_REFRESH_MIN_GAP_MS', 'WORKFLOW_EDIT_GUARD_MS', 'WORKFLOW_TILE_PAINTERS',
+            'WORKFLOW_REFRESH_MIN_GAP_MS', 'tileEditPending', 'WORKFLOW_TILE_PAINTERS',
             'refreshWorkflowTilesSoon', 'seed', 'calls', 'state',
             `let lastWorkflowTiles = seed;
              let lastWorkflowRefreshAt = 0;
@@ -131,8 +131,8 @@ test('a profile switch shows up as a title change', () => {
             async () => { calls.reloads++; },
             workflowTileValues,
             tilesToPaint,
-            2000,
-            5000,
+            250,
+            () => sinceEdit < 1100,
             new Proxy({}, { get: (_t, key) => (value) => calls.painted.push([key, value]) }),
             () => { calls.retries++; },
             baseline,
@@ -177,16 +177,17 @@ test('a profile switch shows up as a title change', () => {
         });
 
         await refresh();
-        assert.deepEqual(calls.painted, [['steamFlow', 0.4]]);
+        assert.ok(calls.painted.some(([k, v]) => k === 'steamFlow' && v === 0.4));
     });
 
-    test('only the moved tile is painted, never the whole document', async () => {
+    test('a moved secondary tile is painted along with the four main tiles', async () => {
         const moved = base();
         moved.hotWaterData.volume = 100;
         const { refresh, calls } = build({ baseline: workflowTileValues(base()), workflow: moved });
 
         await refresh();
-        assert.deepEqual(calls.painted, [['hotWaterVolume', 100]]);
+        assert.ok(calls.painted.some(([k, v]) => k === 'hotWaterVolume' && v === 100));
+        assert.ok(!calls.painted.some(([k]) => k === 'steamFlow'), 'unmoved secondary tiles are not painted');
     });
 
     test('a profile switch reloads instead of painting tiles piecemeal', async () => {
@@ -253,11 +254,11 @@ test('a profile switch shows up as a title change', () => {
         assert.equal(state.read(), false);
     });
 
-    test('an unchanged workflow paints nothing', async () => {
+    test('an unchanged workflow still repaints only the four main tiles', async () => {
         const { refresh, calls } = build({ baseline: workflowTileValues(base()), workflow: base() });
         await refresh();
         assert.equal(calls.fetches, 1);
-        assert.deepEqual(calls.painted, []);
+        assert.deepEqual(calls.painted.map(([k]) => k).sort(), ['brewTemp', 'dose', 'grind', 'yield']);
     });
 }
 
