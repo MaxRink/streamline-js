@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+    nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -43,7 +44,7 @@ test('a non-string id (an array that stringifies to a valid id) is dropped', () 
     assert.deepEqual(s.map(x => x.text), ['string']);
 });
 
-test('limits: one header button, one hint and one line per tile, three surfaces', () => {
+test('limits: one header button, one hint and one line per tile, eight surfaces', () => {
     const btn = id => ({ id, kind: 'header-button', label: 'B' });
     assert.equal(ok([btn('a'), btn('b')]).length, 1);
     const hint = (id, tile) => ({ id, kind: 'tile-hint', tile, text: id });
@@ -51,7 +52,45 @@ test('limits: one header button, one hint and one line per tile, three surfaces'
     assert.equal(ok([hint('a', 'dose'), { id: 'b', kind: 'tile-line', tile: 'dose', text: 'b' }]).length, 2);
     const tiles = ['dose', 'drink', 'grind', 'temperature'];
     const lines = tiles.map(tile => ({ id: tile, kind: 'tile-line', tile, text: tile }));
-    assert.equal(ok(lines).length, MAX_SURFACES);
+    assert.equal(ok(lines).length, 4);
+    assert.equal(MAX_SURFACES, 8);
+    const many = [btn('b'), ...tiles.flatMap(t => [hint(`h${t}`, t), { id: `l${t}`, kind: 'tile-line', tile: t, text: t }]), btn('x')];
+    assert.equal(ok(many).length, 8); // 1 button + 4 hints + 4 lines = 9 slots, capped
+});
+
+const stepsize = (over = {}, kind = 'tile-hint') => ({ id: 'ss', kind, tile: 'dose', text: 'x',
+    action: { type: 'stepsize', field: 'targetDoseWeight', sizes: [1, 0.5, 0.1], ...over } });
+
+test('stepsize: valid action parses, sizes rounded to hundredths', () => {
+    assert.deepEqual(ok([stepsize()])[0].action, { type: 'stepsize', field: 'targetDoseWeight', sizes: [1, 0.5, 0.1] });
+    assert.deepEqual(ok([stepsize({ field: 'targetYield', sizes: ['2', 0.254, 10] }, 'tile-line')])[0].action.sizes, [2, 0.25, 10]);
+});
+
+test('stepsize: invalid actions are dropped and the surface stays inert', () => {
+    const bad = [{ sizes: [1, 2, 3, 4, 5] }, { sizes: [] }, { sizes: [0] }, { sizes: [-1] }, { sizes: [10.01] },
+        { sizes: [0.004] }, { sizes: ['x'] }, { sizes: 1 }, { field: 'grinderSetting' }, { field: 'brewTemperature' }];
+    for (const over of bad) {
+        const [s] = ok([stepsize(over)]);
+        assert.ok(s, JSON.stringify(over));
+        assert.equal(s.action, undefined, JSON.stringify(over));
+    }
+});
+
+test('stepsize: only on tile-hint and tile-line', () => {
+    const action = { type: 'stepsize', field: 'targetDoseWeight', sizes: [1] };
+    assert.equal(ok([{ id: 'a', kind: 'header-button', label: 'B', action }])[0].action, undefined);
+    assert.equal(ok([{ id: 'a', kind: 'tile-mode', tile: 'dose', label: 'M', value: 1, min: 0, max: 5, action }]).length, 0);
+});
+
+test('stepsize helpers: next wraps, unknown current goes to the first, text format', () => {
+    assert.equal(nextStepSize([1, 0.5, 0.1], 1), 0.5);
+    assert.equal(nextStepSize([1, 0.5, 0.1], 0.1), 1);
+    assert.equal(nextStepSize([1, 0.5, 0.1], 7), 1);
+    assert.equal(nextStepSize([1, 0.5], null), 1);
+    assert.equal(resolveStepSize([1, 0.5], 0.5), 0.5);
+    assert.equal(resolveStepSize([1, 0.5], 3), 1);
+    assert.equal(formatStepSize(0.5), '±0.5 g');
+    assert.equal(formatStepSize(1), '±1 g');
 });
 
 test('text is capped, stripped of control characters, and never needed as HTML', () => {
@@ -302,4 +341,21 @@ test('live names a websocket endpoint; it is only used when the plugin declares 
     assert.equal(liveEndpoint(plugin, { endpoint: 'other' }), null);
     assert.equal(liveEndpoint({}, { endpoint: 'changed' }), null);
     assert.equal(liveEndpoint(plugin, null), null);
+});
+
+test('pushWants: only {"what":"skin"} skips the workflow re-read', () => {
+    const both = { skin: true, workflow: true };
+    assert.deepEqual(pushWants('{"what":"skin"}'), { skin: true, workflow: false });
+    assert.deepEqual(pushWants({ what: 'skin' }), { skin: true, workflow: false });
+    assert.deepEqual(pushWants('{"what":"workflow"}'), both);
+    assert.deepEqual(pushWants('{}'), both);
+    assert.deepEqual(pushWants('not json'), both);
+    assert.deepEqual(pushWants(undefined), both);
+    assert.deepEqual(pushWants('null'), both);
+    assert.deepEqual(pushWants('"skin"'), both);
+});
+
+test('an empty surfaces list with live is a valid answer', () => {
+    assert.deepEqual(parseSkinAnswer({ version: 1, surfaces: [], live: { endpoint: 'changed' } }),
+        { surfaces: [], live: { endpoint: 'changed' } });
 });

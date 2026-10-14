@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { readFileSync } from 'node:fs';
 
-import { workflowTileValues, changedTileValues } from '../src/modules/workflow-watch.js';
+import { workflowTileValues, changedTileValues, tilesToPaint, FORCED_KEYS } from '../src/modules/workflow-watch.js';
 
 // The dashboard learns about a workflow changed elsewhere (Decaid's UI, another
 // skin, a DYE2 page) only by re-reading GET /workflow -- there is no workflow
@@ -111,11 +111,12 @@ test('a profile switch shows up as a title change', () => {
         const calls = { painted: [], reloads: 0, fetches: 0 };
         const refresh = new Function(
             'isSubPage', 'ui', 'getWorkflow', 'logger', 'loadInitialData',
-            'workflowTileValues', 'changedTileValues',
+            'workflowTileValues', 'tilesToPaint',
             'WORKFLOW_REFRESH_MIN_GAP_MS', 'WORKFLOW_EDIT_GUARD_MS', 'WORKFLOW_TILE_PAINTERS',
             'seed', 'calls',
             `let lastWorkflowTiles = seed;
              let lastWorkflowRefreshAt = 0;
+             let pendingForcedRefresh = false;
              ${match[0]}
              return refreshWorkflowTiles;`
         )(
@@ -125,7 +126,7 @@ test('a profile switch shows up as a title change', () => {
             { info() {}, warn() {} },
             async () => { calls.reloads++; },
             workflowTileValues,
-            changedTileValues,
+            tilesToPaint,
             2000,
             5000,
             new Proxy({}, { get: (_t, key) => (value) => calls.painted.push([key, value]) }),
@@ -207,3 +208,28 @@ test('a profile switch shows up as a title change', () => {
         assert.deepEqual(calls.painted, []);
     });
 }
+
+test('tilesToPaint: force repaints the four tiles even when the baseline matches', () => {
+    const tiles = { profileTitle: 'A', dose: 18, yield: 36, grind: '5', brewTemp: 93, steamDuration: 30 };
+    assert.deepEqual(tilesToPaint(tiles, { ...tiles }, { force: true }),
+        { dose: 18, yield: 36, grind: '5', brewTemp: 93 });
+    assert.deepEqual(FORCED_KEYS, ['dose', 'yield', 'grind', 'brewTemp']);
+});
+
+test('tilesToPaint: without force it is changedTileValues', () => {
+    const a = { profileTitle: 'A', dose: 18, yield: 36 };
+    const b = { profileTitle: 'B', dose: 18, yield: 40 };
+    assert.deepEqual(tilesToPaint(a, b), changedTileValues(a, b));
+    assert.deepEqual(tilesToPaint(a, a, { force: false }), {});
+});
+
+test('tilesToPaint: null values are never returned and profileTitle is not forced', () => {
+    const tiles = { profileTitle: 'A', dose: null, yield: undefined, grind: '5', brewTemp: 93 };
+    assert.deepEqual(tilesToPaint(tiles, { ...tiles }, { force: true }), { grind: '5', brewTemp: 93 });
+});
+
+test('tilesToPaint: unknown previous state with force still returns the four keys', () => {
+    const next = { profileTitle: 'A', dose: 18, yield: 36, grind: '5', brewTemp: 93, flush: 5 };
+    assert.deepEqual(tilesToPaint(null, next, { force: true }), { dose: 18, yield: 36, grind: '5', brewTemp: 93 });
+    assert.deepEqual(tilesToPaint(null, next), {});
+});

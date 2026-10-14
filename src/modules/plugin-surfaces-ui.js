@@ -8,11 +8,13 @@
 
 import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL } from './api.js';
 import { logger } from './logger.js';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint } from './plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
+    nextStepSize, resolveStepSize, formatStepSize } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSet, applyPluginStep, isAutoSteamMode } from './ui.js';
+import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode,
+    getStoredStepSize, storeStepSize, setDrawnStepSizes } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -182,11 +184,25 @@ function bindAction(el, plugin, action, surface) {
         }
     } else if (action?.type === 'step') {
         el.addEventListener('click', () => {
-            if (!applyPluginStep(action.field, action.by)) logger.warn('Plugin step not applied:', action.field);
+            applyPluginStepAsync(action.field, action.by).then(applied => {
+                if (!applied) logger.warn('Plugin step not applied:', action.field);
+                else refreshPluginSurfaces();
+            });
+        });
+    } else if (action?.type === 'stepsize') {
+        el.addEventListener('click', () => {
+            const next = nextStepSize(action.sizes, resolveStepSize(action.sizes, getStoredStepSize(action.field)));
+            storeStepSize(action.field, next);
+            document.querySelectorAll('[data-stepsize-field]').forEach(node => {
+                if (node.dataset.stepsizeField === action.field) node.textContent = formatStepSize(next);
+            });
         });
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
-            if (!applyPluginSet(action.field, action.value)) logger.warn('Plugin set not applied:', action.field);
+            applyPluginSetAsync(action.field, action.value).then(applied => {
+                if (!applied) logger.warn('Plugin set not applied:', action.field);
+                else refreshPluginSurfaces();
+            });
         });
     }
 }
@@ -196,6 +212,11 @@ function bindAction(el, plugin, action, surface) {
 function buildTileSurface(plugin, surface) {
     const el = document.createElement('span');
     el.textContent = surface.text;
+    if (surface.action?.type === 'stepsize') {
+        // Drawn from this device's stored size, so a redraw keeps it correct.
+        el.dataset.stepsizeField = surface.action.field;
+        el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field)));
+    }
     el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     const title = surface.title || surface.text;
     // Switched on: the skin's blue and bold, so a lock or a chosen option reads at a glance.
@@ -393,6 +414,8 @@ export function callMode(plugin, surface, number, { immediate = true } = {}) {
         // Otherwise read skin again and redraw even if the answer is unchanged, so
         // a number the plugin refused snaps back.
         if (sent !== null) { lastKey = ''; refreshPluginSurfaces(); }
+        // The plugin answers after its own PUT /workflow, so the tiles can be re-read.
+        if (sent === true) document.dispatchEvent(new Event('streamline:workflow-refresh'));
         return sent === true;
     }).catch(() => false);
 }
@@ -420,6 +443,7 @@ function render(rawEntries) {
 
     const container = document.getElementById('header-right-controls');
     const anchor = container?.firstChild;
+    const drawnSizes = {};
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
     let headerButtons = 0;
 
@@ -448,8 +472,13 @@ function render(rawEntries) {
         if (surface.kind === 'tile-line' && modeTiles.has(surface.tile)) continue;
         const slot = `${surface.kind}:${surface.tile}`;
         if (usedSlots.has(slot) || !TILES[surface.tile]) continue;
-        if (placeTileSurface(plugin, surface)) usedSlots.add(slot);
+        if (placeTileSurface(plugin, surface)) {
+            usedSlots.add(slot);
+            const a = surface.action;
+            if (a?.type === 'stepsize' && !drawnSizes[a.field]) drawnSizes[a.field] = a.sizes;
+        }
     }
+    setDrawnStepSizes(drawnSizes);
 
     if (!mainHidden) {
         for (const tile of modeTiles) {
@@ -506,12 +535,17 @@ const PUSH_DEBOUNCE_MS = 300;
 const liveSockets = new Map(); // plugin id -> endpoint
 let pushTimer = null;
 
-function onPush() {
+let pushWantsWorkflow = false;
+
+function onPush(data) {
+    if (pushWants(data).workflow) pushWantsWorkflow = true;
     if (pushTimer) return;
     pushTimer = setTimeout(() => {
         pushTimer = null;
+        const workflow = pushWantsWorkflow;
+        pushWantsWorkflow = false;
         refreshPluginSurfaces();
-        document.dispatchEvent(new Event('streamline:workflow-refresh'));
+        if (workflow) document.dispatchEvent(new Event('streamline:workflow-refresh'));
     }, PUSH_DEBOUNCE_MS);
 }
 
