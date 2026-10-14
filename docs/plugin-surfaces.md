@@ -28,6 +28,16 @@ that does not validate is dropped, and the rest still shows.
 - A read that fails or takes longer than 2 s hides that plugin's surfaces; it never blocks the dashboard.
 - `header-button` is drawn before the system buttons. `tile-hint` and `tile-line` are drawn without moving the tile: a line under the label, a hint under the value.
 - A tile surface with an action is tappable; its touch area is larger than the pill or line it shows.
+- `active: true` on a hint or line draws it switched on (the skin's blue and bold, a ring on a hint), for a lock or
+  a chosen option. It is only a look; whatever the surface does when tapped is its action.
+- **Live updates.** Add `"live": { "endpoint": "changed" }` at the top level of the answer, where `changed` is a
+  `websocket` endpoint of your manifest. While the page is visible (on any skin page, not only the dashboard) the skin
+  keeps that socket open, and any message on it (whatever its body) makes the skin read `skin` again after about
+  300 ms and re-read the workflow for the tiles. A stream of messages still refreshes about every 300 ms. If the
+  user has just edited a tile, the tile re-read waits until the edit has settled (a few seconds) instead of
+  being dropped. Use it for a value that moves (a scale weight) or when your plugin has just written the workflow.
+  Messages should be sent when something changed, not on a timer faster than a second. Without `live`, or if the
+  socket cannot open, the minute poll above still applies.
 - Tile surfaces are placed from the label's measured size, so they are only drawn while the dashboard is visible;
   a read that finishes while it is hidden is drawn on the next refresh.
 
@@ -144,8 +154,8 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `kind` | Where | Fields |
 |---|---|---|
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
-| `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80) |
-| `tile-line` | under a tile's label | `tile`, `text` (required, 40) |
+| `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active` |
+| `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active` |
 | `tile-mode` | an option in the toggle under a tile's label | see [Tile modes](#tile-modes) |
 
 `tile` is one of `dose`, `drink`, `grind`, `temperature`; a `tile-mode` can also be on `steam` or `flush`. Lengths are characters. Text is shown with
@@ -241,8 +251,10 @@ An invalid action drops the action only; the surface still shows, inert.
   > Like the tile, it writes nothing when the current workflow has no profile steps, and the tile still shows the
   > requested value until the next refresh.
 
-- **`call`**: `{ "type": "call", "endpoint": "apply", "field": "percent" }`, on a `tile-mode` only.
-  The skin sends `POST /api/v1/plugins/{id}/{endpoint}` with the JSON body `{ "<field>": <number> }`. `endpoint`
+- **`call`**: `{ "type": "call", "endpoint": "apply", "field": "percent" }` on a `tile-mode`, or
+  `{ "type": "call", "endpoint": "ratio", "field": "lock", "value": 1 }` on a `tile-hint` or `tile-line`, where
+  `value` is a fixed number (required, at most 99999 in size, rounded to hundredths) sent when the pill or line is tapped. A header button
+  cannot call. The skin sends `POST /api/v1/plugins/{id}/{endpoint}` with the JSON body `{ "<field>": <number> }`. `endpoint`
   must be an http endpoint your manifest declares and is never one of `skin`, `settings`, `enable`, `disable`,
   `source`, `update` or `install` (Decaid serves those routes itself, so they never reach your endpoint).
   `field` is a name of letters, digits and `_` starting with a letter, up to 40 characters. The reply body is

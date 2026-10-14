@@ -1794,6 +1794,20 @@ export function seedWorkflowTiles(workflow) {
     lastWorkflowTiles = workflowTileValues(workflow);
 }
 
+// A plugin push says the workflow changed now. Unlike the poll, it must not be
+// dropped because the user just touched a tile: wait out the edit guard and the
+// refresh gap, then read.
+let workflowRefreshRetry = null;
+function refreshWorkflowTilesSoon() {
+    clearTimeout(workflowRefreshRetry);
+    const wait = Math.max(
+        WORKFLOW_EDIT_GUARD_MS - ui.msSinceTileInteraction(),
+        WORKFLOW_REFRESH_MIN_GAP_MS - (Date.now() - lastWorkflowRefreshAt),
+        0);
+    if (wait > 0) workflowRefreshRetry = setTimeout(refreshWorkflowTilesSoon, wait + 50);
+    else refreshWorkflowTiles();
+}
+
 async function refreshWorkflowTiles() {
     // On a sub-page the tiles are not mounted, so a repaint would go nowhere and
     // updating the snapshot would swallow the change. Skip entirely; the next
@@ -1842,6 +1856,8 @@ function startWorkflowWatch() {
         if (document.visibilityState === 'visible') refreshWorkflowTiles();
     });
     window.addEventListener('focus', refreshWorkflowTiles);
+    // A plugin that changed the workflow and said so (plugin surfaces' `live`).
+    document.addEventListener('streamline:workflow-refresh', refreshWorkflowTilesSoon);
 }
 
 async function isShotBlockedByNoScale() {

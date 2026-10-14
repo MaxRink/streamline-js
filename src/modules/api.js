@@ -712,6 +712,33 @@ export function connectShotStateWebSocket(onData) {
     };
 }
 
+// A plugin's own websocket used only as "something changed": `onPush` runs for
+// every message, whatever its body. One socket per plugin, closed before it is
+// replaced, and reconnecting with a growing wait while the plugin is away.
+const pluginPushSlots = new Map();
+
+export function connectPluginPush(pluginId, endpoint, onPush) {
+    let slot = pluginPushSlots.get(pluginId);
+    if (!slot) {
+        slot = createSocketSlot(`plugin ${pluginId} push`);
+        pluginPushSlots.set(pluginId, slot);
+    }
+    return slot.replace(() => {
+        const socket = new ReconnectingWebSocket(
+            `${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(endpoint)}`,
+            [], { reconnectInterval: 5000, maxReconnectInterval: 60000 });
+        socket.onmessage = () => { try { onPush(); } catch (error) { logger.warn('Plugin push handler failed:', error); } };
+        return socket;
+    });
+}
+
+export function closePluginPush(pluginId) {
+    const slot = pluginPushSlots.get(pluginId);
+    if (!slot) return;
+    slot.close();
+    pluginPushSlots.delete(pluginId);
+}
+
 export function connectTimeToReadyWebSocket(onData) {
     const timeToReadyWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/time-to-ready.reaplugin/timeToReady`, [], {
         reconnectInterval: 3000,
