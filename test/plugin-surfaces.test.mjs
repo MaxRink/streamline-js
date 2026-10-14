@@ -53,9 +53,13 @@ test('limits: one header button, one hint and one line per tile, eight surfaces'
     const tiles = ['dose', 'drink', 'grind', 'temperature'];
     const lines = tiles.map(tile => ({ id: tile, kind: 'tile-line', tile, text: tile }));
     assert.equal(ok(lines).length, 4);
-    assert.equal(MAX_SURFACES, 8);
-    const many = [btn('b'), ...tiles.flatMap(t => [hint(`h${t}`, t), { id: `l${t}`, kind: 'tile-line', tile: t, text: t }]), btn('x')];
-    assert.equal(ok(many).length, 8); // 1 button + 4 hints + 4 lines = 9 slots, capped
+    assert.equal(MAX_SURFACES, 12);
+    const modes = ['x', 'y', 'z', 'w'].map(id => ({ id, kind: 'tile-mode', tile: 'steam', label: id, value: 1, min: 0, max: 9, step: 1,
+        action: { type: 'call', endpoint: 'e', field: 'f' } }));
+    const many = [btn('b'), ...tiles.flatMap(t => [hint(`h${t}`, t), { id: `l${t}`, kind: 'tile-line', tile: t, text: t }]), ...modes];
+    // 1 button + 4 hints + 4 lines + 3 steam modes (the fourth is over the per-tile limit) = 12
+    assert.equal(ok(many).length, 12);
+    assert.deepEqual(ok(many).filter(s => s.kind === 'tile-mode').map(s => s.id), ['x', 'y', 'z']);
 });
 
 const stepsize = (over = {}, kind = 'tile-hint') => ({ id: 'ss', kind, tile: 'dose', text: 'x',
@@ -224,12 +228,12 @@ test('tile-mode: a mode that cannot be stepped, shown or called is dropped', () 
     ]) assert.equal(ok([mode(bad)]).length, 0, JSON.stringify(bad));
 });
 
-test('tile-mode: label and unit are capped, one mode per tile', () => {
+test('tile-mode: label and unit are capped, up to three modes per tile', () => {
     const m = ok([mode({ label: 'abcdefghij', unit: 'abcdef' })])[0];
     assert.equal(m.label, 'abcdef');
     assert.equal(m.unit, 'abc');
-    const two = ok([mode(), mode({ id: 'other' }), mode({ id: 'dose-m', tile: 'dose' })]);
-    assert.deepEqual(two.map(x => x.id), ['pct', 'dose-m']);
+    const many = ok([mode(), mode({ id: 'other' }), mode({ id: 'third' }), mode({ id: 'fourth' }), mode({ id: 'dose-m', tile: 'dose' })]);
+    assert.deepEqual(many.map(x => x.id), ['pct', 'other', 'third', 'dose-m']);
 });
 
 test('call is only valid on a tile-mode; the mode may share a tile with a hint and a line', () => {

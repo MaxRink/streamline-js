@@ -7,7 +7,8 @@
 // repaired into something else, so a bad surface cannot break a good one.
 
 export const SKIN_VERSION = 1;
-export const MAX_SURFACES = 8;      // per plugin, all kinds together (slots allow one per kind per tile)
+export const MAX_SURFACES = 12;     // per plugin, all kinds together (slots allow one per kind per tile)
+export const MAX_MODES_PER_PLUGIN_TILE = 3; // tile-modes one plugin may add to one tile
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
 // The fields `set` may write. Each maximum is the one the tile itself enforces when
@@ -309,14 +310,20 @@ export function parseSkinAnswer(raw) {
     out.live = parseLive(raw.live);
 
     const seen = new Set();
-    const slots = new Set(); // one header button, and one hint, line and mode per tile
+    const slots = new Set(); // one header button, and one hint and line per tile
+    const modeCount = {};    // tile -> tile-modes taken so far (up to MAX_MODES_PER_PLUGIN_TILE)
     for (const item of raw.surfaces) {
         if (out.surfaces.length >= MAX_SURFACES) break;
         const surface = parseSurface(item);
         if (!surface || seen.has(surface.id)) continue;
-        const slot = surface.tile ? `${surface.kind}:${surface.tile}` : surface.kind;
-        if (slots.has(slot)) continue;
-        slots.add(slot);
+        if (surface.kind === 'tile-mode') {
+            if ((modeCount[surface.tile] || 0) >= MAX_MODES_PER_PLUGIN_TILE) continue;
+            modeCount[surface.tile] = (modeCount[surface.tile] || 0) + 1;
+        } else {
+            const slot = surface.tile ? `${surface.kind}:${surface.tile}` : surface.kind;
+            if (slots.has(slot)) continue;
+            slots.add(slot);
+        }
         seen.add(surface.id);
         out.surfaces.push(surface);
     }

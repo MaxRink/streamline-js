@@ -11,7 +11,7 @@ import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
     nextStepSize, resolveStepSize, formatStepSize } from './plugin-surfaces.js';
-import { planTileModes, createCallQueue } from './plugin-modes.js';
+import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
 import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
@@ -390,10 +390,10 @@ function placeModeToggle(tile, modes) {
     root.dataset.agentId = `plugin-tile:${tile}:tile-mode`;
     root.setAttribute('role', 'group');
     root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${label.offsetWidth + extra}px;height:${hit}px;`
-        + 'z-index:1;display:flex;align-items:flex-end;gap:6px;white-space:nowrap;overflow:hidden;pointer-events:none;'
+        + `z-index:1;display:flex;align-items:flex-end;gap:${tile === 'steam' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
         + `font-size:14px;line-height:17px;color:${MUTED};`;
 
-    const options = [{ key: '', label: builtinLabel(tile), title: '' },
+    const options = [...(tileHasBuiltinOption(tile) ? [{ key: '', label: builtinLabel(tile), title: '' }] : []),
         ...modes.map(m => ({ key: m.key, label: m.surface.label, title: m.surface.label }))];
     options.forEach((opt, i) => {
         if (i > 0) {

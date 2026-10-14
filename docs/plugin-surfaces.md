@@ -169,7 +169,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 
 ## Limits
 
-- At most 8 surfaces per plugin, 1 `header-button`, and 1 `tile-hint` and 1 `tile-line` per tile; extras are dropped in order.
+- At most 12 surfaces per plugin, 1 `header-button`, 1 `screensaver-button`, 1 `tile-hint` and 1 `tile-line` per tile, and up to 3 `tile-mode` per tile (see Modes); extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
 - Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
 - Only one `screensaver-button` is drawn in total across all plugins, first plugin wins, as for `header-button`.
@@ -220,8 +220,10 @@ answer with is the truth, so a number you reject or adjust snaps back.
 
 Rules:
 
-- One `tile-mode` per plugin per tile, and at most 3 options per tile in total (the built-in one included); if
-  plugins ask for more, the first in Decaid's plugin list win.
+- A plugin may add up to 3 `tile-mode` to a tile. A tile's row holds at most 3 options in total: the built-in one
+  and two plugin options, except on `steam`, where there is no built-in option in the row (the `Time | Flow`
+  toggle above it ends a plugin mode) and it holds three plugin options. If plugins ask for more, the first in
+  Decaid's plugin list win. Keep each `label` short (6 characters).
 - A mode on a tile replaces a `tile-line` on that tile, since both use the space under the label. On `steam`
   the toggle goes on the line under the built-in `Time | Flow` toggle; choosing a built-in steam mode ends a
   plugin mode, and a mode there takes the place of whichever of steam's preset rows is showing.
