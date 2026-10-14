@@ -343,6 +343,25 @@ test('a tile-mode call still takes no value', () => {
     assert.deepEqual(m.action, { type: 'call', endpoint: 'apply', field: 'percent' });
 });
 
+test('screensaver-button: label and an open action only; anything else is dropped', () => {
+    const btn = extra => ok([{ id: 's', kind: 'screensaver-button', label: 'Dial in', ...extra }]);
+    const open = { type: 'open', view: 'main', presentation: 'overlay' };
+    assert.deepEqual(btn({ action: open })[0], { id: 's', kind: 'screensaver-button', label: 'Dial in', action: open });
+    assert.equal(btn({}).length, 0); // no action: dead button
+    assert.equal(btn({ action: { type: 'set', field: 'targetYield', value: 36 } }).length, 0);
+    assert.equal(btn({ action: { type: 'call', endpoint: 'x', field: 'y', value: 1 } }).length, 0);
+    assert.equal(ok([{ id: 's', kind: 'screensaver-button', label: ' ', action: open }]).length, 0);
+    assert.equal(btn({ label: 'x'.repeat(60), action: open })[0].label.length, 24);
+});
+
+test('screensaver-button: one per answer, independent of the header button', () => {
+    const open = { type: 'open', view: 'main' };
+    const s = id => ({ id, kind: 'screensaver-button', label: 'S', action: open });
+    assert.deepEqual(ok([s('a'), s('b')]).map(x => x.id), ['a']);
+    const h = { id: 'h', kind: 'header-button', label: 'H' };
+    assert.equal(ok([h, s('a')]).length, 2);
+});
+
 test('live names a websocket endpoint; it is only used when the plugin declares it', () => {
     const answer = (live) => parseSkinAnswer({ version: 1, surfaces: [], live });
     assert.deepEqual(answer({ endpoint: 'changed' }).live, { endpoint: 'changed' });
