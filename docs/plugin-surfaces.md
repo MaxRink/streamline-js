@@ -239,8 +239,31 @@ Rules:
 An invalid action drops the action only; the surface still shows, inert.
 
 - **`open`**: `{ "type": "open", "view": "main", "presentation": "page" }`. Opens the plugin's `ui` page.
-  `view` is the same id charset as above. `presentation` is a hint: `page` (default, same-frame navigation
-  with `returnTo`) or `overlay`. Anything else, and `overlay` until it exists, behaves as `page`.
+  `view` is the same id charset as above. `presentation` is `page` (default, same-frame navigation with
+  `returnTo`) or `overlay`; anything else behaves as `page`.
+
+  **`overlay`** shows your `ui` page in an iframe in a dialog over the dashboard, so the user never leaves it.
+  The frame URL is your `ui` endpoint with `embed=1&theme=light|dark` (and `view` when given), without `returnTo`.
+  Your page must:
+
+  - post `window.parent.postMessage({ type: 'streamline:ready' }, '*')` once loaded. If the skin has not seen
+    it within 3 seconds it closes the dialog and opens the page instead, the same as `page`;
+  - post `{ type: 'streamline:close' }` when it is done. The skin also draws a close button (×), closes on a tap
+    outside the dialog and on Escape, then re-reads `skin` and the workflow.
+
+  The frame is sandboxed (`allow-scripts allow-same-origin allow-forms`): it cannot navigate the skin and has no
+  popups. Decaid sends no `X-Frame-Options` or CSP on a plugin's `ui` response, so it can be framed as is. To
+  allow only the skin, send `Content-Security-Policy: frame-ancestors <skin origin>` yourself; the skin's origin
+  is the `Origin` of its requests (or the `Referer` of the frame request), the embed URL carries no `returnTo`.
+
+  Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
+- **`step`**: `{ "type": "step", "field": "targetDoseWeight", "by": -0.5 }` on tile kinds only. Moves the
+  tile's current value by `by` (a non-zero number, at most 100 either way) and goes through the same setter as
+  `set`, so the result is clamped to the same range and the profile remembers it. `field` is `targetDoseWeight`,
+  `targetYield` or `grinderSetting`; brew temperature is not steppable. Nothing happens until the tile shows a
+  number. It steps the value the tile shows (grind shows one decimal, so steps finer than 0.1 round with it),
+  and a plugin `tile-mode` on the same tile owns that tile's value, so do not step it. Not allowed on a `tile-mode`
+  or a header button. Use it for a pill such as "+0.5 g" when your plugin does not need to know the current value.
 - **`set`**: `{ "type": "set", "field": "targetYield", "value": 36 }` on tile kinds only. `field` is one of
   `targetDoseWeight` (1 to 30), `targetYield` (1 to 2000), `grinderSetting` (0 to 9999) or `brewTemperature`
   (70 to 105, **degrees Celsius**). The maximums are the ones the tile enforces when the user types a value;

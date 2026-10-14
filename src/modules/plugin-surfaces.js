@@ -25,6 +25,10 @@ export const SET_LIMITS = {
 };
 export const SET_FIELDS = Object.keys(SET_LIMITS);
 export const PRESENTATIONS = ['page', 'overlay'];
+// `step` moves the tile's own value by `by`; brew temperature is left out because
+// the tile shows it in the user's unit and a step would have to know which.
+export const STEP_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting'];
+const STEP_MAX = 100;
 
 // `tile-mode` adds an option to the toggle under a left-column tile's label.
 // Steam and flush can take a mode but not a hint or a line, so they are not in TILES.
@@ -64,7 +68,6 @@ function httpsUrl(value) {
     }
 }
 
-// `overlay` is accepted but only a hint; the renderer decides what it can honour.
 // Anything unknown falls back to `page` and never invalidates the surface.
 function parseOpen(action) {
     const view = typeof action.view === 'string' ? action.view : '';
@@ -100,6 +103,12 @@ function parseSet(action) {
     return value === null ? null : { type: 'set', field: action.field, value };
 }
 
+function parseStep(action) {
+    const by = toNumber(action.by);
+    if (!STEP_FIELDS.includes(action.field) || by === null || by === 0 || Math.abs(by) > STEP_MAX) return null;
+    return { type: 'step', field: action.field, by: round2(by) };
+}
+
 // `call` POSTs `{ [field]: <number> }` to one of the plugin's own http endpoints.
 // Whether `endpoint` is one the plugin declares is checked against its manifest by
 // callableEndpoint(); `skin` is the read side and the other RESERVED_ENDPOINTS are
@@ -129,6 +138,7 @@ function parseAction(raw, kind) {
     if (!raw || typeof raw !== 'object') return null;
     if (raw.type === 'open') return parseOpen(raw);
     if (raw.type === 'set' && (kind === 'tile-hint' || kind === 'tile-line')) return parseSet(raw);
+    if (raw.type === 'step' && (kind === 'tile-hint' || kind === 'tile-line')) return parseStep(raw);
     if (raw.type === 'call' && kind === 'tile-mode') return parseCall(raw);
     if (raw.type === 'call' && (kind === 'tile-hint' || kind === 'tile-line')) return parseCall(raw, { withValue: true });
     return null;
