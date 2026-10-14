@@ -11,7 +11,7 @@ import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
     nextStepSize, resolveStepSize, formatStepSize } from './plugin-surfaces.js';
-import { planTileModes, createCallQueue } from './plugin-modes.js';
+import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
 import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
@@ -353,6 +353,14 @@ function setSelectedMode(tile, key) {
     if (key) selectedMode[tile] = key; else delete selectedMode[tile];
     paintToggle(tile);
     announceMode(tile);
+    // A mode that asked for it applies its own value as soon as it is chosen, as if
+    // the user had tapped a preset (a flow and time pair set by one tap).
+    const chosen = key && (drawnModes[tile] || []).find(m => m.key === key);
+    if (chosen?.surface.applyOnSelect) {
+        const { second } = chosen.surface;
+        callMode(chosen.plugin, chosen.surface, chosen.surface.value,
+            { immediate: true, extra: second ? { [second.field]: second.value } : undefined });
+    }
 }
 
 function paintToggle(tile) {
@@ -390,10 +398,10 @@ function placeModeToggle(tile, modes) {
     root.dataset.agentId = `plugin-tile:${tile}:tile-mode`;
     root.setAttribute('role', 'group');
     root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${label.offsetWidth + extra}px;height:${hit}px;`
-        + 'z-index:1;display:flex;align-items:flex-end;gap:6px;white-space:nowrap;overflow:hidden;pointer-events:none;'
+        + `z-index:1;display:flex;align-items:flex-end;gap:${tile === 'steam' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
         + `font-size:14px;line-height:17px;color:${MUTED};`;
 
-    const options = [{ key: '', label: builtinLabel(tile), title: '' },
+    const options = [...(tileHasBuiltinOption(tile) ? [{ key: '', label: builtinLabel(tile), title: '' }] : []),
         ...modes.map(m => ({ key: m.key, label: m.surface.label, title: m.surface.label }))];
     options.forEach((opt, i) => {
         if (i > 0) {
@@ -447,12 +455,13 @@ export function isModeCallBusy(plugin, surface) {
     return callQueue.busy(callKey(plugin, surface));
 }
 
-export function callMode(plugin, surface, number, { immediate = true } = {}) {
+// `extra` are more `{ field: number }` pairs sent in the same body (a mode's second value).
+export function callMode(plugin, surface, number, { immediate = true, extra } = {}) {
     const action = surface?.action;
     if (action?.type !== 'call' || !callableEndpoint(plugin, action.endpoint) || !Number.isFinite(number)) {
         return Promise.resolve(false);
     }
-    const payload = { plugin, endpoint: action.endpoint, body: { [action.field]: number } };
+    const payload = { plugin, endpoint: action.endpoint, body: { [action.field]: number, ...extra } };
     return callQueue.request(callKey(plugin, surface), payload, { immediate }).then(sent => {
         // null: a newer call replaced or overtook this one, which will refresh.
         // Otherwise read skin again and redraw even if the answer is unchanged, so

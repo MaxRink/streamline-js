@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTileModes, createCallQueue, clampModeValue, stepModeValue, formatModeValue, sanitizeEdits, effectivePresets, withPresetEdit, presetMenuModel } from '../src/modules/plugin-modes.js';
+import { pluginOptionCapacity, tileHasBuiltinOption, planTileModes, createCallQueue, clampModeValue, stepModeValue, formatModeValue, sanitizeEdits, effectivePresets, withPresetEdit, presetMenuModel } from '../src/modules/plugin-modes.js';
 
 const mode = (plugin, tile, id = 'm') => ({ plugin: { id: plugin }, surface: { id, kind: 'tile-mode', tile } });
 
@@ -13,6 +13,19 @@ test('planTileModes: two plugin options per tile, the first plugins win, other k
     assert.deepEqual(plan.temperature.map(e => e.plugin.id), ['a', 'b']);
     assert.deepEqual(plan.dose.map(e => e.plugin.id), ['a']);
     assert.equal(plan.grind, undefined);
+});
+
+test('planTileModes: steam has no built-in option in the row, so it takes three plugin options', () => {
+    const plan = planTileModes([
+        mode('a', 'steam', 'x'), mode('a', 'steam', 'y'), mode('a', 'steam', 'z'), mode('b', 'steam', 'w'),
+        mode('a', 'dose', 'x'), mode('a', 'dose', 'y'), mode('a', 'dose', 'z'),
+    ]);
+    assert.deepEqual(plan.steam.map(e => e.surface.id), ['x', 'y', 'z']);
+    assert.deepEqual(plan.dose.map(e => e.surface.id), ['x', 'y']);
+    assert.equal(pluginOptionCapacity('steam'), 3);
+    assert.equal(pluginOptionCapacity('temperature'), 2);
+    assert.equal(tileHasBuiltinOption('steam'), false);
+    assert.equal(tileHasBuiltinOption('flush'), true);
 });
 
 function harness() {

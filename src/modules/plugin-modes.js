@@ -1,8 +1,12 @@
 // plugin-modes.js -- pure helpers for plugin `tile-mode` surfaces (see
 // docs/plugin-surfaces.md). DOM-free so node:test can import it.
 
-// The built-in option plus at most two plugin options fit the 112px label column.
+// Three options fit the 112px label column. Every tile but steam has a built-in
+// option in the row, so it takes two plugin options. On steam the skin's own
+// Time | Flow toggle already ends a plugin mode, so the row holds plugin options only.
 export const MAX_OPTIONS_PER_TILE = 3;
+export const tileHasBuiltinOption = tile => tile !== 'steam';
+export const pluginOptionCapacity = tile => MAX_OPTIONS_PER_TILE - (tileHasBuiltinOption(tile) ? 1 : 0);
 
 // Entries are { plugin, surface } in Decaid's plugin order. Returns the modes each
 // tile gets: the first plugins win, the rest are dropped.
@@ -11,7 +15,7 @@ export function planTileModes(entries) {
     for (const entry of entries) {
         if (entry.surface.kind !== 'tile-mode') continue;
         const list = byTile[entry.surface.tile] || (byTile[entry.surface.tile] = []);
-        if (list.length < MAX_OPTIONS_PER_TILE - 1) list.push(entry);
+        if (list.length < pluginOptionCapacity(entry.surface.tile)) list.push(entry);
     }
     return byTile;
 }
