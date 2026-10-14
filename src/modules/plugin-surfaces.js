@@ -7,7 +7,7 @@
 // repaired into something else, so a bad surface cannot break a good one.
 
 export const SKIN_VERSION = 1;
-export const MAX_SURFACES = 12;     // per plugin, all kinds together (slots allow one per kind per tile)
+export const MAX_SURFACES = 16;     // per plugin, all kinds together (slots allow one per kind per tile)
 export const MAX_MODES_PER_PLUGIN_TILE = 3; // tile-modes one plugin may add to one tile
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
@@ -190,7 +190,7 @@ function parseAction(raw, kind) {
 // The steam and drink tiles have a second line for it. Tapping it opens the numpad
 // and sends the new number to the same `call` under `field`. Invalid -> no second
 // value; the mode itself is still drawn.
-const SECOND_TILES = ['steam', 'drink'];
+const SECOND_TILES = ['steam', 'flush', 'drink'];
 function parseSecond(raw, mainField) {
     if (!raw || typeof raw !== 'object') return null;
     const { field } = raw;

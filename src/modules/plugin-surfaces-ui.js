@@ -366,6 +366,14 @@ function setSelectedMode(tile, key) {
 function paintToggle(tile) {
     const root = document.querySelector(`[data-plugin-surface="mode:${tile}"]`);
     if (!root) return;
+    if (tile === 'flush') {
+        // The way back to the built-in flush is the label: say so while a mode is on.
+        const label = document.getElementById(TILES.flush.label);
+        if (label) {
+            label.style.cursor = selectedMode.flush ? 'pointer' : '';
+            label.title = selectedMode.flush ? 'Tap to go back to the normal flush' : '';
+        }
+    }
     root.querySelectorAll('button').forEach(b => {
         const on = (b.dataset.modeKey || '') === (selectedMode[tile] || '');
         b.setAttribute('aria-pressed', String(on));
@@ -422,13 +430,14 @@ function placeModeToggle(tile, modes) {
         root.appendChild(button);
     });
     sectionEl.appendChild(root);
-    if (tile === 'steam' && !label.dataset.pluginModeWired) {
-        // Choosing a built-in steam mode ends a plugin one.
+    if ((tile === 'steam' || tile === 'flush') && !label.dataset.pluginModeWired) {
+        // Choosing a built-in steam mode ends a plugin one; on flush, which has no
+        // built-in option in the row, a tap on the label does.
         label.dataset.pluginModeWired = '1';
-        label.addEventListener('click', () => setSelectedMode('steam', null));
+        label.addEventListener('click', () => setSelectedMode(tile, null));
         // The built-in toggle also switches on Enter and Space.
         label.addEventListener('keydown', event => {
-            if (event.key === 'Enter' || event.key === ' ') setSelectedMode('steam', null);
+            if (event.key === 'Enter' || event.key === ' ') setSelectedMode(tile, null);
         });
     }
     return true;

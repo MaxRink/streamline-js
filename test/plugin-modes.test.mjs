@@ -15,7 +15,7 @@ test('planTileModes: two plugin options per tile, the first plugins win, other k
     assert.equal(plan.grind, undefined);
 });
 
-test('planTileModes: steam has no built-in option in the row, so it takes three plugin options', () => {
+test('planTileModes: steam and flush have no built-in option in the row, so they take three plugin options', () => {
     const plan = planTileModes([
         mode('a', 'steam', 'x'), mode('a', 'steam', 'y'), mode('a', 'steam', 'z'), mode('b', 'steam', 'w'),
         mode('a', 'dose', 'x'), mode('a', 'dose', 'y'), mode('a', 'dose', 'z'),
@@ -25,7 +25,9 @@ test('planTileModes: steam has no built-in option in the row, so it takes three 
     assert.equal(pluginOptionCapacity('steam'), 3);
     assert.equal(pluginOptionCapacity('temperature'), 2);
     assert.equal(tileHasBuiltinOption('steam'), false);
-    assert.equal(tileHasBuiltinOption('flush'), true);
+    assert.equal(tileHasBuiltinOption('flush'), false);
+    assert.equal(pluginOptionCapacity('flush'), 3);
+    assert.equal(tileHasBuiltinOption('drink'), true);
 });
 
 function harness() {
