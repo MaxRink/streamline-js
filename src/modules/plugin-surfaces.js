@@ -37,8 +37,8 @@ const STEPSIZE_MAX_SIZES = 4;
 const STEPSIZE_MAX = 10;
 
 // `tile-mode` adds an option to the toggle under a left-column tile's label.
-// Steam and flush can take a mode but not a hint or a line, so they are not in TILES.
-export const MODE_TILES = [...TILES, 'steam', 'flush'];
+// Steam, hot water and flush can take a mode but not a hint or a line, so they are not in TILES.
+export const MODE_TILES = [...TILES, 'steam', 'hotwater', 'flush'];
 export const MODE_LIMITS = {
     label: 6,        // characters in the toggle option
     unit: 3,         // characters appended to the value
@@ -190,7 +190,7 @@ function parseAction(raw, kind) {
 // The steam and drink tiles have a second line for it. Tapping it opens the numpad
 // and sends the new number to the same `call` under `field`. Invalid -> no second
 // value; the mode itself is still drawn.
-const SECOND_TILES = ['steam', 'flush', 'drink'];
+const SECOND_TILES = ['steam', 'hotwater', 'flush', 'drink'];
 function parseSecond(raw, mainField) {
     if (!raw || typeof raw !== 'object') return null;
     const { field } = raw;

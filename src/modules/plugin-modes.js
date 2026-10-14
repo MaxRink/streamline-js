@@ -2,11 +2,11 @@
 // docs/plugin-surfaces.md). DOM-free so node:test can import it.
 
 // Three options fit the 112px label column. Most tiles have a built-in option in
-// the row, so they take two plugin options. Steam and flush have none: on steam the
-// skin's own Time | Flow toggle ends a plugin mode, on flush a tap on the label does,
-// so their row holds plugin options only.
+// the row, so they take two plugin options. Steam, hot water and flush have none: on
+// steam and hot water the skin's own toggle (Time | Flow, Temp | Vol) ends a plugin
+// mode, on flush a tap on the label does, so their row holds plugin options only.
 export const MAX_OPTIONS_PER_TILE = 3;
-export const tileHasBuiltinOption = tile => tile !== 'steam' && tile !== 'flush';
+export const tileHasBuiltinOption = tile => !['steam', 'hotwater', 'flush'].includes(tile);
 export const pluginOptionCapacity = tile => MAX_OPTIONS_PER_TILE - (tileHasBuiltinOption(tile) ? 1 : 0);
 
 // Entries are { plugin, surface } in Decaid's plugin order. Returns the modes each

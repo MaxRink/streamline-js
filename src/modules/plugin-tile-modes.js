@@ -31,6 +31,9 @@ const TILE_DOM = {
     // its value box holds the duration and the flow.
     steam: { minus: 'steam-minus', plus: 'steam-plus', value: 'steam-duration-value',
         presets: ['steam-presets', 'steam-flow-presets', 'steam-milk-presets', 'steam-auto-presets'], title: 'STEAM', ownBox: true },
+    // Like steam: a toggle (Temp | Vol) and a box with the volume and the temperature.
+    hotwater: { minus: 'hot-water-vol-minus', plus: 'hot-water-vol-plus', value: 'hot-water-vol-value',
+        presets: ['hotwater-presets'], title: 'HOT WATER', ownBox: true },
 };
 
 const active = {}; // tile -> { plugin, surface, value, valueEl, presetButtons, overlay: [elements], restore: [fns] }

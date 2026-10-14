@@ -207,8 +207,8 @@ test('tile-mode: the documented example parses as written', () => {
 });
 
 test('tile-mode: any left-column tile, defaults, numeric strings, and numbers clamped to min..max', () => {
-    for (const tile of ['dose', 'drink', 'grind', 'temperature', 'steam', 'flush']) assert.equal(ok([mode({ tile })]).length, 1);
-    assert.equal(ok([mode({ tile: 'hotwater' })]).length, 0);
+    for (const tile of ['dose', 'drink', 'grind', 'temperature', 'steam', 'hotwater', 'flush']) assert.equal(ok([mode({ tile })]).length, 1);
+    assert.equal(ok([mode({ tile: 'hot-water' })]).length, 0);
     const m = ok([mode({ step: undefined, decimals: undefined, unit: undefined, value: '99', presets: [-50, '3', 'x', null, 1, 2, 4] })])[0];
     assert.equal(m.step, 1);
     assert.equal(m.decimals, 0);
@@ -246,6 +246,7 @@ test('tile-mode: a second value is a bounded number on steam and drink; applyOnS
     assert.equal(m.applyOnSelect, true);
     // other tiles have no second line; a bad second leaves the mode without one
     assert.equal('second' in ok([mode({ tile: 'dose', second })])[0], false);
+    assert.deepEqual(ok([mode({ tile: 'hotwater', second })])[0].second.field, 'flow');
     for (const bad of [{ ...second, field: 'percent' }, { ...second, field: '9x' }, { ...second, min: 3 },
         { ...second, decimals: 5 }, { ...second, value: 'x' }, 'text', null]) {
         assert.equal('second' in ok([mode({ tile: 'steam', second: bad })])[0], false);

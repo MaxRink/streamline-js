@@ -164,7 +164,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active` |
 | `tile-mode` | an option in the toggle under a tile's label | see [Tile modes](#tile-modes) |
 
-`tile` is one of `dose`, `drink`, `grind`, `temperature`; a `tile-mode` can also be on `steam` or `flush`. Lengths are characters. Text is shown with
+`tile` is one of `dose`, `drink`, `grind`, `temperature`; a `tile-mode` can also be on `steam`, `hotwater` or `flush`. Lengths are characters. Text is shown with
 `textContent`, never as HTML.
 
 ## Limits
@@ -200,7 +200,7 @@ A `tile-mode` lets a plugin add its own option to a left-column tile, the way th
 
 | Field | Rule |
 |---|---|
-| `tile` | `dose`, `drink`, `grind`, `temperature`, `steam` or `flush` |
+| `tile` | `dose`, `drink`, `grind`, `temperature`, `steam`, `hotwater` or `flush` |
 | `label` | the option in the toggle, required, 6 characters |
 | `unit` | appended to the value, 3 characters, optional |
 | `value` | the plugin's current number, required, clamped to `min`..`max` and rounded to `decimals`; `presets` likewise |
@@ -210,7 +210,7 @@ A `tile-mode` lets a plugin add its own option to a left-column tile, the way th
 | `presets` | up to 4 numbers shown in the tile's preset row while the mode is selected; only Brew, Drink, Flush and Steam have a preset row, Grind and Dose ignore them |
 | `menu` | optional, up to 4 `{ "label": "Reset to 0%", "value": 0 }` (label 24 characters, `value` clamped to `min`..`max`); extra items in each preset's long-press menu |
 | `presetsEditable` | optional, `false` to stop the user changing the presets from that menu (default `true`) |
-| `second` | optional, on `steam`, `flush` and `drink` only: a second number on a second line under the value, for example a flow beside a time: `{ "field": "flow", "value": 1.0, "min": 0.4, "max": 2, "decimals": 1, "unit": "ml/s" }`. `field` is a name like `call`'s (and not the mode's own), `unit` up to 6 characters. Tapping it opens the numpad. Every call of the mode then carries **both** numbers, `{ "<field>": <value>, "<second.field>": <second> }`, so a newer call never drops the other one; apply both, and answer with the values you want shown |
+| `second` | optional, on `steam`, `hotwater`, `flush` and `drink` only: a second number on a second line under the value, for example a flow beside a time: `{ "field": "flow", "value": 1.0, "min": 0.4, "max": 2, "decimals": 1, "unit": "ml/s" }`. `field` is a name like `call`'s (and not the mode's own), `unit` up to 6 characters. Tapping it opens the numpad. Every call of the mode then carries **both** numbers, `{ "<field>": <value>, "<second.field>": <second> }`, so a newer call never drops the other one; apply both, and answer with the values you want shown |
 | `applyOnSelect` | optional, `true` to make the skin send the mode's `value` to your `call` as soon as the user picks the mode, as if they had tapped a preset (for a mode that sets more than one thing at once); default `false` |
 | `action` | required, a `call`; a mode without a valid one is dropped |
 
@@ -223,8 +223,8 @@ answer with is the truth, so a number you reject or adjust snaps back.
 Rules:
 
 - A plugin may add up to 3 `tile-mode` to a tile. A tile's row holds at most 3 options in total: the built-in one
-  and two plugin options, except on `steam` and `flush`, which have no built-in option in the row and hold three plugin options.
-  On `steam` the `Time | Flow` toggle above it ends a plugin mode; on `flush` a tap on the `Flush` label does. If plugins ask for more, the first in
+  and two plugin options, except on `steam`, `hotwater` and `flush`, which have no built-in option in the row and hold three plugin options.
+  On `steam` the `Time | Flow` toggle above it ends a plugin mode, on `hotwater` the `Temp | Vol` toggle does; on `flush` a tap on the `Flush` label does. If plugins ask for more, the first in
   Decaid's plugin list win. Keep each `label` short (6 characters).
 - A mode on a tile replaces a `tile-line` on that tile, since both use the space under the label. On `steam`
   the toggle goes on the line under the built-in `Time | Flow` toggle; choosing a built-in steam mode ends a
