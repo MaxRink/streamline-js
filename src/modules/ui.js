@@ -1,8 +1,8 @@
 import { autoSteamPitcherLabel, compactAutoSteamTargetLabel, shouldKeepAutoSteamMode, steamAdjustmentControls } from './auto-steam-flow.js';
 import { manualSteamMode, steamModeCycle } from './auto-steam-capability.js';
-import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver } from './api.js';
+import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver, getSaverBrightness } from './api.js';
 import { openDB, getSetting } from './idb.js';
-import { deriveSleepButtonAction, isWakePending } from './screensaver-policy.js';
+import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine, isSaverButtonVisible } from './screensaver-policy.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
 import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync } from './steam-mode.js';
 import { shouldUseNumpad } from './numpad-policy.js';
@@ -1569,6 +1569,7 @@ let currentMachineState = null;
 // Screensaver functionality
 let screensaverActive = false;
 let screensaverElement = null;
+let screensaverButtonSlot = null;
 let screensaverDimOverlay = null;
 let screensaverImages = [];
 let screensaverCurrentIndex = 0;
@@ -1614,6 +1615,17 @@ function isInWebView() {
     const isIOSWebView = isIOS && !isStandalone && !/Safari\//.test(ua);
     const isDecentWebView = ua.includes('Decent');
     return isAndroidWebView || isIOSWebView || isDecentWebView;
+}
+
+/** The element a plugin's screensaver button is drawn into; null before init. */
+export function getScreensaverButtonSlot() {
+    return screensaverButtonSlot;
+}
+
+// Hidden on the black saver (brightness 0): an invisible target must not be tappable.
+function _syncSaverButtonSlot() {
+    if (!screensaverButtonSlot) return;
+    screensaverButtonSlot.style.display = isSaverButtonVisible(getSaverBrightness()) ? 'flex' : 'none';
 }
 
 export async function initScreensaver() {
@@ -1670,9 +1682,22 @@ export async function initScreensaver() {
     // machine. Bind ONCE: a WebView synthesises `click` from a tap, so binding
     // `touchstart` as well (as this did) sent 'idle' twice per tap. The
     // !screensaverActive guard inside wakeFromScreensaver() is the backstop.
-    screensaverElement.addEventListener('click', wakeFromScreensaver);
+    // A plugin's screensaver button is drawn into this slot. Its own handler stops
+    // the click; mayTapWakeMachine() is the second guard, so a tap there never wakes.
+    screensaverButtonSlot = document.createElement('div');
+    screensaverButtonSlot.id = 'screensaver-plugin-slot';
+    screensaverButtonSlot.dataset.pluginSaverSlot = '1';
+    screensaverButtonSlot.style.cssText = 'position:absolute;left:0;right:0;top:6%;display:none;'
+        + 'justify-content:center;pointer-events:none;';
+    screensaverElement.appendChild(screensaverButtonSlot);
+
+    screensaverElement.addEventListener('click', event => {
+        const onPluginControl = !!event.target?.closest?.('[data-plugin-saver-slot]');
+        if (mayTapWakeMachine({ screensaverActive, onPluginControl })) wakeFromScreensaver();
+    });
 
     document.body.appendChild(screensaverElement);
+    document.dispatchEvent(new Event('streamline:screensaverready'));
 
     try {
         await openDB();
@@ -1760,6 +1785,7 @@ export function activateScreensaver() {
         if (screensaverDimOverlay) screensaverDimOverlay.style.display = 'none';
         screensaverElement.style.display = 'flex';
         screensaverActive = true;
+        _syncSaverButtonSlot();
         _syncScreensaverClock();
         return;
     }
@@ -1772,6 +1798,7 @@ export function activateScreensaver() {
     }
     screensaverElement.style.display = 'flex';
     screensaverActive = true;
+    _syncSaverButtonSlot();
     _syncScreensaverClock();
 
     if (screensaverImages.length > 1) {

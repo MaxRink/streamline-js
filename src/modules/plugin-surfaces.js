@@ -196,6 +196,15 @@ function parseSurface(raw) {
         return { id, kind, label, ...(text && { text }), ...(image && { image }), ...(action && { action }) };
     }
 
+    // Drawn over the screensaver. It opens a plugin page and nothing else, so it
+    // takes an `open` action only; without one it would be a dead button.
+    if (kind === 'screensaver-button') {
+        const label = cleanText(raw.label, CAPS.label);
+        if (!label || action?.type !== 'open') return null;
+        const image = raw.image == null ? null : httpsUrl(raw.image);
+        return { id, kind, label, ...(image && { image }), action };
+    }
+
     if (kind === 'tile-mode') return parseMode(raw, id, action);
 
     if (kind === 'tile-hint' || kind === 'tile-line') {

@@ -6,19 +6,21 @@
 // A failed or slow read hides that plugin's surfaces and never blocks the
 // dashboard. With no plugin answering `skin` nothing is drawn.
 
-import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL } from './api.js';
+import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
+import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSet, isAutoSteamMode } from './ui.js';
+import { applyPluginSet, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
 const CALL_TIMEOUT_MS = 5000; // a hung plugin must not hold a tile's call lane
 const MIN_GAP_MS = 2000; // focus + visibilitychange can both fire
 const MAX_PLUGIN_HEADER_BUTTONS = 1; // across all plugins
+const MAX_PLUGIN_SAVER_BUTTONS = 1; // across all plugins
 
 // Same look as the DYE and Settings buttons; width is content-driven so a
 // plugin label is not cut to the 135px a system label gets.
@@ -69,7 +71,7 @@ async function readSurfaces(plugin) {
     }
 }
 
-function buildButton(plugin, surface) {
+function buildButton(plugin, surface, { bind = true } = {}) {
     const button = document.createElement('button');
     button.className = BUTTON_CLASS;
     button.dataset.pluginSurface = `${plugin.id}:${surface.id}`;
@@ -89,7 +91,41 @@ function buildButton(plugin, surface) {
     if (surface.text) button.title = surface.text;
     button.setAttribute('aria-label', surface.text ? `${surface.label}: ${surface.text}` : surface.label);
 
-    bindAction(button, plugin, surface.action, surface);
+    if (bind) bindAction(button, plugin, surface.action, surface);
+    return button;
+}
+
+// The button on the screensaver. It never commands the machine: the click stops
+// here so the saver's wake handler does not see it. Before the plugin's page opens
+// the panel is brought back (display only, through the display queue); an overlay
+// that closes while the machine is still asleep dims it again. A `page` leaves the
+// skin, and the first snapshot on return raises the saver and dims.
+function buildSaverButton(plugin, surface) {
+    const button = buildButton(plugin, surface, { bind: false });
+    button.dataset.agentId = `plugin-saver:${plugin.id}:${surface.id}`;
+    button.style.pointerEvents = 'auto';
+    const { action } = surface;
+    const url = action?.type === 'open'
+        ? pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null })
+        : null;
+    button.addEventListener('click', event => {
+        event.stopPropagation();
+        if (!url) return;
+        try {
+            restoreDisplay();
+        } catch (error) {
+            logger.warn('Screensaver button: display not restored:', error);
+        }
+        if (action.presentation === 'overlay') {
+            openOverlay(plugin, action, url, () => {
+                if (isMachineAsleep(currentMachineState) && isScreensaverActive()) {
+                    try { dimDisplay(); } catch (error) { logger.warn('Screensaver button: display not dimmed:', error); }
+                }
+            });
+        } else {
+            window.location.assign(url);
+        }
+    });
     return button;
 }
 
@@ -102,7 +138,7 @@ function buildButton(plugin, surface) {
 const OVERLAY_READY_MS = 3000;
 let overlayOpen = false;
 
-function openOverlay(plugin, action, pageUrl) {
+function openOverlay(plugin, action, pageUrl, onClose) {
     if (overlayOpen) return;
     const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
     const src = pluginUiUrl(plugin, API_BASE_URL, null, { view: action.view, embedTheme: theme });
@@ -134,6 +170,7 @@ function openOverlay(plugin, action, pageUrl) {
         if (dialog.open) dialog.close();
         dialog.remove();
         overlayOpen = false;
+        if (onClose) onClose();
         // The page may have changed the workflow; the tiles read it again.
         refreshPluginSurfaces();
         document.dispatchEvent(new Event('streamline:workflow-refresh'));
@@ -418,6 +455,8 @@ function render(rawEntries) {
     const anchor = container?.firstChild;
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
     let headerButtons = 0;
+    let saverButtons = 0;
+    let saverSlotMissing = false;
 
     // A mode takes the label slot, so a tile-line on that tile is not drawn.
     // A mode whose endpoint cannot be called is never drawn, and neither is a steam
@@ -436,6 +475,17 @@ function render(rawEntries) {
             if (container && headerButtons < MAX_PLUGIN_HEADER_BUTTONS) {
                 container.insertBefore(buildButton(plugin, surface), anchor);
                 headerButtons += 1;
+            }
+            continue;
+        }
+        if (surface.kind === 'screensaver-button') {
+            // One in total, like the header button. The slot is made with the
+            // screensaver; until it exists the render is retried (see below).
+            const slot = getScreensaverButtonSlot();
+            if (!slot) { saverSlotMissing = true; continue; }
+            if (saverButtons < MAX_PLUGIN_SAVER_BUTTONS) {
+                slot.appendChild(buildSaverButton(plugin, surface));
+                saverButtons += 1;
             }
             continue;
         }
@@ -460,7 +510,7 @@ function render(rawEntries) {
         // The answer may have changed the selected mode's value or presets.
         Object.keys(selectedMode).forEach(announceMode);
     }
-    return !mainHidden;
+    return !mainHidden && !saverSlotMissing;
 }
 
 export async function refreshPluginSurfaces() {
@@ -549,6 +599,11 @@ export function initPluginSurfaces() {
     // answer, which hides or restores the steam toggle.
     document.addEventListener('streamline:steamautochange', () => {
         if (lastEntries && !render(lastEntries)) lastKey = '';
+    });
+    // The screensaver element is built after the first read on a slow boot.
+    document.addEventListener('streamline:screensaverready', () => {
+        lastKey = '';
+        refreshPluginSurfaces();
     });
     // Returning from a sub-page: a surface rendered while the page was hidden
     // must be placed again, so forget the last drawn answer.
