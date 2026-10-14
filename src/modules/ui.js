@@ -388,7 +388,7 @@ export async function applyPluginSetAsync(field, value) {
 // tile is not showing a number yet.
 const STEP_VALUE_IDS = { targetDoseWeight: 'dose-in-value', targetYield: 'drink-out-value', grinderSetting: 'grind-value' };
 
-// Plugin `stepsize`: the dose / yield -/+ step, kept per field on this device
+// Plugin `stepsize`: the dose / yield / grind -/+ step, kept per field on this device
 // (plain localStorage, not the synchronized KV). It applies only while a
 // stepsize surface for the field is drawn; otherwise the step is 1.
 const STEPSIZE_KEY = field => `plugin-stepsize:${field}`;
@@ -2668,7 +2668,9 @@ export function initUI(callbacks) {
         }
     }
     setupValueAdjuster('dose-in-minus', 'dose-in-plus', 'dose-in-value', () => activeStepSize('targetDoseWeight'), 0, (val) => `${val}g`, (val) => { updateDoseValue('in', val); updateDrinkRatio(); }, syncDrinkOutPresets);
-    setupValueAdjuster('grind-minus', 'grind-plus', 'grind-value', () => grindStep, 0, (val) => grindStep === 1 ? String(Math.round(val)) : val.toFixed(1), updateGrindValue);
+    // A plugin `stepsize` on grind overrides the built-in whole-number/0.1 rule.
+    const grindStepNow = () => drawnStepSizes.grinderSetting ? activeStepSize('grinderSetting') : grindStep;
+    setupValueAdjuster('grind-minus', 'grind-plus', 'grind-value', grindStepNow, 0, (val) => Number.isInteger(grindStepNow()) ? String(Math.round(val)) : val.toFixed(1), updateGrindValue);
     setupValueAdjuster('flush-minus', 'flush-plus', 'flush-value', 1, 0, (val) => `${val}s`, (val) => {
         updateFlushValue(val);
         updateFlushDisplay(val);

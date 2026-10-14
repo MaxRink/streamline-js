@@ -31,8 +31,8 @@ export const PRESENTATIONS = ['page', 'overlay'];
 export const STEP_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting'];
 const STEP_MAX = 100;
 // `stepsize` sets what the dose / yield tile's own -/+ move by, on this device.
-// Grind has its own step setting and brew temperature depends on the unit.
-export const STEPSIZE_FIELDS = ['targetDoseWeight', 'targetYield'];
+// Brew temperature depends on the unit, so it is not steppable.
+export const STEPSIZE_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting'];
 const STEPSIZE_MAX_SIZES = 4;
 const STEPSIZE_MAX = 10;
 
@@ -145,9 +145,9 @@ export function resolveStepSize(sizes, stored) {
     return sizes.includes(stored) ? stored : sizes[0];
 }
 
-// Pill text for a size, e.g. `±0.5 g`.
-export function formatStepSize(size) {
-    return `±${round2(size)} g`;
+// Pill text for a size, e.g. `±0.5 g`; grind has no unit.
+export function formatStepSize(size, field) {
+    return `±${round2(size)}${field === 'grinderSetting' ? '' : ' g'}`;
 }
 
 // `call` POSTs `{ [field]: <number> }` to one of the plugin's own http endpoints.
@@ -178,6 +178,7 @@ export function callableEndpoint(plugin, endpoint) {
 function parseAction(raw, kind) {
     if (!raw || typeof raw !== 'object') return null;
     if (raw.type === 'open') return parseOpen(raw);
+    if (raw.type === 'call' && kind === 'ratio-action') return parseCall(raw, { withValue: true });
     if (raw.type === 'set' && (kind === 'tile-hint' || kind === 'tile-line')) return parseSet(raw);
     if (raw.type === 'step' && (kind === 'tile-hint' || kind === 'tile-line')) return parseStep(raw);
     if (raw.type === 'stepsize' && (kind === 'tile-hint' || kind === 'tile-line')) return parseStepSize(raw);
@@ -283,6 +284,15 @@ function parseSurface(raw) {
         return { id, kind, label, ...(image && { image }), action };
     }
 
+    // The ratio label under Drink ("(1:2.7)") becomes tappable. It runs this action
+    // and nothing else, so without an `open` or `call` it would be dead: dropped.
+    // The label's text stays the skin's; one per plugin (the slot rule below).
+    if (kind === 'ratio-action') {
+        if (action?.type !== 'open' && action?.type !== 'call') return null;
+        const title = cleanText(raw.title, CAPS.title);
+        return { id, kind, ...(title && { title }), action };
+    }
+
     if (kind === 'tile-mode') return parseMode(raw, id, action);
 
     if (kind === 'tile-hint' || kind === 'tile-line') {
@@ -290,7 +300,7 @@ function parseSurface(raw) {
         // A `stepsize` pill is drawn by the skin from the device's stored size, so
         // its `text` is optional and ignored.
         const text = cleanText(raw.text, kind === 'tile-hint' ? CAPS.hint : CAPS.text)
-            || (raw.action?.type === 'stepsize' ? formatStepSize(action?.sizes?.[0] ?? 1) : '');
+            || (raw.action?.type === 'stepsize' ? formatStepSize(action?.sizes?.[0] ?? 1, action?.field) : '');
         if (!text) return null;
         const title = kind === 'tile-hint' ? cleanText(raw.title, CAPS.title) : '';
         // `active` marks a pill or line as switched on (a lock, a chosen option).
