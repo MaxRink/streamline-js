@@ -2127,13 +2127,17 @@ export function renderScreenSaverSettings() {
 
             <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
 
-            <div style="${grid}">
+            <div class="w-full">
                 <div class="flex items-center justify-between gap-[16px]">
                     <p class="font-bold text-[var(--mimoja-blue-v2)] text-[26px] leading-[1.2]">Images</p>
                     <div class="flex items-center gap-[16px]">
                         ${imageButtons}
                     </div>
                 </div>
+            </div>
+            <div class="w-full">${imageInfo}</div>
+
+            <div class="w-full">
                 <div class="flex items-center justify-between gap-[16px]">
                     <div class="flex items-baseline gap-[14px] font-bold ${screensaverImagesCache.length > 1 ? 'text-[var(--mimoja-blue-v2)]' : 'text-[var(--text-secondary)] opacity-50'} text-[26px]">
                         <p class="leading-[1.2]" data-i18n-key="Change image every:">Change image every:</p>
@@ -2150,7 +2154,6 @@ export function renderScreenSaverSettings() {
                            onchange="window.handleScreensaverCycleChange(this.value)">
                 </div>
             </div>
-            <div class="w-full">${imageInfo}</div>
 
             <input type="file" id="screensaver-file-input" class="hidden" multiple accept="image/*"
                    onchange="window.addScreensaverFiles(this.files)">

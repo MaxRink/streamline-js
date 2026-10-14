@@ -1,7 +1,7 @@
 export const SCREENSAVER_CLOCK_FORMATS = [
     { value: 'locale', label: 'Device default' },
-    { value: '12', label: '12-hour' },
-    { value: '24', label: '24-hour' },
+    { value: '12', label: '12:00 PM' },
+    { value: '24', label: '24:00' },
 ];
 
 export const SCREENSAVER_DATE_FORMATS = [
