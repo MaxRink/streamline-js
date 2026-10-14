@@ -11,7 +11,7 @@ import { isBengleMachine, setMachineModel } from '../modules/machine.js';
 import { resolveSteamStopMode, applyMilkProbeGate } from '../modules/steam-mode.js';
 import { summarizeFirmwareCatalog, isFirmwareCancellationError, estimateRemainingSeconds, isUploadComplete, estimateVerifyRemainingSeconds, estimateTotalRemainingSeconds, FIRMWARE_VERIFY_SECONDS, formatDuration } from '../modules/firmware-progress.js';
 import { setScreensaverSuppressed, isMachineAsleep } from '../modules/screensaver-policy.js';
-import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, resolveScreensaverClockFormat, resolveScreensaverClockPosition } from '../modules/screensaver-clock.js';
+import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, resolveScreensaverDateFormat, resolveScreensaverClockFormat, resolveScreensaverClockPosition } from '../modules/screensaver-clock.js';
 import { ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewComposite, ledLiveWriteState } from '../modules/led-color.js';
 import { LED_SEQUENCE_KEY, MIN_STEP_DURATION_MS, MAX_STEP_DURATION_MS, LED_TRIGGER_STATES, parseLedSequence, serializeLedSequence, addStep, removeStep, updateStep, moveStep, toggleTriggerState } from '../modules/led-sequence.js';
 import { requestStart as ledRunRequestStart, requestStop as ledRunRequestStop, forceStop as ledRunForceStop, onRunChange as ledRunOnChange, getRunState as ledRunGetState, onMachineStateChange as ledRunOnMachineStateChange, noteStoredPalette as ledRunNoteStoredPalette } from '../modules/led-strip-runner.js';
@@ -2049,6 +2049,7 @@ export function renderScreenSaverSettings() {
     const showClock = localStorage.getItem('screensaverShowClock') !== 'false';
     const clockFormat = resolveScreensaverClockFormat(localStorage.getItem('screensaverClockFormat'));
     const clockPosition = resolveScreensaverClockPosition(localStorage.getItem('screensaverClockPosition'));
+    const dateFormat = resolveScreensaverDateFormat(localStorage.getItem('screensaverDateFormat'));
     // Hide the control where REA says the platform cannot set brightness --
     // DisplayState.platformSupported.brightness. Assume supported until the first
     // snapshot lands, so the row does not flicker in on load.
@@ -2087,80 +2088,54 @@ export function renderScreenSaverSettings() {
         </p>
     `;
 
+    // Two-column grid so the whole page fits one screen without vertical scroll.
+    const toggle = (label, key, checked, handler, id = '') => `
+        <div class="flex items-center justify-between gap-[20px]">
+            <p class="font-bold text-[var(--text-primary)] text-[26px] leading-[1.2]" data-i18n-key="${key}">${label}</p>
+            <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
+                <input type="checkbox" class="sr-only peer" ${id ? `id="${id}"` : ''} ${checked ? 'checked' : ''}
+                       onchange="${handler}(this.checked)">
+                <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
+                <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
+            </label>
+        </div>`;
+    const select = (id, label, options, current, handler) => `
+        <div class="flex items-center justify-between gap-[20px]">
+            <label for="${id}" class="font-bold text-[var(--text-primary)] text-[26px]" data-i18n-key="${label}">${label}</label>
+            <select id="${id}"
+                    class="select select-bordered w-[260px] text-[20px] bg-[var(--presence-input-bg)] text-[var(--presence-input-text)] border-[var(--presence-input-border)]"
+                    onchange="${handler}(this.value)">
+                ${options.map(o => `<option value="${o.value}" ${current === o.value ? 'selected' : ''} data-i18n-key="${o.label}">${o.label}</option>`).join('')}
+            </select>
+        </div>`;
+    const grid = 'display:grid;grid-template-columns:1fr 1fr;column-gap:60px;row-gap:24px;align-items:center;width:100%;';
+
     return `
-        <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
+        <div class="content-stretch flex flex-col gap-[28px] items-start relative w-full">
             <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
                 <p class="leading-[1.2]" data-i18n-key="Screen Saver">Screen Saver</p>
             </div>
 
-            <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                <div class="content-stretch flex items-center justify-between relative w-full">
-                    <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--text-primary)] text-[30px]">
-                        <p class="leading-[1.2]" data-i18n-key="Show screen saver when the machine sleeps">Show screen saver when the machine sleeps</p>
-                    </div>
-                    <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                        <input type="checkbox" class="sr-only peer"
-                               ${enabled && !blackSaver ? 'checked' : ''}
-                               onchange="window.setScreensaverEnabled(this.checked)">
-                        <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
-                        <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-                    </label>
-                </div>
+            <div style="${grid}">
+                ${toggle('Show screen saver when the machine sleeps', 'Show screen saver when the machine sleeps', enabled && !blackSaver, 'window.setScreensaverEnabled')}
+                ${select('screensaver-clock-format', 'Clock format', SCREENSAVER_CLOCK_FORMATS, clockFormat, 'window.setScreensaverClockFormat')}
+                ${toggle('Show date and time', 'Show date and time', showClock, 'window.setScreensaverShowClock', 'screensaver-show-clock')}
+                ${select('screensaver-date-format', 'Date format', SCREENSAVER_DATE_FORMATS, dateFormat, 'window.setScreensaverDateFormat')}
+                ${brightnessSupported ? toggle('Black screen saver', 'Black screen saver', blackSaver, 'window.setBlackScreenSaver', 'black-screen-saver') : '<div></div>'}
+                ${select('screensaver-clock-position', 'Clock position', SCREENSAVER_CLOCK_POSITIONS, clockPosition, 'window.setScreensaverClockPosition')}
             </div>
 
             <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
 
-            <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                <div class="content-stretch flex items-center justify-between relative w-full">
-                    <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--text-primary)] text-[30px]">
-                        <p class="leading-[1.2]" data-i18n-key="Show date and time">Show date and time</p>
-                    </div>
-                    <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                        <input type="checkbox" class="sr-only peer"
-                               id="screensaver-show-clock"
-                               ${showClock ? 'checked' : ''}
-                               onchange="window.setScreensaverShowClock(this.checked)">
-                        <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
-                        <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-                    </label>
-                </div>
-                <div class="content-stretch flex items-center justify-between relative w-full">
-                    <label for="screensaver-clock-format" class="font-bold text-[var(--text-primary)] text-[30px]" data-i18n-key="Clock format">Clock format</label>
-                    <select id="screensaver-clock-format"
-                            class="select select-bordered w-full max-w-xs text-[20px] bg-[var(--presence-input-bg)] text-[var(--presence-input-text)] border-[var(--presence-input-border)]"
-                            onchange="window.setScreensaverClockFormat(this.value)">
-                        ${SCREENSAVER_CLOCK_FORMATS.map(option => `<option value="${option.value}" ${clockFormat === option.value ? 'selected' : ''} data-i18n-key="${option.label}">${option.label}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="content-stretch flex items-center justify-between relative w-full">
-                    <label for="screensaver-clock-position" class="font-bold text-[var(--text-primary)] text-[30px]" data-i18n-key="Clock position">Clock position</label>
-                    <select id="screensaver-clock-position"
-                            class="select select-bordered w-full max-w-xs text-[20px] bg-[var(--presence-input-bg)] text-[var(--presence-input-text)] border-[var(--presence-input-border)]"
-                            onchange="window.setScreensaverClockPosition(this.value)">
-                        ${SCREENSAVER_CLOCK_POSITIONS.map(option => `<option value="${option.value}" ${clockPosition === option.value ? 'selected' : ''} data-i18n-key="${option.label}">${option.label}</option>`).join('')}
-                    </select>
-                </div>
-            </div>
-
-            <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
-
-            <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                <div class="content-stretch flex items-center justify-between relative w-full">
-                    <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                        <p class="leading-[1.2]">Images</p>
-                    </div>
+            <div style="${grid}">
+                <div class="flex items-center justify-between gap-[16px]">
+                    <p class="font-bold text-[var(--mimoja-blue-v2)] text-[26px] leading-[1.2]">Images</p>
                     <div class="flex items-center gap-[16px]">
                         ${imageButtons}
                     </div>
                 </div>
-                ${imageInfo}
-            </div>
-
-            <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
-
-            <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                <div class="content-stretch flex items-center justify-between relative w-full">
-                    <div class="flex items-baseline gap-[14px] font-['Inter:Bold',sans-serif] font-bold leading-[0] not-italic relative ${screensaverImagesCache.length > 1 ? 'text-[var(--mimoja-blue-v2)]' : 'text-[var(--text-secondary)] opacity-50'} text-[30px]">
+                <div class="flex items-center justify-between gap-[16px]">
+                    <div class="flex items-baseline gap-[14px] font-bold ${screensaverImagesCache.length > 1 ? 'text-[var(--mimoja-blue-v2)]' : 'text-[var(--text-secondary)] opacity-50'} text-[26px]">
                         <p class="leading-[1.2]" data-i18n-key="Change image every:">Change image every:</p>
                         <span class="text-[20px] font-normal opacity-60">(2 – 600s)</span>
                     </div>
@@ -2174,31 +2149,8 @@ export function renderScreenSaverSettings() {
                            class="w-[140px] h-[62px] px-[20px] rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] bg-[var(--box-color)] text-[var(--text-primary)] text-[24px] text-center disabled:opacity-40 disabled:cursor-not-allowed"
                            onchange="window.handleScreensaverCycleChange(this.value)">
                 </div>
-                ${screensaverImagesCache.length > 1 ? '' : `
-                <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full">
-                    Add more than one image to enable cycling.
-                </p>`}
             </div>
-
-            ${brightnessSupported ? `
-            <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
-
-            <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                <div class="content-stretch flex items-center justify-between relative w-full">
-                    <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--text-primary)] text-[30px]">
-                        <p class="leading-[1.2]" data-i18n-key="Black screen saver">Black screen saver</p>
-                    </div>
-                    <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                        <input type="checkbox" class="sr-only peer"
-                               id="black-screen-saver"
-                               ${blackSaver ? 'checked' : ''}
-                               onchange="window.setBlackScreenSaver(this.checked)">
-                        <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
-                        <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-                    </label>
-                </div>
-            </div>
-            ` : ''}
+            <div class="w-full">${imageInfo}</div>
 
             <input type="file" id="screensaver-file-input" class="hidden" multiple accept="image/*"
                    onchange="window.addScreensaverFiles(this.files)">
@@ -8177,6 +8129,10 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
 
     window.setScreensaverClockFormat = function(format) {
         ui.setScreensaverClockFormat(format);
+    };
+
+    window.setScreensaverDateFormat = function(format) {
+        ui.setScreensaverDateFormat(format);
     };
 
     window.setScreensaverClockPosition = function(position) {

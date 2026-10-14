@@ -2,7 +2,7 @@ import { autoSteamPitcherLabel, compactAutoSteamTargetLabel, shouldKeepAutoSteam
 import { manualSteamMode, steamModeCycle } from './auto-steam-capability.js';
 import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver, getSaverBrightness } from './api.js';
 import { openDB, getSetting } from './idb.js';
-import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
+import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, formatScreensaverClockDate, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
 import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine } from './screensaver-policy.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
 import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync } from './steam-mode.js';
@@ -1805,7 +1805,7 @@ function _updateScreensaverClock() {
     const now = new Date();
     Object.assign(screensaverClockEl.style, screensaverClockPositionStyle(localStorage.getItem('screensaverClockPosition')));
     screensaverClockTimeEl.textContent = formatScreensaverClockTime(now, localStorage.getItem('screensaverClockFormat'));
-    screensaverClockDateEl.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    screensaverClockDateEl.textContent = formatScreensaverClockDate(now, localStorage.getItem('screensaverDateFormat'));
 }
 
 // Show/hide the clock to match (active && enabled) and run its ticker only then.
@@ -1834,6 +1834,14 @@ export function setScreensaverClockFormat(format) {
         throw new RangeError('Invalid screensaver clock format');
     }
     localStorage.setItem('screensaverClockFormat', format);
+    _syncScreensaverClock();
+}
+
+export function setScreensaverDateFormat(format) {
+    if (!SCREENSAVER_DATE_FORMATS.some(option => option.value === format)) {
+        throw new RangeError('Invalid screensaver date format');
+    }
+    localStorage.setItem('screensaverDateFormat', format);
     _syncScreensaverClock();
 }
 

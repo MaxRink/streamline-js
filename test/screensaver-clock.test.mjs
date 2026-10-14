@@ -5,6 +5,7 @@ import {
     SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS,
     resolveScreensaverClockFormat, resolveScreensaverClockPosition,
     formatScreensaverClockTime, screensaverClockPositionStyle,
+    SCREENSAVER_DATE_FORMATS, formatScreensaverClockDate, resolveScreensaverDateFormat,
 } from '../src/modules/screensaver-clock.js';
 
 test('missing or unrecognized preferences preserve locale time and bottom center', () => {
@@ -55,7 +56,7 @@ function clockHarness() {
     const source = readFileSync(new URL('../src/modules/ui.js', import.meta.url), 'utf8');
     const functions = [
         '_updateScreensaverClock', '_syncScreensaverClock', 'setScreensaverClockEnabled',
-        'setScreensaverClockFormat', 'setScreensaverClockPosition',
+        'setScreensaverClockFormat', 'setScreensaverClockPosition', 'setScreensaverDateFormat',
     ].map(name => {
         const match = source.match(new RegExp(`(?:export )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\r?\\n\\}`));
         assert.ok(match, `${name} is wired in ui.js`);
@@ -70,6 +71,7 @@ function clockHarness() {
         'screensaverClockTimeEl', 'screensaverClockDateEl',
         'SCREENSAVER_CLOCK_FORMATS', 'SCREENSAVER_CLOCK_POSITIONS',
         'formatScreensaverClockTime', 'screensaverClockPositionStyle',
+        'SCREENSAVER_DATE_FORMATS', 'formatScreensaverClockDate',
         `let screensaverActive = false, screensaverClockTimer = null;
          ${functions}
          return { setScreensaverClockEnabled, setScreensaverClockFormat, setScreensaverClockPosition,
@@ -80,6 +82,7 @@ function clockHarness() {
         timer => intervals.delete(timer), clock, time, date,
         SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS,
         formatScreensaverClockTime, screensaverClockPositionStyle,
+        SCREENSAVER_DATE_FORMATS, formatScreensaverClockDate,
     );
     return { api, stored, intervals, clock, time, date, source };
 }
@@ -140,6 +143,7 @@ test('settings render persisted choices, six positions, and safe defaults', () =
     const render = new Function(
         'localStorage', 'SCREENSAVER_CLOCK_FORMATS', 'SCREENSAVER_CLOCK_POSITIONS',
         'resolveScreensaverClockFormat', 'resolveScreensaverClockPosition',
+        'SCREENSAVER_DATE_FORMATS', 'resolveScreensaverDateFormat',
         `const screensaverImagesCache = [], isBlackScreenSaver = () => false, displayState = () => ({});
          ${match[0].replace('export ', '')}
          return renderScreenSaverSettings();`,
@@ -152,6 +156,7 @@ test('settings render persisted choices, six positions, and safe defaults', () =
             { getItem: key => preferences[key] ?? null },
             SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS,
             resolveScreensaverClockFormat, resolveScreensaverClockPosition,
+            SCREENSAVER_DATE_FORMATS, resolveScreensaverDateFormat,
         );
         const format = html.match(/<select id="screensaver-clock-format"[\s\S]*?<\/select>/)[0];
         const position = html.match(/<select id="screensaver-clock-position"[\s\S]*?<\/select>/)[0];
@@ -162,5 +167,17 @@ test('settings render persisted choices, six positions, and safe defaults', () =
         assert.ok(!html.includes('<script>'));
         assert.match(html, /label for="screensaver-clock-format"/);
         assert.match(html, /label for="screensaver-clock-position"/);
+        assert.equal((html.match(/<select id="screensaver-date-format"[\s\S]*?<\/select>/)[0].match(/<option /g) || []).length, 5);
     }
+});
+
+test('date format presets are locale-independent and fall back to the long form', () => {
+    const date = new Date(2026, 0, 5, 9, 0);
+    assert.equal(formatScreensaverClockDate(date, 'dmy'), '05/01/2026');
+    assert.equal(formatScreensaverClockDate(date, 'mdy'), '01/05/2026');
+    assert.equal(formatScreensaverClockDate(date, 'ymd'), '2026-01-05');
+    assert.equal(formatScreensaverClockDate(date, 'none'), '');
+    for (const bad of [undefined, null, 'x', '<b>']) assert.equal(resolveScreensaverDateFormat(bad), 'long');
+    assert.equal(formatScreensaverClockDate(date, null, 'en-US'),
+        date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }));
 });

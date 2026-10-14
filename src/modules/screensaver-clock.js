@@ -4,6 +4,14 @@ export const SCREENSAVER_CLOCK_FORMATS = [
     { value: '24', label: '24-hour' },
 ];
 
+export const SCREENSAVER_DATE_FORMATS = [
+    { value: 'long', label: 'Weekday, month day' },
+    { value: 'dmy', label: 'DD/MM/YYYY' },
+    { value: 'mdy', label: 'MM/DD/YYYY' },
+    { value: 'ymd', label: 'YYYY-MM-DD' },
+    { value: 'none', label: 'Hide date' },
+];
+
 export const SCREENSAVER_CLOCK_POSITIONS = [
     { value: 'top-left', label: 'Top left' },
     { value: 'top-center', label: 'Top center' },
@@ -39,4 +47,19 @@ export function screensaverClockPositionStyle(position) {
         alignItems: horizontal === 'left' ? 'flex-start' : horizontal === 'right' ? 'flex-end' : 'center',
         textAlign: horizontal,
     };
+}
+
+export function resolveScreensaverDateFormat(value) {
+    return SCREENSAVER_DATE_FORMATS.some(option => option.value === value) ? value : 'long';
+}
+
+// '' for 'none' so the caller can hide the line.
+export function formatScreensaverClockDate(date, format, locales = []) {
+    const resolved = resolveScreensaverDateFormat(format);
+    if (resolved === 'none') return '';
+    if (resolved === 'long') return date.toLocaleDateString(locales, { weekday: 'long', month: 'long', day: 'numeric' });
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const yyyy = String(date.getFullYear());
+    return { dmy: `${dd}/${mm}/${yyyy}`, mdy: `${mm}/${dd}/${yyyy}`, ymd: `${yyyy}-${mm}-${dd}` }[resolved];
 }
