@@ -236,13 +236,19 @@ test('tile-mode: label and unit are capped, up to three modes per tile', () => {
     assert.deepEqual(many.map(x => x.id), ['pct', 'other', 'third', 'dose-m']);
 });
 
-test('tile-mode: sub is capped text and applyOnSelect needs a real true', () => {
-    const m = ok([mode({ sub: 'abcdefghijkl', applyOnSelect: true })])[0];
-    assert.equal(m.sub, 'abcdefgh');
+test('tile-mode: a second value is a bounded number on steam and drink; applyOnSelect needs a real true', () => {
+    const second = { field: 'flow', value: 1.26, min: 0.4, max: 2, decimals: 1, unit: 'ml/s' };
+    const m = ok([mode({ tile: 'steam', second, applyOnSelect: true })])[0];
+    assert.deepEqual(m.second, { field: 'flow', unit: 'ml/s', decimals: 1, min: 0.4, max: 2, value: 1.3 });
     assert.equal(m.applyOnSelect, true);
-    const plain = ok([mode({ sub: '   ', applyOnSelect: 'yes' })])[0];
-    assert.equal('sub' in plain, false);
-    assert.equal('applyOnSelect' in plain, false);
+    // other tiles have no second line; a bad second leaves the mode without one
+    assert.equal('second' in ok([mode({ tile: 'dose', second })])[0], false);
+    for (const bad of [{ ...second, field: 'percent' }, { ...second, field: '9x' }, { ...second, min: 3 },
+        { ...second, decimals: 5 }, { ...second, value: 'x' }, 'text', null]) {
+        assert.equal('second' in ok([mode({ tile: 'steam', second: bad })])[0], false);
+    }
+    assert.equal(ok([mode({ tile: 'steam', second: { ...second, unit: 'abcdefghij' } })])[0].second.unit, 'abcdef');
+    assert.equal('applyOnSelect' in ok([mode({ applyOnSelect: 'yes' })])[0], false);
 });
 
 test('call is only valid on a tile-mode; the mode may share a tile with a hint and a line', () => {

@@ -42,7 +42,7 @@ export const MODE_TILES = [...TILES, 'steam', 'flush'];
 export const MODE_LIMITS = {
     label: 6,        // characters in the toggle option
     unit: 3,         // characters appended to the value
-    sub: 8,          // characters of the second line (steam and drink only), e.g. a flow
+    secondUnit: 6,   // characters appended to the second value (steam and drink only)
     presets: 4,      // the preset row has four slots
     menu: 4,         // extra items in a preset's long-press menu
     menuLabel: 24,
@@ -186,6 +186,29 @@ function parseAction(raw, kind) {
     return null;
 }
 
+// A second number a mode keeps beside its main one (a steam flow beside a time).
+// The steam and drink tiles have a second line for it. Tapping it opens the numpad
+// and sends the new number to the same `call` under `field`. Invalid -> no second
+// value; the mode itself is still drawn.
+const SECOND_TILES = ['steam', 'drink'];
+function parseSecond(raw, mainField) {
+    if (!raw || typeof raw !== 'object') return null;
+    const { field } = raw;
+    if (typeof field !== 'string' || !FIELD_RE.test(field) || field === mainField) return null;
+    const decimals = raw.decimals == null ? 0 : raw.decimals;
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > MODE_LIMITS.decimals) return null;
+    const min = toNumber(raw.min);
+    const max = toNumber(raw.max);
+    const bound = MODE_LIMITS.bound;
+    if (min === null || max === null || min >= max || min < -bound || max > bound) return null;
+    if (roundTo(min, decimals) !== min || roundTo(max, decimals) !== max) return null;
+    const value = toNumber(raw.value);
+    if (value === null) return null;
+    const unit = cleanText(raw.unit, MODE_LIMITS.secondUnit);
+    return { field, ...(unit && { unit }), decimals, min, max,
+        value: roundTo(Math.min(max, Math.max(min, value)), decimals) };
+}
+
 // A mode the user steps through with the tile's -/+ and numpad. `value` and the
 // presets are clamped into [min, max] and rounded to `decimals`; a mode that cannot
 // be stepped (min/max/step finer than `decimals`) or called is dropped.
@@ -194,7 +217,6 @@ function parseMode(raw, id, action) {
     const label = cleanText(raw.label, MODE_LIMITS.label);
     if (!label) return null;
     const unit = cleanText(raw.unit, MODE_LIMITS.unit);
-    const secondLine = cleanText(raw.sub, MODE_LIMITS.sub);
 
     const decimals = raw.decimals == null ? 0 : raw.decimals;
     if (!Number.isInteger(decimals) || decimals < 0 || decimals > MODE_LIMITS.decimals) return null;
@@ -232,9 +254,10 @@ function parseMode(raw, id, action) {
             if (itemLabel && n !== null) menu.push({ label: itemLabel, value: clamp(n) });
         }
     }
+    const second = SECOND_TILES.includes(raw.tile) ? parseSecond(raw.second, action.field) : null;
     return { id, kind: 'tile-mode', tile: raw.tile, label, ...(unit && { unit }),
         value: clamp(value), min, max, step, decimals, presets, ...(menu.length && { menu }),
-        ...(secondLine && { sub: secondLine }), ...(raw.applyOnSelect === true && { applyOnSelect: true }),
+        ...(second && { second }), ...(raw.applyOnSelect === true && { applyOnSelect: true }),
         ...(raw.presetsEditable === false && { presetsEditable: false }), action };
 }
 

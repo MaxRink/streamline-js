@@ -210,7 +210,7 @@ A `tile-mode` lets a plugin add its own option to a left-column tile, the way th
 | `presets` | up to 4 numbers shown in the tile's preset row while the mode is selected; only Brew, Drink, Flush and Steam have a preset row, Grind and Dose ignore them |
 | `menu` | optional, up to 4 `{ "label": "Reset to 0%", "value": 0 }` (label 24 characters, `value` clamped to `min`..`max`); extra items in each preset's long-press menu |
 | `presetsEditable` | optional, `false` to stop the user changing the presets from that menu (default `true`) |
-| `sub` | optional, up to 8 characters on a second line under the value, on `steam` and `drink` only (for a flow beside a time: `1.0ml/s`); it is text, so keep it in step with what your `call` does |
+| `second` | optional, on `steam` and `drink` only: a second number on a second line under the value, for example a flow beside a time: `{ "field": "flow", "value": 1.0, "min": 0.4, "max": 2, "decimals": 1, "unit": "ml/s" }`. `field` is a name like `call`'s (and not the mode's own), `unit` up to 6 characters. Tapping it opens the numpad. Every call of the mode then carries **both** numbers, `{ "<field>": <value>, "<second.field>": <second> }`, so a newer call never drops the other one; apply both, and answer with the values you want shown |
 | `applyOnSelect` | optional, `true` to make the skin send the mode's `value` to your `call` as soon as the user picks the mode, as if they had tapped a preset (for a mode that sets more than one thing at once); default `false` |
 | `action` | required, a `call`; a mode without a valid one is dropped |
 

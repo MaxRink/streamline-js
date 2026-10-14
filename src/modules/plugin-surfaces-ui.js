@@ -356,7 +356,11 @@ function setSelectedMode(tile, key) {
     // A mode that asked for it applies its own value as soon as it is chosen, as if
     // the user had tapped a preset (a flow and time pair set by one tap).
     const chosen = key && (drawnModes[tile] || []).find(m => m.key === key);
-    if (chosen?.surface.applyOnSelect) callMode(chosen.plugin, chosen.surface, chosen.surface.value, { immediate: true });
+    if (chosen?.surface.applyOnSelect) {
+        const { second } = chosen.surface;
+        callMode(chosen.plugin, chosen.surface, chosen.surface.value,
+            { immediate: true, extra: second ? { [second.field]: second.value } : undefined });
+    }
 }
 
 function paintToggle(tile) {
@@ -451,12 +455,13 @@ export function isModeCallBusy(plugin, surface) {
     return callQueue.busy(callKey(plugin, surface));
 }
 
-export function callMode(plugin, surface, number, { immediate = true } = {}) {
+// `extra` are more `{ field: number }` pairs sent in the same body (a mode's second value).
+export function callMode(plugin, surface, number, { immediate = true, extra } = {}) {
     const action = surface?.action;
     if (action?.type !== 'call' || !callableEndpoint(plugin, action.endpoint) || !Number.isFinite(number)) {
         return Promise.resolve(false);
     }
-    const payload = { plugin, endpoint: action.endpoint, body: { [action.field]: number } };
+    const payload = { plugin, endpoint: action.endpoint, body: { [action.field]: number, ...extra } };
     return callQueue.request(callKey(plugin, surface), payload, { immediate }).then(sent => {
         // null: a newer call replaced or overtook this one, which will refresh.
         // Otherwise read skin again and redraw even if the answer is unchanged, so

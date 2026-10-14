@@ -76,14 +76,33 @@ function apply(tile, number, { immediate }) {
     if (!state || !Number.isFinite(number)) return;
     state.value = clampModeValue(state.surface, number);
     paint(tile);
-    callMode(state.plugin, state.surface, state.value, { immediate });
+    callMode(state.plugin, state.surface, state.value, { immediate, extra: secondBody(state) });
+}
+
+const secondBody = state => (state.second == null ? undefined : { [state.surface.second.field]: state.second });
+
+const roundSecond = (second, n) => Math.round(Math.min(second.max, Math.max(second.min, n)) * 10 ** second.decimals) / 10 ** second.decimals;
+const formatSecond = (second, n) => `${n.toFixed(second.decimals)}${second.unit || ''}`;
+
+// The second value was edited: the call carries both numbers, so a newer call that
+// supersedes this one in the queue never loses the other value.
+function applySecond(tile, number) {
+    const state = active[tile];
+    const second = state?.surface.second;
+    if (!second || !Number.isFinite(number)) return;
+    state.second = roundSecond(second, number);
+    paint(tile);
+    callMode(state.plugin, state.surface, state.value, { immediate: true, extra: secondBody(state) });
 }
 
 // `initial` and `onConfirm` default to editing the mode's own value.
-async function openNumpad(tile, { initial, onConfirm, suffix = '' } = {}) {
+async function openNumpad(tile, { initial, onConfirm, suffix = '', spec } = {}) {
     const state = active[tile];
     if (!state) return;
     const { plugin, surface } = state;
+    // The mode's own number unless `spec` names another (the second value).
+    const field = spec || { label: surface.label, unit: surface.unit || '', min: surface.min, max: surface.max,
+        signed: surface.min < 0 && surface.decimals === 0 };
     const start = initial === undefined ? state.value : initial;
     const module = await import('./numpad-modal.js');
     module.initNumpadModal();
@@ -92,13 +111,13 @@ async function openNumpad(tile, { initial, onConfirm, suffix = '' } = {}) {
         // Per plugin and mode, so two plugins on one tile keep their own previous-value pills.
         fieldType: `plugin-mode-${String(plugin.id)}:${surface.id}${suffix}`.replace(/[^A-Za-z0-9_.:-]/g, '_'),
         config: {
-            title: `${TILE_DOM[tile].title} ${surface.label}`,
-            unit: surface.unit || '',
+            title: `${TILE_DOM[tile].title} ${field.label}`,
+            unit: field.unit,
             defaultValue: String(start),
-            min: surface.min,
-            max: surface.max,
+            min: field.min,
+            max: field.max,
             // The "." key becomes +/- when only whole numbers are asked for and negatives are possible.
-            signed: surface.min < 0 && surface.decimals === 0,
+            signed: field.signed,
         },
         onConfirm: onConfirm || (raw => apply(tile, parseFloat(raw), { immediate: true })),
     });
@@ -175,7 +194,12 @@ function paint(tile) {
     const { surface } = state;
     const text = formatModeValue(surface, state.value);
     (state.textEl || state.valueEl).textContent = text;
-    state.valueEl.setAttribute('aria-label', `${surface.label} ${text}${state.hasSub ? ' ' + surface.sub : ''}`);
+    state.valueEl.setAttribute('aria-label', `${surface.label} ${text}`);
+    if (state.secondEl) {
+        const second = formatSecond(surface.second, state.second);
+        state.secondEl.textContent = second;
+        state.secondEl.setAttribute('aria-label', `${surface.label} ${surface.second.field} ${second}`);
+    }
     for (const button of state.presetButtons) {
         button.classList.toggle('preset-active', Number(button.dataset.modeValue) === state.value);
     }
@@ -193,6 +217,7 @@ function draw(tile, plugin, surface, { keepValue = false } = {}) {
         && (keepValue || isModeCallBusy(plugin, surface));
     clearTile(tile);
     const state = { plugin, surface, value: clampModeValue(surface, keep ? before.value : surface.value),
+        second: surface.second ? roundSecond(surface.second, keep && before.second != null ? before.second : surface.second.value) : null,
         overlay: [], restore: [], presetButtons: [], valueEl: null };
     active[tile] = state;
     const hideEl = el => {
@@ -220,22 +245,53 @@ function draw(tile, plugin, surface, { keepValue = false } = {}) {
         openNumpad(tile);
     });
     // A second line under the value (a flow beside a time) on the tiles whose box
-    // holds two lines; elsewhere it is ignored.
-    if (dom.ownBox && surface.sub) {
+    // holds two lines. Both lines open the numpad; the call carries both numbers.
+    if (dom.ownBox && surface.second) {
         mine.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[110px] flex flex-col items-center text-center text-[var(--text-primary)]';
+        mine.removeAttribute('role');
+        mine.removeAttribute('tabindex');
+        mine.style.cursor = '';
         const main = document.createElement('span');
         main.className = 'text-[25.5px] font-bold';
+        main.style.cursor = 'pointer';
+        main.setAttribute('role', 'button');
+        main.tabIndex = 0;
+        // Each line handles its own tap; the container's handler (for the single-line
+        // value) must not also open the main numpad.
+        main.addEventListener('click', event => { event.stopPropagation(); openNumpad(tile); });
+        main.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            event.stopPropagation();
+            openNumpad(tile);
+        });
         const second = document.createElement('span');
         second.className = 'text-[19.5px] font-semibold';
-        second.textContent = surface.sub;
+        second.style.cursor = 'pointer';
+        second.setAttribute('role', 'button');
+        second.tabIndex = 0;
+        const openSecond = () => openNumpad(tile, {
+            initial: state.second, suffix: ':second',
+            spec: { label: `${surface.label} ${surface.second.field}`, unit: surface.second.unit || '',
+                min: surface.second.min, max: surface.second.max, signed: false },
+            onConfirm: raw => applySecond(tile, parseFloat(raw)),
+        });
+        second.addEventListener('click', event => { event.stopPropagation(); openSecond(); });
+        second.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            event.stopPropagation();
+            openSecond();
+        });
         mine.append(main, second);
         state.textEl = main;
-        state.hasSub = true;
+        state.secondEl = second;
+        state.valueEl = main;
     }
     hideEl(hidden);
     hidden.parentElement.appendChild(mine);
     state.overlay.push(mine);
-    state.valueEl = mine;
+    if (!state.valueEl) state.valueEl = mine;
 
     // Presets: the plugin's own, or none. The tile's rows are taken out of the
     // layout and ours, the same size, takes the place of the first, so nothing
