@@ -157,11 +157,53 @@ export function formatStepSize(size, field) {
 // A hint or line sends a fixed number with its tap (`value`, required there); a
 // tile-mode sends whatever the user chose, so it declares none.
 const CALL_VALUE_MAX = 99999;
+
+// `input` asks the user for the number with the skin's own full-screen numpad:
+// { title (24), unit (6), min, max, decimals (0-2), value (the starting number) }.
+// Used by a call's `input` and by an overlay's `streamline:numpad` request, so both
+// are limited alike. Anything off drops it (null): a numpad with no usable range
+// would let a plugin put arbitrary numbers in front of the user.
+export const NUMPAD_LIMITS = { title: 24, unit: 6, bound: CALL_VALUE_MAX, decimals: 2 };
+
+// The number the numpad may return: rounded to `decimals`, then held inside
+// [min, max] on that same grid (a max of 1.25 with one decimal allows 1.2, not 1.3).
+export function fitNumpadValue({ min, max, decimals }, n) {
+    const f = 10 ** decimals;
+    const lo = Math.ceil(min * f - 1e-9) / f;
+    const hi = Math.floor(max * f + 1e-9) / f;
+    return Math.min(hi, Math.max(lo, roundTo(n, decimals)));
+}
+
+export function parseNumpadInput(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const min = toNumber(raw.min), max = toNumber(raw.max);
+    if (min === null || max === null || min >= max
+        || Math.abs(min) > NUMPAD_LIMITS.bound || Math.abs(max) > NUMPAD_LIMITS.bound) return null;
+    const decimals = raw.decimals == null ? 0 : raw.decimals;
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > NUMPAD_LIMITS.decimals) return null;
+    // The numpad's sign key exists only for whole numbers, so a negative range
+    // with decimals could not be typed.
+    if (min < 0 && decimals > 0) return null;
+    // At least one number on the grid must fit the range.
+    const f = 10 ** decimals;
+    if (Math.ceil(min * f - 1e-9) > Math.floor(max * f + 1e-9)) return null;
+    const start = toNumber(raw.value);
+    const title = cleanText(raw.title, NUMPAD_LIMITS.title);
+    const unit = cleanText(raw.unit, NUMPAD_LIMITS.unit);
+    return { ...(title && { title }), ...(unit && { unit }), min, max, decimals,
+        value: fitNumpadValue({ min, max, decimals }, start === null ? min : start) };
+}
+
 function parseCall(action, { withValue = false } = {}) {
     const { endpoint, field } = action;
     if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
     if (typeof field !== 'string' || !FIELD_RE.test(field)) return null;
     if (!withValue) return { type: 'call', endpoint, field };
+    // A numpad input replaces the fixed number: the user types it.
+    if (action.input !== undefined) {
+        const input = parseNumpadInput(action.input);
+        return input ? { type: 'call', endpoint, field, input } : null;
+    }
     const value = toNumber(action.value);
     if (value === null || Math.abs(value) > CALL_VALUE_MAX) return null;
     return { type: 'call', endpoint, field, value: round2(value) };

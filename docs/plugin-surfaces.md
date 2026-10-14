@@ -286,6 +286,14 @@ An invalid action drops the action only; the surface still shows, inert.
   and opens the page instead.
 
   Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
+  - **The stock numpad.** Post `{ type: 'streamline:numpad', id: 'r1', title: 'Ratio', unit: 'x', min: 1, max: 5,
+    decimals: 1, value: 2.5 }` and the skin opens its own full-screen numpad over the overlay (see `input` under
+    `call` for the fields and limits). The answer comes back to that frame as
+    `{ type: 'streamline:numpad-result', id: 'r1', value: 2.5 }`, or `value: null` when the user cancels, another
+    plugin numpad is already open or the request is invalid. `id` (a string or number) is echoed so you can match
+    answers. A request is answered only while the page the overlay opened is in the frame, only right after a tap
+    (browser user activation), and not within 3 seconds of a cancel, so a page cannot keep the numpad over the
+    overlay's close button; send the request from a tap handler and do not re-ask at once after `null`.
 - **`step`**: `{ "type": "step", "field": "targetDoseWeight", "by": -0.5 }` on tile kinds only. Moves the
   tile's current value by `by` (a non-zero number, at most 100 either way) and goes through the same setter as
   `set`, so the result is clamped to the same range and the profile remembers it. `field` is `targetDoseWeight`,
@@ -323,15 +331,41 @@ An invalid action drops the action only; the surface still shows, inert.
 - **`call`**: `{ "type": "call", "endpoint": "apply", "field": "percent" }` on a `tile-mode`, or
   `{ "type": "call", "endpoint": "ratio", "field": "lock", "value": 1 }` on a `tile-hint` or `tile-line`, where
   `value` is a fixed number (required, at most 99999 in size, rounded to hundredths) sent when the pill or line is tapped. A header button
-  cannot call. The skin sends `POST /api/v1/plugins/{id}/{endpoint}` with the JSON body `{ "<field>": <number> }`. `endpoint`
+  cannot call. Instead of `value`, a hint, a line or a `ratio-action` may carry `input`, which makes the tap open the
+  skin's own full-screen numpad and send the number the user types:
+  `{ "type": "call", "endpoint": "ratio", "field": "ratio", "input": { "title": "Ratio", "unit": "x", "min": 1, "max": 5, "decimals": 1, "value": 2.5 } }`.
+  `min` and `max` are required (`min` below `max`, each at most 99999 in size); `decimals` is 0 to 2 (default 0);
+  `value` is the number the numpad starts on (default `min`; clamped); `title` (24) and `unit` (6) are optional text.
+  The typed number is rounded to `decimals` and then held inside `min` to `max` on that grid (a `max` of 1.25 with one
+  decimal allows 1.2). A cancel sends nothing, and the numpad remembers the numbers entered for this surface as its
+  previous-value pills. A bad `input` drops the action: that includes a range with no number on the grid, and a
+  negative `min` with `decimals` above 0 (the numpad's sign key exists only for whole numbers). The numpad takes at
+  most five characters. A `tile-mode` has its
+  own numpad already and takes no `input`. The skin sends `POST /api/v1/plugins/{id}/{endpoint}` with the JSON body `{ "<field>": <number> }`. `endpoint`
   must be an http endpoint your manifest declares and is never one of `skin`, `settings`, `enable`, `disable`,
   `source`, `update` or `install` (Decaid serves those routes itself, so they never reach your endpoint).
   `field` is a name of letters, digits and `_` starting with a letter, up to 40 characters. The reply body is
   ignored. A non-2xx status is logged, and a call that does not answer within about 5 s is given up; either way the
   tile goes back to what `skin` says. `-` / `+` presses are sent after the user pauses for about 300 ms (only the
   last number is sent); presets and numpad entry are sent immediately. Only one call per tile is in flight, and
-  the newest wins. After a call succeeds the skin also re-reads the workflow and repaints the dose, yield, grind and
-  temperature tiles, so the plugin must answer the call only after its own `PUT /workflow` has completed.
+  the newest wins. After a call succeeds the skin also re-reads the workflow and repaints the tiles from it, so the
+  plugin must answer the call only after its own `PUT /workflow` has completed.
+
+## How the tiles follow the workflow
+
+Decaid has no workflow websocket and `GET /workflow` carries no revision, so the skin re-reads it at these moments:
+
+- after every write the skin makes itself (`set`, `step`, a tile edit), at once and again about 1.5 s later for a
+  plugin that reacts to the write;
+- after a successful plugin `call`, and on a `live` push that is not `{"what":"skin"}`;
+- when the machine state changes (a shot ends, the machine wakes), when the window regains focus or becomes visible,
+  and on a 20 s timer.
+
+Each read paints dose, yield, grind, brew temperature, steam, hot water and flush from the workflow, whether or not
+the value differs from the last read, so a value a plugin set back to what the skin last saw still reaches the tile.
+Only an edit that has not reached Decaid yet (a tile press inside its 1 s debounce, or a write still in flight) is
+held back. A change of profile reloads the dashboard data instead. A plugin that writes the workflow and wants the
+dashboard to follow at once should `emit` on its `live` socket.
 
 Nothing else can be written: no machine commands, and no profile changes other than the remembered dose, yield,
 grind and the profile temperature that `set` itself writes (see the `brewTemperature` note above).
@@ -340,8 +374,15 @@ grind and the profile temperature that `set` itself writes (see the `brewTempera
 
 - Keeping a ratio while the dose changes is only possible as a dose `tile-mode` (the plugin owns the value and
   can write yield), or as a pill with `call` + `active` + `live` that tells the plugin to hold the ratio and
-  shows its state.
-- Tapping the ratio to enter a new one is a `ratio-action` that opens an overlay (`open` with
-  `presentation: "overlay"`); a pill cannot take numeric input.
-- Whether the Decaid plugin runtime can read the scale snapshot or machine state is not promised here; do not
-  depend on it.
+  shows its state. Put the pill under the Drink label as a `tile-line`, or under the value as a `tile-hint`; a
+  `tile-mode` on Drink takes the label slot, so use the hint then. Store the switch where other apps can see it,
+  for example `context.extras.lockRatio`.
+- The plugin sees a changed dose through its `events.workflow` listener, writes `yield = dose x ratio` with
+  `PUT /workflow` and `emit`s. A yield that changes with the same dose is the user choosing a new ratio, so adopt it.
+- Tapping the ratio to enter a new one is a `ratio-action`: a `call` with `input` opens the skin's own numpad and
+  sends the typed ratio, a `call` with a fixed `value` cycles through ratios, and `open` with
+  `presentation: "overlay"` draws a page of the plugin's own.
+- A scale weight under Dose is a `tile-line` on `dose` whose `call` or `set` uses the number. A plugin reads
+  `/ws/v1/scale/snapshot` itself (`network.websocket` permission; checked against a real Decaid) and pushes
+  `{"what":"skin"}` when the weight moves. Hiding it during a shot needs the machine state from Decaid's
+  `events.machine` permission, which the plugin handles itself; that part is not tested here.
