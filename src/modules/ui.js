@@ -359,6 +359,16 @@ export function applyPluginSet(field, value) {
     return false;
 }
 
+// A plugin `step`: the tile's value now, moved by `by`, through the same path as
+// `set` (so it is clamped and becomes the profile's override). False when the
+// tile is not showing a number yet.
+const STEP_VALUE_IDS = { targetDoseWeight: 'dose-in-value', targetYield: 'drink-out-value', grinderSetting: 'grind-value' };
+export function applyPluginStep(field, by) {
+    const current = parseFloat(document.getElementById(STEP_VALUE_IDS[field])?.textContent);
+    if (isNaN(current) || !Number.isFinite(by)) return false;
+    return applyPluginSet(field, current + by);
+}
+
 export function updateGrindValue(newValue) {
     const workflowUpdate = {
         context: {
