@@ -41,6 +41,8 @@ const TILES = {
     // label block already holds the Time | Flow toggle, so the mode toggle goes in
     // the free line under that, and `label` is the toggle itself.
     steam: { section: 'steam-section', label: 'steam-mode-toggle', control: 'steam-minus' },
+    // Like steam: the built-in Temp | Vol toggle is the label the mode toggle goes under.
+    hotwater: { section: 'hotwater-section', label: 'hot-water-mode-toggle', control: 'hot-water-vol-minus' },
 };
 const MUTED = 'var(--low-contrast-white)';
 
@@ -391,15 +393,15 @@ function placeModeToggle(tile, modes) {
     const { section, label: labelId } = TILES[tile];
     const label = document.getElementById(labelId);
     // Steam's toggle sits in its own block, which is what the line is placed in.
-    const sectionEl = tile === 'steam' ? label?.parentElement : document.getElementById(section);
+    const sectionEl = tile === 'steam' || tile === 'hotwater' ? label?.parentElement : document.getElementById(section);
     if (!sectionEl || !label) return false;
     if (!sectionEl.style.position) {
         sectionEl.style.position = 'relative';
         touchedSections.push(sectionEl);
     }
     // Over the label there is room to grow upward; over steam's toggle there is not.
-    const hit = tile === 'steam' ? 17 : 24;
-    const extra = tile === 'steam' ? 14 : 30;
+    const hit = tile === 'steam' || tile === 'hotwater' ? 17 : 24;
+    const extra = tile === 'steam' || tile === 'hotwater' ? 14 : 30;
     // Never run under the -/+ control: the row is cut at the free space before it
     // (measured, because the page may be scaled), less a few px of air.
     let width = label.offsetWidth + extra;
@@ -416,7 +418,7 @@ function placeModeToggle(tile, modes) {
     root.dataset.agentId = `plugin-tile:${tile}:tile-mode`;
     root.setAttribute('role', 'group');
     root.style.cssText = `position:absolute;left:0;top:${top + 17 - hit}px;width:${width}px;height:${hit}px;`
-        + `z-index:1;display:flex;align-items:flex-end;gap:${tile === 'steam' || tile === 'flush' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
+        + `z-index:1;display:flex;align-items:flex-end;gap:${tile === 'steam' || tile === 'hotwater' || tile === 'flush' ? 2 : 6}px;white-space:nowrap;overflow:hidden;pointer-events:none;`
         + `font-size:14px;line-height:17px;color:${MUTED};`;
 
     const options = [...(tileHasBuiltinOption(tile) ? [{ key: '', label: builtinLabel(tile), title: '' }] : []),
@@ -440,7 +442,7 @@ function placeModeToggle(tile, modes) {
         root.appendChild(button);
     });
     sectionEl.appendChild(root);
-    if ((tile === 'steam' || tile === 'flush') && !label.dataset.pluginModeWired) {
+    if ((tile === 'steam' || tile === 'hotwater' || tile === 'flush') && !label.dataset.pluginModeWired) {
         // Choosing a built-in steam mode ends a plugin one; on flush, which has no
         // built-in option in the row, a tap on the label does.
         label.dataset.pluginModeWired = '1';

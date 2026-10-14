@@ -27,6 +27,8 @@ test('planTileModes: steam and flush have no built-in option in the row, so they
     assert.equal(tileHasBuiltinOption('steam'), false);
     assert.equal(tileHasBuiltinOption('flush'), false);
     assert.equal(pluginOptionCapacity('flush'), 3);
+    assert.equal(tileHasBuiltinOption('hotwater'), false);
+    assert.equal(pluginOptionCapacity('hotwater'), 3);
     assert.equal(tileHasBuiltinOption('drink'), true);
 });
 
