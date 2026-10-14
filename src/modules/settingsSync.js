@@ -45,6 +45,8 @@ export const SYNCED_KEYS = [
     'streamlineHelpLaunches',
     'screensaverEnabled',
     'screensaverCycleSeconds',
+    'screensaverClockFormat',
+    'screensaverClockPosition',
     'blackScreenSaver',
     'screensaverShowClock',
     'wakeLockEnabled',

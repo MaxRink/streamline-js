@@ -100,6 +100,24 @@ test('wake-profile toggle and selection are synced and survive a wipe', async ()
     assert.deepEqual(applied, { wakeProfileEnabled: 'true', wakeProfileId: 'profile-123' });
 });
 
+test('screensaver clock format and position mirror to KV and restore after a wipe', async () => {
+    const preferences = { screensaverClockFormat: '24', screensaverClockPosition: 'top-right' };
+    const { storage, proto } = makeStorage();
+    const pushed = [];
+    installMirror(proto, (key, value) => pushed.push([key, value]), () => {});
+    for (const [key, value] of Object.entries(preferences)) {
+        assert.ok(SYNCED_KEYS.includes(key));
+        storage.setItem(key, value);
+    }
+    assert.deepEqual(pushed, Object.entries(preferences));
+    const fresh = makeStorage();
+    const { applied } = await hydrate(fresh.storage, preferences, fresh.proto.setItem, () => {});
+    assert.deepEqual(applied, preferences);
+    for (const [key, value] of Object.entries(preferences)) {
+        assert.equal(fresh.storage.getItem(key), value);
+    }
+});
+
 test('clear() also clears the durable copy', () => {
     // Otherwise a reset the user asked for comes straight back on the next boot.
     const { storage, proto } = makeStorage({ theme: 'dark' });
