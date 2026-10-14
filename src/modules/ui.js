@@ -251,6 +251,13 @@ function updateDoseValue(type, newValue) {
             updateDoseInDisplay(ratioDose);
         }
     }
+    // Paint both tiles from the pair that is about to be sent. A dose tap and a drink
+    // tap inside one debounce each fire later with their own number; without this the
+    // later write left the other tile showing the earlier tap's value.
+    if (ratioYield !== null || ratioDose !== null) {
+        updateDoseInDisplay(targetDose);
+        updateDrinkOut(targetYield);
+    }
     const payload = {
         context: {
             targetDoseWeight: targetDose,

@@ -190,8 +190,13 @@ alone.
 The plugin owns the switch: send `keepRatio` while its lock is on and leave it out when it is off (the next `skin`
 read, which the skin does after its own writes and on a `live` push, takes effect). With `keepRatioMoves: "yield"`, a yield changed by hand keeps
 the old behaviour: the plugin sees it through `events.workflow` and puts the new ratio in its next answer. Only the
-first drawn Drink surface with `keepRatio` counts, and a Drink `tile-line` is not drawn while a plugin `tile-mode`
-is on Drink.
+first drawn Drink surface with `keepRatio` counts. It is ignored while a plugin `tile-mode` is on Drink (the mode
+owns the yield, and a Drink `tile-line` is not drawn then).
+
+While you send `keepRatio` the skin is the one that moves dose and yield, so do not also write them from
+`events.workflow`: the two writers would round differently (the skin rounds `keepRatio` to hundredths and the
+result to a tenth of a gram) and the number would jump by 0.1 g. Only change `keepRatio` itself, keeping your own
+ratio at hundredths so both sides agree.
 
 ## Text size
 
@@ -426,8 +431,9 @@ grind and the profile temperature that `set` itself writes (see the `brewTempera
   wrong on screen for a moment and does not update `profile.target_weight`. Put the pill under the Drink label as a `tile-line`, or under the value as a `tile-hint`; a
   `tile-mode` on Drink takes the label slot, so use the hint then. Store the switch where other apps can see it,
   for example `context.extras.lockRatio`.
-- The plugin sees a changed dose through its `events.workflow` listener, writes `yield = dose x ratio` with
-  `PUT /workflow` and `emit`s. A yield that changes with the same dose is the user choosing a new ratio, so adopt it.
+- Without `keepRatio` the plugin sees a changed dose through its `events.workflow` listener, writes
+  `yield = dose x ratio` with `PUT /workflow` and `emit`s; a yield that changes with the same dose is the user
+  choosing a new ratio, so adopt it. With `keepRatio` the skin does this itself and the plugin must not.
 - Tapping the ratio to enter a new one is a `ratio-action`: a `call` with `input` opens the skin's own numpad and
   sends the typed ratio, a `call` with a fixed `value` cycles through ratios, and `open` with
   `presentation: "overlay"` draws a page of the plugin's own.

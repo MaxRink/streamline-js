@@ -715,7 +715,8 @@ function render(rawEntries) {
             usedSlots.add(slot);
             const a = surface.action;
             if (a?.type === 'stepsize' && !drawnSizes[a.field]) drawnSizes[a.field] = a.sizes;
-            if (surface.keepRatio && !drawnKeepRatio) { drawnKeepRatio = surface.keepRatio; drawnKeepMoves = surface.keepRatioMoves || 'both'; }
+            // A plugin mode on Drink owns the yield, so the ratio is not held for it.
+            if (surface.keepRatio && !drawnKeepRatio && !modeTiles.has('drink')) { drawnKeepRatio = surface.keepRatio; drawnKeepMoves = surface.keepRatioMoves || 'both'; }
         }
     }
     setDrawnStepSizes(drawnSizes);
