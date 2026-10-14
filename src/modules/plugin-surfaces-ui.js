@@ -48,13 +48,15 @@ const MUTED = 'var(--low-contrast-white)';
 
 // Text steps a plugin may ask for with `size`. `large` is the built-in Time | Flow
 // toggle's 21px on a 24px line. font/line: a line or toggle; pillFont/pill: a hint's
-// pill; hit: the touch height (grows upward over the label, which is not interactive);
-// hitDown: the same on tiles whose label is a control, where it grows downward.
+// pill; hit: the touch height of a line or toggle (grows upward over the label, which is
+// not interactive); hitHint: a hint's, kept shorter so it stays off the value and the ratio
+// label; hitDown: the same on tiles whose label is a control, where it grows downward and
+// stops short of the first preset.
 // `small` is the original look and must not change.
 const SIZE_SPEC = {
-    small: { font: 14, line: 17, pillFont: 13, pill: 17, hit: 24, hitDown: 17 },
-    medium: { font: 17, line: 20, pillFont: 15, pill: 20, hit: 32, hitDown: 28 },
-    large: { font: 21, line: 24, pillFont: 19, pill: 24, hit: 40, hitDown: 32 },
+    small: { font: 14, line: 17, pillFont: 13, pill: 17, hit: 24, hitHint: 24, hitDown: 17 },
+    medium: { font: 17, line: 20, pillFont: 15, pill: 20, hit: 32, hitHint: 28, hitDown: 24 },
+    large: { font: 21, line: 24, pillFont: 19, pill: 24, hit: 40, hitHint: 32, hitDown: 28 },
 };
 const DOWN_TILES = ['steam', 'hotwater', 'flush']; // the label (or toggle) above is a control
 const sizeAbove = size => SURFACE_SIZES[Math.max(0, SURFACE_SIZES.indexOf(size) - 1)];
@@ -374,7 +376,7 @@ function placeTileSurface(plugin, surface, size = surface.size || 'small') {
     const { root, el } = buildTileSurface(plugin, surface);
     // A hint is a pill, a line plain text; the visible part is `visible` px high.
     const visible = surface.kind === 'tile-hint' ? spec.pill : spec.line;
-    const hit = surface.action ? spec.hit : visible;
+    const hit = surface.action ? (surface.kind === 'tile-hint' ? spec.hitHint : spec.hit) : visible;
     // Text that does not fit at this step is drawn one step smaller.
     const fits = () => size === 'small' || el.scrollWidth <= el.clientWidth + 1;
     root.style.position = 'absolute';
@@ -388,14 +390,15 @@ function placeTileSurface(plugin, surface, size = surface.size || 'small') {
         // between the minus and plus buttons.
         root.style.left = '50%';
         root.style.transform = 'translateX(-50%)';
-        root.style.top = `${72 + visible - hit}px`;
+        root.style.top = `${72 + 17 - hit}px`; // the pill's bottom stays 17px under the row; a bigger pill grows upward
         root.style.width = surface.action ? '100px' : 'auto';
         root.style.maxWidth = '246px';
         root.style.height = `${hit}px`;
         root.style.zIndex = '1';
         // A bigger pill may be wider than the 100px touch box; it is still part of the button.
         el.style.cssText += `max-width:${size === 'small' ? '100%' : '246px'};height:${visible}px;line-height:${visible}px;padding:0 ${size === 'small' ? 10 : 12}px;border-radius:${Math.ceil(visible / 2)}px;`
-            + `font-size:${spec.pillFont}px;font-weight:600;background:var(--button-grey);color:${MUTED};`;
+            + `font-size:${spec.pillFont}px;font-weight:600;background:var(--button-grey);color:${MUTED};`
+            + (size === 'small' ? '' : 'flex-shrink:0;');
         if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--mimoja-blue-v2);';
         parent.appendChild(root);
         if (!fits()) { root.remove(); return placeTileSurface(plugin, surface, sizeAbove(size)); }
@@ -415,7 +418,7 @@ function placeTileSurface(plugin, surface, size = surface.size || 'small') {
     root.style.height = `${hit}px`;
     root.style.zIndex = '1';
     if (surface.action) root.style.justifyContent = 'flex-start';
-    el.style.cssText += `width:100%;font-size:${spec.font}px;line-height:${spec.line}px;color:${MUTED};`;
+    el.style.cssText += `${root === el ? '' : 'width:100%;'}font-size:${spec.font}px;line-height:${spec.line}px;color:${MUTED};`;
     if (surface.active) el.style.cssText += 'color:var(--mimoja-blue-v2);font-weight:700;';
     section.appendChild(root);
     if (!fits()) { root.remove(); return placeTileSurface(plugin, surface, sizeAbove(size)); }
@@ -541,7 +544,8 @@ function placeModeToggle(tile, modes, size = largestSize(modes.map(m => m.surfac
     });
     sectionEl.appendChild(root);
     // An option cut short at this step: draw the whole toggle one step smaller.
-    if (size !== 'small' && [...root.querySelectorAll('button')].some(b => b.scrollWidth > b.clientWidth + 1)) {
+    if (size !== 'small' && (root.scrollWidth > root.clientWidth + 1
+        || [...root.querySelectorAll('button')].some(b => b.scrollWidth > b.clientWidth + 1))) {
         root.remove();
         return placeModeToggle(tile, modes, sizeAbove(size));
     }

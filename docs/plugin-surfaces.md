@@ -174,17 +174,20 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 `"medium"` or `"large"`. There are no pixel values; the skin maps each step to fixed numbers so a plugin cannot
 break a tile's layout.
 
-| `size` | line / toggle text | hint pill | touch height |
+| `size` | line / toggle text | hint pill | touch height (line or toggle / hint) |
 |---|---|---|---|
-| `small` | 14 px on a 17 px line | 13 px in 17 px | 24 px |
-| `medium` | 17 px on a 20 px line | 15 px in 20 px | 32 px |
-| `large` | 21 px on a 24 px line (the built-in `Time \| Flow` size) | 19 px in 24 px | 40 px |
+| `small` | 14 px on a 17 px line | 13 px in 17 px | 24 / 24 px |
+| `medium` | 17 px on a 20 px line | 15 px in 20 px | 32 / 28 px |
+| `large` | 21 px on a 24 px line (the built-in `Time \| Flow` size) | 19 px in 24 px | 40 / 32 px |
 
-- The touch area grows upward over the label, which is not a control. On Steam, Hot Water and Flush the label is a
-  control, so it grows downward instead (28 px for `medium`, 32 px for `large`).
+- The touch area grows upward over the label, which is not a control (a line or hint without an action has no
+  touch area, and at `small` the toggles on Steam and Hot Water are 17 px). On Steam, Hot Water and Flush the label
+  is a control, so it grows downward instead (24 px for `medium`, 28 px for `large`), stopping short of the first
+  preset. A hint's pill keeps its bottom edge in place and grows upward.
 - The skin draws the largest step the text fits in: if a line, pill or any option of a toggle would be cut
-  short, the whole surface is drawn one step smaller, down to `small`. Short labels earn the bigger sizes: three
-  modes of six characters fit only at `small`, while labels of two or three characters fit at `large`.
+  short, the whole surface is drawn one step smaller, down to `small`. Short text earns the bigger sizes: a hint
+  pill fits about five or six characters at `large` and eight at `medium`, and the row of a tile's toggle is only
+  as wide as the space before its `-` button, so several modes need labels of two or three characters to fit at `large`.
 - Several modes on one tile share one row, so the row uses the largest `size` any of them asks for, and then the same fit rule.
 - Other kinds (buttons, `ratio-action`) have no text size. An unknown value is ignored.
 
