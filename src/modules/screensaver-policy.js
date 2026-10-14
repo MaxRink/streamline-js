@@ -174,11 +174,3 @@ export function deriveDisplayAction(previousState, currentState) {
 export function mayTapWakeMachine({ screensaverActive = false, onPluginControl = false } = {}) {
     return !!screensaverActive && !onPluginControl;
 }
-
-/**
- * Is the plugin screensaver button shown? Not on the black saver (brightness 0):
- * an invisible target must not be tappable.
- */
-export function isSaverButtonVisible(saverBrightness) {
-    return Number(saverBrightness) > 0;
-}

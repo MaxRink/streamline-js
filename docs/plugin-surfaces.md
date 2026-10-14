@@ -183,7 +183,7 @@ A `screensaver-button` is drawn at the top centre of the screensaver, for a plug
 
 - It never wakes the machine and sends no machine command. A tap on it is not a tap on the saver, so the saver stays up. The saver is left only by waking the machine, which the plugin button does not do; the user taps the saver elsewhere, as before.
 - Pressing it brings the panel back to the user's brightness (display only) so the page can be read. With `overlay`, closing the dialog dims the panel again if the machine is still asleep. With `page`, the skin is left; on return the first snapshot raises the saver and dims again, and boot sends no wake.
-- It is not shown on the black screen saver (brightness 0), so an invisible target is never tappable.
+- It sits at the top right of the saver and is shown on every saver, the image saver and the black screen.
 
 ## Tile modes
 

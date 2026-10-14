@@ -3,7 +3,7 @@ import { manualSteamMode, steamModeCycle } from './auto-steam-capability.js';
 import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver, getSaverBrightness } from './api.js';
 import { openDB, getSetting } from './idb.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
-import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine, isSaverButtonVisible } from './screensaver-policy.js';
+import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine } from './screensaver-policy.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
 import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync } from './steam-mode.js';
 import { shouldUseNumpad } from './numpad-policy.js';
@@ -1680,10 +1680,11 @@ export function getScreensaverButtonSlot() {
     return screensaverButtonSlot;
 }
 
-// Hidden on the black saver (brightness 0): an invisible target must not be tappable.
+// Shown on every saver, image or black: the plugin's button is how a plugin page
+// is reached without waking the machine, so it does not depend on the saver mode.
 function _syncSaverButtonSlot() {
     if (!screensaverButtonSlot) return;
-    screensaverButtonSlot.style.display = isSaverButtonVisible(getSaverBrightness()) ? 'flex' : 'none';
+    screensaverButtonSlot.style.display = 'flex';
 }
 
 export async function initScreensaver() {
@@ -1746,7 +1747,7 @@ export async function initScreensaver() {
     screensaverButtonSlot.id = 'screensaver-plugin-slot';
     screensaverButtonSlot.dataset.pluginSaverSlot = '1';
     screensaverButtonSlot.style.cssText = 'position:absolute;left:0;right:0;top:6%;display:none;'
-        + 'justify-content:center;pointer-events:none;';
+        + 'justify-content:flex-end;padding-right:5%;box-sizing:border-box;pointer-events:none;';
     screensaverElement.appendChild(screensaverButtonSlot);
 
     screensaverElement.addEventListener('click', event => {
