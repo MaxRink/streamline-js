@@ -339,6 +339,17 @@ An invalid action drops the action only; the surface still shows, inert.
   and opens the page instead.
 
   Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
+  - **Fit the dialog to the page.** Post `{ type: 'streamline:size', width: 420, height: 300 }` (CSS pixels of
+    your content) and the dialog shrinks to that size, so a small form is a small dialog over the dashboard. From
+    then on the dialog and the frame are transparent: draw your own card (its own background, radius and shadow) and
+    keep `html` and `body` transparent. Sizes are held to the default dialog (at most 1100 x 760 and 94% x 90% of
+    the screen) and to at least 280 x 160, so make your card fill exactly what you report (a smaller card is
+    surrounded by transparent margin that takes taps instead of closing the dialog). Send it when the page has
+    loaded and again when its content changes size. Do not set a dark `color-scheme` on `html` (no
+    `color-scheme: dark`, no `<meta name="color-scheme">`): the browser then paints an opaque canvas behind your
+    transparent page. Without a size message the dialog stays at the default size with a solid background. The
+    skin's close button (top right of the dialog) and a tap on the dimmed area outside the dialog still close it.
+    Messages are taken from the plugin's own pages on Decaid, as the other overlay messages are.
   - **The stock numpad.** Post `{ type: 'streamline:numpad', id: 'r1', title: 'Ratio', unit: 'x', min: 1, max: 5,
     decimals: 1, value: 2.5 }` and the skin opens its own full-screen numpad over the overlay (see `input` under
     `call` for the fields and limits). The answer comes back to that frame as
@@ -372,6 +383,17 @@ An invalid action drops the action only; the surface still shows, inert.
   the tile's minimum is 0, and dose, yield and brew temperature use a higher one here (grind is the same 0). `value` is a number or a numeric string; it is clamped to that
   range and rounded to hundredths. It goes through the same setters as a tile edit, so **the active profile
   remembers it** until it is changed again.
+
+  **From the scale.** `{ "type": "set", "field": "targetDoseWeight", "from": "scale" }` (dose only, no `value`) makes
+  the skin read the scale itself when the pill is tapped and set that weight as the dose, so the plugin needs no
+  scale socket of its own. The reading is rounded to a tenth of a gram and is used only if it is a real dose (1 to
+  30 g: a full cup is refused, never clamped), if it is fresh (the scale sent a weight in the last 3 seconds; a
+  dropped scale gives nothing), if the machine is not making anything (espresso, steam, hot water, flush, cleaning,
+  descaling, air purge) and if no espresso ended in the last 10 seconds. Otherwise the tap shows a short message and
+  sets nothing. The skin cannot tell beans from a small drink: a light cup left on the scale after those 10 seconds
+  reads as a dose, so a plugin should show the pill only when that is what the user wants (for example while the
+  scale reads something near the dose). The plugin decides when to show the pill and what its text says; use
+  `active` to mark it.
 
   > **`brewTemperature` moves the whole curve.** `value` is where the profile's *first* step goes, and every other
   > step moves by the same amount, exactly like the Brew tile's `-`/`+`: a profile with steps 94, 90, 88 set to 92

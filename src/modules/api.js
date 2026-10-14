@@ -484,6 +484,7 @@ export function connectWebSocket(onData, onReconnect) {
             
             previousMachineState = currentMachineState;
             currentMachineState = stateValue;
+            if (previousMachineState === 'espresso' && stateValue !== 'espresso') espressoEndedAt = Date.now();
             // Keep the last frame so pages that need a live reading (the
             // sensor calibration capture) can take one without opening a
             // second socket -- this one is a process-wide singleton.
@@ -1450,6 +1451,16 @@ export async function getWorkflow() {
 // it never paints a value older than a write that has not landed yet.
 let workflowWritesInFlight = 0;
 export function hasWorkflowWriteInFlight() { return workflowWritesInFlight > 0; }
+
+// The scale's latest weight, kept here so a plugin's "use the scale as the dose" tap can
+// read it without reaching into app.js. The caller judges how old it may be.
+let scaleReading = { weight: null, at: 0 };
+export function setLatestScaleReading(weight) { scaleReading = { weight, at: Date.now() }; }
+export function clearLatestScaleReading() { scaleReading = { weight: null, at: 0 }; }
+export function getScaleReading() { return scaleReading; }
+// When the last espresso ended, so the cup left on the scale is not taken for a dose.
+let espressoEndedAt = null;
+export function getEspressoEndedAt() { return espressoEndedAt; }
 
 export async function updateWorkflow(data) {
     workflowWritesInFlight += 1;

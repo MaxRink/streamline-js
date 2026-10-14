@@ -137,9 +137,51 @@ export function clampSetValue(field, value) {
     return round2(Math.min(limits.max, Math.max(limits.min, n)));
 }
 
+// `from: "scale"` replaces `value`: the skin reads the scale when the pill is tapped.
+// Only the dose can come from the scale, so the plugin needs no scale stream of its own.
+export const SET_FROM = ['scale'];
 function parseSet(action) {
+    if (action.from !== undefined) {
+        return SET_FROM.includes(action.from) && action.field === 'targetDoseWeight'
+            ? { type: 'set', field: action.field, from: action.from } : null;
+    }
     const value = clampSetValue(action.field, action.value);
     return value === null ? null : { type: 'set', field: action.field, value };
+}
+
+// The dose a scale reading may become: to a tenth of a gram, and only when it is a
+// real dose. A reading outside the dose's range (a full cup, 200 g) is refused, never
+// clamped into one.
+export function scaleDoseWeight(weight) {
+    if (typeof weight !== 'number' || !Number.isFinite(weight)) return null;
+    const w = Math.round(weight * 10) / 10;
+    return w >= SET_LIMITS.targetDoseWeight.min && w <= SET_LIMITS.targetDoseWeight.max ? w : null;
+}
+
+// What a "use the scale" tap may do, as one decision: refused while the machine is making
+// something, when the reading is older than 3 s (a scale that stopped sending), within 10 s
+// of an espresso ending (the full cup is still on the scale), and for a weight that is not
+// a real dose. Pure so the rules can be tested; the caller passes the clock and the state.
+export const SCALE_DOSE = { maxAgeMs: 3000, afterShotMs: 10000 };
+export const NOT_FOR_DOSE_STATES = ['espresso', 'skipStep', 'steam', 'steamRinse', 'hotWater', 'flush',
+    'cleaning', 'descaling', 'airPurge'];
+export function scaleDoseFor({ weight, readAt, now, state, espressoEndedAt }) {
+    if (NOT_FOR_DOSE_STATES.includes(state)) return null;
+    if (!Number.isFinite(readAt) || !Number.isFinite(now) || now - readAt > SCALE_DOSE.maxAgeMs) return null;
+    if (Number.isFinite(espressoEndedAt) && now - espressoEndedAt < SCALE_DOSE.afterShotMs) return null;
+    return scaleDoseWeight(weight);
+}
+
+// The size an overlay asked for with `streamline:size`, held to what the overlay may
+// use: never bigger than the default dialog or the screen, never a sliver. null for junk.
+export const OVERLAY_LIMITS = { maxWidth: 1100, maxHeight: 760, minWidth: 280, minHeight: 160 };
+export function fitOverlaySize(width, height, viewportWidth, viewportHeight) {
+    if (![width, height, viewportWidth, viewportHeight].every(n => typeof n === 'number' && Number.isFinite(n))) return null;
+    const clamp = (n, min, max) => Math.round(Math.min(max, Math.max(min, n)));
+    return {
+        width: clamp(width, OVERLAY_LIMITS.minWidth, Math.max(OVERLAY_LIMITS.minWidth, Math.min(OVERLAY_LIMITS.maxWidth, viewportWidth * 0.94))),
+        height: clamp(height, OVERLAY_LIMITS.minHeight, Math.max(OVERLAY_LIMITS.minHeight, Math.min(OVERLAY_LIMITS.maxHeight, viewportHeight * 0.9))),
+    };
 }
 
 function parseStep(action) {

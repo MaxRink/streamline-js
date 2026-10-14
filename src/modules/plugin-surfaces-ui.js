@@ -6,16 +6,16 @@
 // A failed or slow read hides that plugin's surfaces and never blocks the
 // dashboard. With no plugin answering `skin` nothing is drawn.
 
-import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
+import { getScaleReading, getEspressoEndedAt, getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
 import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
-    getStoredStepSize, storeStepSize, setDrawnStepSizes, setDrawnKeepRatio } from './ui.js';
+    getStoredStepSize, storeStepSize, setDrawnStepSizes, setDrawnKeepRatio, showToast } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -205,6 +205,20 @@ function openOverlay(plugin, action, pageUrl, onClose) {
         const type = event.data?.type;
         if (type === 'streamline:ready') clearTimeout(timer);
         else if (type === 'streamline:close') finish();
+        else if (type === 'streamline:size') {
+            // The page says how big its content is: the dialog fits it, so a small form is
+            // a small dialog over the dashboard. The page draws its own card; the dialog is
+            // transparent from here on. Sizes are held to the default dialog's limits.
+            if (event.origin !== frameOrigin) return;
+            const fitted = fitOverlaySize(event.data?.width, event.data?.height, window.innerWidth, window.innerHeight);
+            if (!fitted) return;
+            dialog.style.width = `${fitted.width}px`;
+            dialog.style.height = `${fitted.height}px`;
+            dialog.style.background = 'transparent';
+            // An iframe whose colour scheme differs from the page around it is painted opaque.
+            frame.style.colorScheme = 'normal';
+            frame.style.background = 'transparent';
+        }
         else if (type === 'streamline:numpad') {
             // Only the page the overlay opened (not one the frame navigated to), only
             // right after a tap, and not again straight after a cancel: a page must not
@@ -285,6 +299,12 @@ async function openPluginNumpad(plugin, key, input) {
     }
 }
 
+// The dose a "use the scale" tap would set; the rules are scaleDoseFor's. null refuses the tap.
+function scaleDoseForTap() {
+    const { weight, at } = getScaleReading();
+    return scaleDoseFor({ weight, readAt: at, now: Date.now(), state: currentMachineState, espressoEndedAt: getEspressoEndedAt() });
+}
+
 function bindAction(el, plugin, action, surface) {
     if (action?.type === 'call' && action.input) {
         // The user types the number: the skin's own numpad, then the same call.
@@ -331,7 +351,13 @@ function bindAction(el, plugin, action, surface) {
         });
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
-            applyPluginSetAsync(action.field, action.value).then(applied => {
+            const value = action.from === 'scale' ? scaleDoseForTap() : action.value;
+            if (value === null) {
+                logger.warn('Plugin set from the scale refused:', surface.id);
+                showToast('The scale weight cannot be used as the dose right now', 2400, 'info');
+                return;
+            }
+            applyPluginSetAsync(action.field, value).then(applied => {
                 if (!applied) logger.warn('Plugin set not applied:', action.field);
                 else refreshPluginSurfaces();
             });
