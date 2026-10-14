@@ -73,6 +73,9 @@ export function getLastDisplayState() {
 }
 // Brightness to return to on wake, captured just before we dim.
 let brightnessBeforeDim = null;
+// The level the last restoreDisplay() sent. A dim that follows before the display
+// socket reports it back would otherwise find only the saver level in lastDisplayState.
+let lastRestoredBrightness = null;
 let updateWebSocket = null;
 let updateWebSocketReady = false;
 
@@ -710,6 +713,33 @@ export function connectShotStateWebSocket(onData) {
     shotStateWebSocket.onerror = (error) => {
         logger.error('Shot State WebSocket error:', error);
     };
+}
+
+// A plugin's own websocket used only as "something changed": `onPush` runs for
+// every message, whatever its body. One socket per plugin, closed before it is
+// replaced, and reconnecting with a growing wait while the plugin is away.
+const pluginPushSlots = new Map();
+
+export function connectPluginPush(pluginId, endpoint, onPush) {
+    let slot = pluginPushSlots.get(pluginId);
+    if (!slot) {
+        slot = createSocketSlot(`plugin ${pluginId} push`);
+        pluginPushSlots.set(pluginId, slot);
+    }
+    return slot.replace(() => {
+        const socket = new ReconnectingWebSocket(
+            `${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(endpoint)}`,
+            [], { reconnectInterval: 5000, maxReconnectInterval: 60000 });
+        socket.onmessage = (event) => { try { onPush(event?.data); } catch (error) { logger.warn('Plugin push handler failed:', error); } };
+        return socket;
+    });
+}
+
+export function closePluginPush(pluginId) {
+    const slot = pluginPushSlots.get(pluginId);
+    if (!slot) return;
+    slot.close();
+    pluginPushSlots.delete(pluginId);
 }
 
 export function connectTimeToReadyWebSocket(onData) {
@@ -2661,6 +2691,10 @@ export function dimDisplay() {
         const current = lastDisplayState?.requestedBrightness;
         if (typeof current === 'number' && current !== getSaverBrightness()) {
             brightnessBeforeDim = current;
+        } else if (brightnessBeforeDim === null && lastRestoredBrightness !== null
+            && lastRestoredBrightness !== getSaverBrightness()) {
+            // restore -> quick re-dim: the socket has not echoed the restored level yet.
+            brightnessBeforeDim = lastRestoredBrightness;
         }
         sendDisplayCommand({
             command: 'setBrightness',
@@ -2680,10 +2714,12 @@ export function restoreDisplay() {
         // to its app_brightness setting for the same reason (de1plus/utils.tcl:496).
         // The remembered level is the fallback: it survives an app restart, where
         // the in-memory capture does not.
+        const level = brightnessBeforeDim ?? rememberedBrightness ?? 100;
         sendDisplayCommand({
             command: 'setBrightness',
-            brightness: brightnessBeforeDim ?? rememberedBrightness ?? 100
+            brightness: level
         });
+        lastRestoredBrightness = level;
         brightnessBeforeDim = null;
     } catch (error) {
         logger.error('Error restoring display:', error);

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkinAnswer, skinPlugins, callableEndpoint, RESERVED_ENDPOINTS, MAX_SURFACES } from '../src/modules/plugin-surfaces.js';
+import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+    nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -19,7 +20,7 @@ test('the example answer from the proposal parses as written', () => {
 
 test('wrong shape, wrong version or no answer give no surfaces and never throw', () => {
     for (const raw of [null, undefined, 'x', 3, [], {}, { version: 2, surfaces: [] }, { version: 1 }, { version: 1, surfaces: 'x' }]) {
-        assert.deepEqual(parseSkinAnswer(raw), { surfaces: [] });
+        assert.deepEqual(parseSkinAnswer(raw), { surfaces: [], live: null });
     }
 });
 
@@ -43,7 +44,7 @@ test('a non-string id (an array that stringifies to a valid id) is dropped', () 
     assert.deepEqual(s.map(x => x.text), ['string']);
 });
 
-test('limits: one header button, one hint and one line per tile, three surfaces', () => {
+test('limits: one header button, one hint and one line per tile, eight surfaces', () => {
     const btn = id => ({ id, kind: 'header-button', label: 'B' });
     assert.equal(ok([btn('a'), btn('b')]).length, 1);
     const hint = (id, tile) => ({ id, kind: 'tile-hint', tile, text: id });
@@ -51,7 +52,59 @@ test('limits: one header button, one hint and one line per tile, three surfaces'
     assert.equal(ok([hint('a', 'dose'), { id: 'b', kind: 'tile-line', tile: 'dose', text: 'b' }]).length, 2);
     const tiles = ['dose', 'drink', 'grind', 'temperature'];
     const lines = tiles.map(tile => ({ id: tile, kind: 'tile-line', tile, text: tile }));
-    assert.equal(ok(lines).length, MAX_SURFACES);
+    assert.equal(ok(lines).length, 4);
+    assert.equal(MAX_SURFACES, 8);
+    const many = [btn('b'), ...tiles.flatMap(t => [hint(`h${t}`, t), { id: `l${t}`, kind: 'tile-line', tile: t, text: t }]), btn('x')];
+    assert.equal(ok(many).length, 8); // 1 button + 4 hints + 4 lines = 9 slots, capped
+});
+
+const stepsize = (over = {}, kind = 'tile-hint') => ({ id: 'ss', kind, tile: 'dose', text: 'x',
+    action: { type: 'stepsize', field: 'targetDoseWeight', sizes: [1, 0.5, 0.1], ...over } });
+
+test('stepsize: valid action parses, sizes rounded to hundredths', () => {
+    assert.deepEqual(ok([stepsize()])[0].action, { type: 'stepsize', field: 'targetDoseWeight', sizes: [1, 0.5, 0.1] });
+    assert.deepEqual(ok([stepsize({ field: 'targetYield', sizes: ['2', 0.254, 10] }, 'tile-line')])[0].action.sizes, [2, 0.25, 10]);
+});
+
+test('stepsize: invalid actions are dropped and the surface stays inert', () => {
+    const bad = [{ sizes: [1, 2, 3, 4, 5] }, { sizes: [] }, { sizes: [0] }, { sizes: [-1] }, { sizes: [10.01] },
+        { sizes: [0.004] }, { sizes: ['x'] }, { sizes: 1 }, { field: 'grinderSetting' }, { field: 'brewTemperature' }];
+    for (const over of bad) {
+        const [s] = ok([stepsize(over)]);
+        assert.ok(s, JSON.stringify(over));
+        assert.equal(s.action, undefined, JSON.stringify(over));
+    }
+});
+
+test('stepsize: invalid sizes with no text keep the surface inert with a placeholder', () => {
+    const [s] = ok([{ id: 'ss', kind: 'tile-hint', tile: 'dose', action: { type: 'stepsize', field: 'targetDoseWeight', sizes: [] } }]);
+    assert.ok(s);
+    assert.equal(s.action, undefined);
+    assert.equal(s.text, '±1 g');
+});
+
+test('stepValue clamps to min', async () => {
+    const { stepValue } = await import('../src/modules/value-format.js');
+    assert.equal(stepValue(5, 10, -1, 0), 0);
+    assert.equal(stepValue(5, 0.5, -1, 0), 4.5);
+    assert.equal(stepValue(5, 1, 1), 6);
+});
+
+test('stepsize: only on tile-hint and tile-line', () => {
+    const action = { type: 'stepsize', field: 'targetDoseWeight', sizes: [1] };
+    assert.equal(ok([{ id: 'a', kind: 'header-button', label: 'B', action }])[0].action, undefined);
+    assert.equal(ok([{ id: 'a', kind: 'tile-mode', tile: 'dose', label: 'M', value: 1, min: 0, max: 5, action }]).length, 0);
+});
+
+test('stepsize helpers: next wraps, unknown current goes to the first, text format', () => {
+    assert.equal(nextStepSize([1, 0.5, 0.1], 1), 0.5);
+    assert.equal(nextStepSize([1, 0.5, 0.1], 0.1), 1);
+    assert.equal(nextStepSize([1, 0.5, 0.1], 7), 1);
+    assert.equal(nextStepSize([1, 0.5], null), 1);
+    assert.equal(resolveStepSize([1, 0.5], 0.5), 0.5);
+    assert.equal(resolveStepSize([1, 0.5], 3), 1);
+    assert.equal(formatStepSize(0.5), '±0.5 g');
+    assert.equal(formatStepSize(1), '±1 g');
 });
 
 test('text is capped, stripped of control characters, and never needed as HTML', () => {
@@ -83,6 +136,15 @@ test('open: presentation is a hint, unknown values fall back to page', () => {
     assert.equal(open({ view: 'main', presentation: 'overlay' }).presentation, 'overlay');
     assert.equal(open({ view: 'main', presentation: 'fullscreen' }).presentation, 'page');
     assert.equal(open({ view: '../../etc' }).view, '');
+});
+
+test('step moves a steppable tile field by a bounded non-zero amount', () => {
+    const step = (field, by, kind = 'tile-hint') => ok([{ id: 'a', kind, tile: 'dose', text: 'x', action: { type: 'step', field, by } }])[0]?.action;
+    assert.deepEqual(step('targetDoseWeight', '-0.5'), { type: 'step', field: 'targetDoseWeight', by: -0.5 });
+    assert.deepEqual(step('grinderSetting', 1, 'tile-line'), { type: 'step', field: 'grinderSetting', by: 1 });
+    for (const bad of [0, 101, 'x', null]) assert.ok(!step('targetYield', bad));
+    assert.ok(!step('brewTemperature', 1));
+    assert.ok(!step('targetDoseWeight', 1, 'header-button'));
 });
 
 test('set: only dose, yield, grind and brew temperature, as numbers clamped to the tile maximums', () => {
@@ -241,4 +303,92 @@ test('tile-mode: menu items are label and number, capped, clamped; presetsEditab
     assert.equal(ok([mode({ presetsEditable: false })])[0].presetsEditable, false);
     assert.equal('presetsEditable' in ok([mode({ presetsEditable: true })])[0], false);
     assert.equal('menu' in ok([mode({ menu: 'x' })])[0], false);
+});
+
+const hintCall = over => ({ id: 'lock', kind: 'tile-hint', tile: 'drink', text: 'Ratio', active: true,
+    action: { type: 'call', endpoint: 'ratio', field: 'lock', value: 1 }, ...over });
+
+test('call on a hint or line carries one fixed number; active marks it on', () => {
+    const [h] = ok([hintCall()]);
+    assert.deepEqual(h.action, { type: 'call', endpoint: 'ratio', field: 'lock', value: 1 });
+    assert.equal(h.active, true);
+    const [l] = ok([{ id: 'l', kind: 'tile-line', tile: 'dose', text: 'x',
+        action: { type: 'call', endpoint: 'ratio', field: 'lock', value: '0.456' } }]);
+    assert.equal(l.action.value, 0.46);
+    assert.equal('active' in l, false);
+    assert.equal('active' in ok([hintCall({ active: 'yes' })])[0], false);
+    assert.equal('active' in ok([hintCall({ active: false })])[0], false);
+});
+
+test('a hint or line call without a usable value, or to a reserved endpoint, is inert; header buttons cannot call', () => {
+    for (const action of [
+        { type: 'call', endpoint: 'ratio', field: 'lock' },
+        { type: 'call', endpoint: 'ratio', field: 'lock', value: 'x' },
+        { type: 'call', endpoint: 'ratio', field: 'lock', value: 1e9 },
+        { type: 'call', endpoint: 'ratio', field: 'lock', value: Infinity },
+        { type: 'call', endpoint: 'settings', field: 'lock', value: 1 },
+        { type: 'call', endpoint: 'ratio', field: '1x', value: 1 },
+    ]) {
+        const [h] = ok([hintCall({ action })]);
+        assert.equal(h.text, 'Ratio', JSON.stringify(action));       // the surface still shows
+        assert.equal('action' in h, false, JSON.stringify(action));  // inert
+    }
+    const [b] = ok([{ id: 'b', kind: 'header-button', label: 'x',
+        action: { type: 'call', endpoint: 'ratio', field: 'lock', value: 1 } }]);
+    assert.equal('action' in b, false);
+});
+
+test('a tile-mode call still takes no value', () => {
+    const m = ok([mode({ action: { type: 'call', endpoint: 'apply', field: 'percent', value: 5 } })])[0];
+    assert.deepEqual(m.action, { type: 'call', endpoint: 'apply', field: 'percent' });
+});
+
+test('screensaver-button: label and an open action only; anything else is dropped', () => {
+    const btn = extra => ok([{ id: 's', kind: 'screensaver-button', label: 'Dial in', ...extra }]);
+    const open = { type: 'open', view: 'main', presentation: 'overlay' };
+    assert.deepEqual(btn({ action: open })[0], { id: 's', kind: 'screensaver-button', label: 'Dial in', action: open });
+    assert.equal(btn({}).length, 0); // no action: dead button
+    assert.equal(btn({ action: { type: 'set', field: 'targetYield', value: 36 } }).length, 0);
+    assert.equal(btn({ action: { type: 'call', endpoint: 'x', field: 'y', value: 1 } }).length, 0);
+    assert.equal(ok([{ id: 's', kind: 'screensaver-button', label: ' ', action: open }]).length, 0);
+    assert.equal(btn({ label: 'x'.repeat(60), action: open })[0].label.length, 24);
+});
+
+test('screensaver-button: one per answer, independent of the header button', () => {
+    const open = { type: 'open', view: 'main' };
+    const s = id => ({ id, kind: 'screensaver-button', label: 'S', action: open });
+    assert.deepEqual(ok([s('a'), s('b')]).map(x => x.id), ['a']);
+    const h = { id: 'h', kind: 'header-button', label: 'H' };
+    assert.equal(ok([h, s('a')]).length, 2);
+});
+
+test('live names a websocket endpoint; it is only used when the plugin declares it', () => {
+    const answer = (live) => parseSkinAnswer({ version: 1, surfaces: [], live });
+    assert.deepEqual(answer({ endpoint: 'changed' }).live, { endpoint: 'changed' });
+    for (const bad of [null, undefined, 'changed', {}, { endpoint: 5 }, { endpoint: 'bad id' }, { endpoint: 'skin' }, { endpoint: 'settings' }]) {
+        assert.equal(answer(bad).live, null, JSON.stringify(bad));
+    }
+    const plugin = { api: [{ id: 'changed', type: 'websocket' }, { id: 'apply', type: 'http' }] };
+    assert.equal(liveEndpoint(plugin, { endpoint: 'changed' }), 'changed');
+    assert.equal(liveEndpoint(plugin, { endpoint: 'apply' }), null);      // http, not a socket
+    assert.equal(liveEndpoint(plugin, { endpoint: 'other' }), null);
+    assert.equal(liveEndpoint({}, { endpoint: 'changed' }), null);
+    assert.equal(liveEndpoint(plugin, null), null);
+});
+
+test('pushWants: only {"what":"skin"} skips the workflow re-read', () => {
+    const both = { skin: true, workflow: true };
+    assert.deepEqual(pushWants('{"what":"skin"}'), { skin: true, workflow: false });
+    assert.deepEqual(pushWants({ what: 'skin' }), { skin: true, workflow: false });
+    assert.deepEqual(pushWants('{"what":"workflow"}'), both);
+    assert.deepEqual(pushWants('{}'), both);
+    assert.deepEqual(pushWants('not json'), both);
+    assert.deepEqual(pushWants(undefined), both);
+    assert.deepEqual(pushWants('null'), both);
+    assert.deepEqual(pushWants('"skin"'), both);
+});
+
+test('an empty surfaces list with live is a valid answer', () => {
+    assert.deepEqual(parseSkinAnswer({ version: 1, surfaces: [], live: { endpoint: 'changed' } }),
+        { surfaces: [], live: { endpoint: 'changed' } });
 });

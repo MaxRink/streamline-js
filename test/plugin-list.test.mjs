@@ -21,6 +21,15 @@ test('a plugin declaring a ui endpoint gets a link to it', () => {
     );
 });
 
+test('an overlay link carries embed and theme, and no returnTo', () => {
+    const plugin = { id: 'p.reaplugin', api: [{ id: 'ui', type: 'http' }] };
+    assert.equal(
+        buildPluginUiUrl(plugin, 'http://x:8080/api/v1', 'http://skin/', { view: 'main', returnPage: null, embedTheme: 'light' }),
+        'http://x:8080/api/v1/plugins/p.reaplugin/ui?embed=1&theme=light&view=main',
+    );
+    assert.ok(buildPluginUiUrl(plugin, 'http://x:8080/api/v1', null, { embedTheme: 'nonsense' }).includes('theme=dark'));
+});
+
 test('the link is built off the configured bridge host, not a literal localhost', () => {
     const url = pluginUiUrl({ id: 'dye2.reaplugin', api: [{ id: 'ui', type: 'http' }] });
     assert.ok(url.startsWith('http://x:8080/api/v1/'));

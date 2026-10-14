@@ -11,6 +11,7 @@ import { isBengleMachine, setMachineModel } from '../modules/machine.js';
 import { resolveSteamStopMode, applyMilkProbeGate } from '../modules/steam-mode.js';
 import { summarizeFirmwareCatalog, isFirmwareCancellationError, estimateRemainingSeconds, isUploadComplete, estimateVerifyRemainingSeconds, estimateTotalRemainingSeconds, FIRMWARE_VERIFY_SECONDS, formatDuration } from '../modules/firmware-progress.js';
 import { setScreensaverSuppressed, isMachineAsleep } from '../modules/screensaver-policy.js';
+import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, resolveScreensaverClockFormat, resolveScreensaverClockPosition } from '../modules/screensaver-clock.js';
 import { ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewComposite, ledLiveWriteState } from '../modules/led-color.js';
 import { LED_SEQUENCE_KEY, MIN_STEP_DURATION_MS, MAX_STEP_DURATION_MS, LED_TRIGGER_STATES, parseLedSequence, serializeLedSequence, addStep, removeStep, updateStep, moveStep, toggleTriggerState } from '../modules/led-sequence.js';
 import { requestStart as ledRunRequestStart, requestStop as ledRunRequestStop, forceStop as ledRunForceStop, onRunChange as ledRunOnChange, getRunState as ledRunGetState, onMachineStateChange as ledRunOnMachineStateChange, noteStoredPalette as ledRunNoteStoredPalette } from '../modules/led-strip-runner.js';
@@ -2046,6 +2047,8 @@ export function renderScreenSaverSettings() {
     const cycleSeconds = parseInt(localStorage.getItem('screensaverCycleSeconds'), 10) || 10;
     const blackSaver = isBlackScreenSaver();
     const showClock = localStorage.getItem('screensaverShowClock') !== 'false';
+    const clockFormat = resolveScreensaverClockFormat(localStorage.getItem('screensaverClockFormat'));
+    const clockPosition = resolveScreensaverClockPosition(localStorage.getItem('screensaverClockPosition'));
     // Hide the control where REA says the platform cannot set brightness --
     // DisplayState.platformSupported.brightness. Assume supported until the first
     // snapshot lands, so the row does not flicker in on load.
@@ -2120,6 +2123,22 @@ export function renderScreenSaverSettings() {
                         <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
                         <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
                     </label>
+                </div>
+                <div class="content-stretch flex items-center justify-between relative w-full">
+                    <label for="screensaver-clock-format" class="font-bold text-[var(--text-primary)] text-[30px]" data-i18n-key="Clock format">Clock format</label>
+                    <select id="screensaver-clock-format"
+                            class="select select-bordered w-full max-w-xs text-[20px] bg-[var(--presence-input-bg)] text-[var(--presence-input-text)] border-[var(--presence-input-border)]"
+                            onchange="window.setScreensaverClockFormat(this.value)">
+                        ${SCREENSAVER_CLOCK_FORMATS.map(option => `<option value="${option.value}" ${clockFormat === option.value ? 'selected' : ''} data-i18n-key="${option.label}">${option.label}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="content-stretch flex items-center justify-between relative w-full">
+                    <label for="screensaver-clock-position" class="font-bold text-[var(--text-primary)] text-[30px]" data-i18n-key="Clock position">Clock position</label>
+                    <select id="screensaver-clock-position"
+                            class="select select-bordered w-full max-w-xs text-[20px] bg-[var(--presence-input-bg)] text-[var(--presence-input-text)] border-[var(--presence-input-border)]"
+                            onchange="window.setScreensaverClockPosition(this.value)">
+                        ${SCREENSAVER_CLOCK_POSITIONS.map(option => `<option value="${option.value}" ${clockPosition === option.value ? 'selected' : ''} data-i18n-key="${option.label}">${option.label}</option>`).join('')}
+                    </select>
                 </div>
             </div>
 
@@ -8154,6 +8173,14 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
 
     window.setScreensaverShowClock = function(enabled) {
         ui.setScreensaverClockEnabled(enabled);
+    };
+
+    window.setScreensaverClockFormat = function(format) {
+        ui.setScreensaverClockFormat(format);
+    };
+
+    window.setScreensaverClockPosition = function(position) {
+        ui.setScreensaverClockPosition(position);
     };
 
     window.handleScreensaverCycleChange = function(value) {

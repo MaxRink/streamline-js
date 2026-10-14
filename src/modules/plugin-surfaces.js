@@ -7,7 +7,7 @@
 // repaired into something else, so a bad surface cannot break a good one.
 
 export const SKIN_VERSION = 1;
-export const MAX_SURFACES = 3;      // per plugin, all kinds together
+export const MAX_SURFACES = 8;      // per plugin, all kinds together (slots allow one per kind per tile)
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
 // The fields `set` may write. Each maximum is the one the tile itself enforces when
@@ -25,6 +25,15 @@ export const SET_LIMITS = {
 };
 export const SET_FIELDS = Object.keys(SET_LIMITS);
 export const PRESENTATIONS = ['page', 'overlay'];
+// `step` moves the tile's own value by `by`; brew temperature is left out because
+// the tile shows it in the user's unit and a step would have to know which.
+export const STEP_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting'];
+const STEP_MAX = 100;
+// `stepsize` sets what the dose / yield tile's own -/+ move by, on this device.
+// Grind has its own step setting and brew temperature depends on the unit.
+export const STEPSIZE_FIELDS = ['targetDoseWeight', 'targetYield'];
+const STEPSIZE_MAX_SIZES = 4;
+const STEPSIZE_MAX = 10;
 
 // `tile-mode` adds an option to the toggle under a left-column tile's label.
 // Steam and flush can take a mode but not a hint or a line, so they are not in TILES.
@@ -64,7 +73,6 @@ function httpsUrl(value) {
     }
 }
 
-// `overlay` is accepted but only a hint; the renderer decides what it can honour.
 // Anything unknown falls back to `page` and never invalidates the surface.
 function parseOpen(action) {
     const view = typeof action.view === 'string' ? action.view : '';
@@ -100,15 +108,61 @@ function parseSet(action) {
     return value === null ? null : { type: 'set', field: action.field, value };
 }
 
+function parseStep(action) {
+    const by = toNumber(action.by);
+    if (!STEP_FIELDS.includes(action.field) || by === null || by === 0 || Math.abs(by) > STEP_MAX) return null;
+    return { type: 'step', field: action.field, by: round2(by) };
+}
+
+function parseStepSize(action) {
+    const { sizes } = action;
+    if (!STEPSIZE_FIELDS.includes(action.field) || !Array.isArray(sizes)
+        || sizes.length < 1 || sizes.length > STEPSIZE_MAX_SIZES) return null;
+    const out = [];
+    for (const item of sizes) {
+        const n = toNumber(item);
+        if (n === null || n <= 0 || n > STEPSIZE_MAX) return null;
+        const r = round2(n);
+        if (r <= 0) return null;
+        out.push(r);
+    }
+    return { type: 'stepsize', field: action.field, sizes: out };
+}
+
+// The size after `current` in `sizes`, wrapping; the first when `current` is not in it.
+export function nextStepSize(sizes, current) {
+    if (!Array.isArray(sizes) || sizes.length === 0) return null;
+    const i = sizes.indexOf(current);
+    return i === -1 ? sizes[0] : sizes[(i + 1) % sizes.length];
+}
+
+// The size to use for a stored value: the stored one when the plugin still offers
+// it, otherwise the first offered size.
+export function resolveStepSize(sizes, stored) {
+    if (!Array.isArray(sizes) || sizes.length === 0) return 1;
+    return sizes.includes(stored) ? stored : sizes[0];
+}
+
+// Pill text for a size, e.g. `±0.5 g`.
+export function formatStepSize(size) {
+    return `±${round2(size)} g`;
+}
+
 // `call` POSTs `{ [field]: <number> }` to one of the plugin's own http endpoints.
 // Whether `endpoint` is one the plugin declares is checked against its manifest by
 // callableEndpoint(); `skin` is the read side and the other RESERVED_ENDPOINTS are
 // Decaid's own routes, so none of those is callable.
-function parseCall(action) {
+// A hint or line sends a fixed number with its tap (`value`, required there); a
+// tile-mode sends whatever the user chose, so it declares none.
+const CALL_VALUE_MAX = 99999;
+function parseCall(action, { withValue = false } = {}) {
     const { endpoint, field } = action;
     if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
     if (typeof field !== 'string' || !FIELD_RE.test(field)) return null;
-    return { type: 'call', endpoint, field };
+    if (!withValue) return { type: 'call', endpoint, field };
+    const value = toNumber(action.value);
+    if (value === null || Math.abs(value) > CALL_VALUE_MAX) return null;
+    return { type: 'call', endpoint, field, value: round2(value) };
 }
 
 // True when `plugin` declares an http endpoint with this id that a `call` may use.
@@ -123,7 +177,10 @@ function parseAction(raw, kind) {
     if (!raw || typeof raw !== 'object') return null;
     if (raw.type === 'open') return parseOpen(raw);
     if (raw.type === 'set' && (kind === 'tile-hint' || kind === 'tile-line')) return parseSet(raw);
+    if (raw.type === 'step' && (kind === 'tile-hint' || kind === 'tile-line')) return parseStep(raw);
+    if (raw.type === 'stepsize' && (kind === 'tile-hint' || kind === 'tile-line')) return parseStepSize(raw);
     if (raw.type === 'call' && kind === 'tile-mode') return parseCall(raw);
+    if (raw.type === 'call' && (kind === 'tile-hint' || kind === 'tile-line')) return parseCall(raw, { withValue: true });
     return null;
 }
 
@@ -190,23 +247,66 @@ function parseSurface(raw) {
         return { id, kind, label, ...(text && { text }), ...(image && { image }), ...(action && { action }) };
     }
 
+    // Drawn over the screensaver. It opens a plugin page and nothing else, so it
+    // takes an `open` action only; without one it would be a dead button.
+    if (kind === 'screensaver-button') {
+        const label = cleanText(raw.label, CAPS.label);
+        if (!label || action?.type !== 'open') return null;
+        const image = raw.image == null ? null : httpsUrl(raw.image);
+        return { id, kind, label, ...(image && { image }), action };
+    }
+
     if (kind === 'tile-mode') return parseMode(raw, id, action);
 
     if (kind === 'tile-hint' || kind === 'tile-line') {
         if (!TILES.includes(raw.tile)) return null;
-        const text = cleanText(raw.text, kind === 'tile-hint' ? CAPS.hint : CAPS.text);
+        // A `stepsize` pill is drawn by the skin from the device's stored size, so
+        // its `text` is optional and ignored.
+        const text = cleanText(raw.text, kind === 'tile-hint' ? CAPS.hint : CAPS.text)
+            || (raw.action?.type === 'stepsize' ? formatStepSize(action?.sizes?.[0] ?? 1) : '');
         if (!text) return null;
         const title = kind === 'tile-hint' ? cleanText(raw.title, CAPS.title) : '';
-        return { id, kind, tile: raw.tile, text, ...(title && { title }), ...(action && { action }) };
+        // `active` marks a pill or line as switched on (a lock, a chosen option).
+        return { id, kind, tile: raw.tile, text, ...(title && { title }),
+            ...(raw.active === true && { active: true }), ...(action && { action }) };
     }
 
     return null; // unknown kind: a newer plugin on an older skin just shows less
 }
 
 // -> { surfaces: [...] }. Never throws; a wrong version or shape gives no surfaces.
+// `live` names a websocket endpoint of the plugin that says "my answer changed":
+// any message on it makes the skin read `skin` again. Whether the plugin really
+// declares that websocket is checked against its manifest by liveEndpoint().
+function parseLive(raw) {
+    const endpoint = raw && typeof raw === 'object' ? raw.endpoint : null;
+    if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
+    return { endpoint };
+}
+
+// What a live push asks for. A body of {"what":"skin"} means only the skin answer
+// changed; anything else (including "workflow", no body, or junk) means both the
+// skin and the workflow tiles should be re-read.
+export function pushWants(data) {
+    let body = data;
+    if (typeof data === 'string') {
+        try { body = JSON.parse(data); } catch { body = null; }
+    }
+    const skinOnly = !!body && typeof body === 'object' && body.what === 'skin';
+    return { skin: true, workflow: !skinOnly };
+}
+
+// -> the endpoint id when `plugin` declares it as a websocket, else null.
+export function liveEndpoint(plugin, live) {
+    const id = live?.endpoint;
+    if (typeof id !== 'string' || RESERVED_ENDPOINTS.includes(id)) return null;
+    return Array.isArray(plugin?.api) && plugin.api.some(e => e?.type === 'websocket' && e?.id === id) ? id : null;
+}
+
 export function parseSkinAnswer(raw) {
-    const out = { surfaces: [] };
+    const out = { surfaces: [], live: null };
     if (!raw || typeof raw !== 'object' || raw.version !== SKIN_VERSION || !Array.isArray(raw.surfaces)) return out;
+    out.live = parseLive(raw.live);
 
     const seen = new Set();
     const slots = new Set(); // one header button, and one hint, line and mode per tile

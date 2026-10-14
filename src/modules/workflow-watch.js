@@ -50,3 +50,20 @@ export function changedTileValues(previous, next) {
     }
     return changed;
 }
+
+// Tiles repainted even when the baseline says they are unchanged. After a plugin
+// said it wrote the workflow, our baseline may already hold the plugin's value (a
+// tile edit or an earlier poll read it) while the tile still shows something
+// else, so a diff alone would never repaint. profileTitle is not here: a title
+// change runs the heavier loadInitialData path, which a force must not trigger.
+export const FORCED_KEYS = ['dose', 'yield', 'grind', 'brewTemp'];
+
+// What to paint: the diff, plus with `force` every present forced key of `next`.
+export function tilesToPaint(previous, next, { force = false } = {}) {
+    const changed = changedTileValues(previous, next);
+    if (!force) return changed;
+    for (const key of FORCED_KEYS) {
+        if (next?.[key] != null) changed[key] = next[key];
+    }
+    return changed;
+}
