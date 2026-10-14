@@ -10,7 +10,7 @@ import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
@@ -140,6 +140,7 @@ function buildSaverButton(plugin, surface) {
 // The skin draws its own close button and closes on a backdrop tap, because key
 // events go to the frame once it is touched and a tablet has no Escape key.
 const OVERLAY_READY_MS = 3000;
+const NUMPAD_COOLDOWN_MS = 3000; // after a cancel, long enough to tap the overlay's close button
 let overlayOpen = false;
 
 function openOverlay(plugin, action, pageUrl, onClose) {
@@ -167,6 +168,8 @@ function openOverlay(plugin, action, pageUrl, onClose) {
     dialog.appendChild(closeButton);
 
     let timer = null;
+    const frameOrigin = new URL(src, window.location.href).origin;
+    let lastNumpadCancelAt = 0;
     // `fallback`: the overlay never became ready and the page is opened instead.
     // onClose (re-dim) must not run then, or the page opens at saver brightness.
     const finish = (event, fallback = false) => {
@@ -187,12 +190,21 @@ function openOverlay(plugin, action, pageUrl, onClose) {
         if (type === 'streamline:ready') clearTimeout(timer);
         else if (type === 'streamline:close') finish();
         else if (type === 'streamline:numpad') {
-            // The page asks for the stock numpad; the answer goes back to that frame only.
-            const input = parseNumpadInput(event.data);
+            // Only the page the overlay opened (not one the frame navigated to), only
+            // right after a tap, and not again straight after a cancel: a page must not
+            // be able to hold the numpad over the close button.
+            if (event.origin !== frameOrigin) return;
             const reply = value => frame.contentWindow?.postMessage(
-                { type: 'streamline:numpad-result', id: ['string', 'number'].includes(typeof event.data?.id) ? event.data.id : null, value }, event.origin === 'null' ? '*' : event.origin);
-            if (!input) { reply(null); return; }
-            openPluginNumpad(plugin, 'overlay', input).then(reply);
+                { type: 'streamline:numpad-result', id: ['string', 'number'].includes(typeof event.data?.id) ? event.data.id : null, value }, frameOrigin);
+            const input = parseNumpadInput(event.data);
+            if (!input || !navigator.userActivation?.isActive || Date.now() - lastNumpadCancelAt < NUMPAD_COOLDOWN_MS) {
+                reply(null);
+                return;
+            }
+            openPluginNumpad(plugin, 'overlay', input).then(value => {
+                if (value === null) lastNumpadCancelAt = Date.now();
+                reply(value);
+            });
         }
     };
     window.addEventListener('message', onMessage);
@@ -230,7 +242,7 @@ async function openPluginNumpad(plugin, key, input) {
             let settled = false;
             const done = value => { if (!settled) { settled = true; resolve(value); } };
             const mock = { value: String(input.value), setAttribute() {}, getAttribute() { return null; }, dispatchEvent() {} };
-            module.openModal(mock, {
+            Promise.resolve(module.openModal(mock, {
                 fieldType: `plugin-input-${String(plugin.id)}:${key}`.replace(/[^A-Za-z0-9_.:-]/g, '_'),
                 config: {
                     title: input.title || plugin.name || 'Enter value',
@@ -242,9 +254,9 @@ async function openPluginNumpad(plugin, key, input) {
                 },
                 onConfirm: raw => {
                     const n = parseFloat(raw);
-                    done(Number.isFinite(n) ? clampInput(input, n) : null);
+                    done(Number.isFinite(n) ? fitNumpadValue(input, n) : null);
                 },
-            });
+            })).catch(e => { logger.warn('Plugin numpad did not open:', e); done(null); });
             // Cancel and Escape close the dialog without a confirm.
             const dialog = document.getElementById('numpad-modal-overlay');
             if (dialog) dialog.addEventListener('close', () => setTimeout(() => done(null), 0), { once: true });
@@ -256,8 +268,6 @@ async function openPluginNumpad(plugin, key, input) {
         pluginNumpadOpen = false;
     }
 }
-
-const clampInput = (input, n) => Math.round(Math.min(input.max, Math.max(input.min, n)) * 10 ** input.decimals) / 10 ** input.decimals;
 
 function bindAction(el, plugin, action, surface) {
     if (action?.type === 'call' && action.input) {

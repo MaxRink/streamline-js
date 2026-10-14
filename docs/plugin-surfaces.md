@@ -290,7 +290,10 @@ An invalid action drops the action only; the surface still shows, inert.
     decimals: 1, value: 2.5 }` and the skin opens its own full-screen numpad over the overlay (see `input` under
     `call` for the fields and limits). The answer comes back to that frame as
     `{ type: 'streamline:numpad-result', id: 'r1', value: 2.5 }`, or `value: null` when the user cancels, another
-    numpad is already open or the request is invalid. `id` (a string or number) is echoed so you can match answers.
+    plugin numpad is already open or the request is invalid. `id` (a string or number) is echoed so you can match
+    answers. A request is answered only while the page the overlay opened is in the frame, only right after a tap
+    (browser user activation), and not within 3 seconds of a cancel, so a page cannot keep the numpad over the
+    overlay's close button; send the request from a tap handler and do not re-ask at once after `null`.
 - **`step`**: `{ "type": "step", "field": "targetDoseWeight", "by": -0.5 }` on tile kinds only. Moves the
   tile's current value by `by` (a non-zero number, at most 100 either way) and goes through the same setter as
   `set`, so the result is clamped to the same range and the profile remembers it. `field` is `targetDoseWeight`,
@@ -333,8 +336,11 @@ An invalid action drops the action only; the surface still shows, inert.
   `{ "type": "call", "endpoint": "ratio", "field": "ratio", "input": { "title": "Ratio", "unit": "x", "min": 1, "max": 5, "decimals": 1, "value": 2.5 } }`.
   `min` and `max` are required (`min` below `max`, each at most 99999 in size); `decimals` is 0 to 2 (default 0);
   `value` is the number the numpad starts on (default `min`; clamped); `title` (24) and `unit` (6) are optional text.
-  The typed number is clamped and rounded to those limits, a cancel sends nothing, and the numpad remembers the
-  numbers entered for this surface as its previous-value pills. A bad `input` drops the action. A `tile-mode` has its
+  The typed number is rounded to `decimals` and then held inside `min` to `max` on that grid (a `max` of 1.25 with one
+  decimal allows 1.2). A cancel sends nothing, and the numpad remembers the numbers entered for this surface as its
+  previous-value pills. A bad `input` drops the action: that includes a range with no number on the grid, and a
+  negative `min` with `decimals` above 0 (the numpad's sign key exists only for whole numbers). The numpad takes at
+  most five characters. A `tile-mode` has its
   own numpad already and takes no `input`. The skin sends `POST /api/v1/plugins/{id}/{endpoint}` with the JSON body `{ "<field>": <number> }`. `endpoint`
   must be an http endpoint your manifest declares and is never one of `skin`, `settings`, `enable`, `disable`,
   `source`, `update` or `install` (Decaid serves those routes itself, so they never reach your endpoint).
@@ -373,8 +379,9 @@ grind and the profile temperature that `set` itself writes (see the `brewTempera
   for example `context.extras.lockRatio`.
 - The plugin sees a changed dose through its `events.workflow` listener, writes `yield = dose x ratio` with
   `PUT /workflow` and `emit`s. A yield that changes with the same dose is the user choosing a new ratio, so adopt it.
-- Tapping the ratio to enter a new one is a `ratio-action`: `call` to cycle through ratios, or `open` with
-  `presentation: "overlay"` to draw a numpad (a pill cannot take numeric input).
+- Tapping the ratio to enter a new one is a `ratio-action`: a `call` with `input` opens the skin's own numpad and
+  sends the typed ratio, a `call` with a fixed `value` cycles through ratios, and `open` with
+  `presentation: "overlay"` draws a page of the plugin's own.
 - A scale weight under Dose is a `tile-line` on `dose` whose `call` or `set` uses the number. A plugin reads
   `/ws/v1/scale/snapshot` itself (`network.websocket` permission; checked against a real Decaid) and pushes
   `{"what":"skin"}` when the weight moves. Hiding it during a shot needs the machine state from Decaid's

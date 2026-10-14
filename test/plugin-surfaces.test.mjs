@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNumpadInput, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+import { parseNumpadInput, fitNumpadValue, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
     nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
@@ -409,6 +409,14 @@ test('numpad input: a call asks for the number with the stock numpad; limits are
         { min: 0, max: 1, decimals: 3 }, { min: 0, max: 1, decimals: 0.5 }, { min: 'a', max: 1 }]) {
         assert.equal(parseNumpadInput(bad), null, JSON.stringify(bad));
     }
+    // rounding never leaves the range: 1.25 max with one decimal allows 1.2, and a range no grid number fits is dropped
+    assert.equal(fitNumpadValue({ min: 0, max: 1.25, decimals: 1 }, 9), 1.2);
+    assert.equal(parseNumpadInput({ min: 0, max: 1.25, decimals: 1, value: 1.25 }).value, 1.2);
+    assert.equal(parseNumpadInput({ min: 0.05, max: 1 }).value, 1);
+    assert.equal(parseNumpadInput({ min: 0.4, max: 0.6 }), null);
+    // the numpad's sign key needs whole numbers, so a negative range with decimals is dropped
+    assert.equal(parseNumpadInput({ min: -5, max: 5, decimals: 1 }), null);
+    assert.equal(parseNumpadInput({ min: -5, max: 5 }).value, -5);
     // a bad input drops the action, and the fixed-value form still works
     const [bad] = ok([{ id: 'n', kind: 'tile-hint', tile: 'dose', text: 'Set', action: call({ min: 3, max: 1 }) }]);
     assert.equal(bad.action, undefined);
