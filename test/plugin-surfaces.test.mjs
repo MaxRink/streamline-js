@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNumpadInput, fitNumpadValue, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+import { parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
     nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
@@ -440,6 +440,35 @@ test('size: medium and large are kept on hints, lines and modes; anything else i
     assert.equal('size' in mode('x'), false);
     // buttons take no size
     assert.equal('size' in ok([{ id: 'b', kind: 'header-button', label: 'B', size: 'large' }])[0], false);
+});
+
+test('keepRatio: only on a Drink hint or line, a sane ratio; yieldForRatio stays in range', () => {
+    const on = (tile, keepRatio, kind = 'tile-line') => ok([{ id: 'k', kind, tile, text: 'Lock', keepRatio }])[0];
+    assert.equal(on('drink', 2.5).keepRatio, 2.5);
+    assert.equal(on('drink', '2.456', 'tile-hint').keepRatio, 2.46);
+    assert.equal('keepRatio' in on('dose', 2.5), false);
+    assert.equal('keepRatio' in on('grind', 2.5, 'tile-hint'), false);
+    for (const bad of [0, -2, 0.09, 50.1, 'x', null, undefined, NaN, {}]) assert.equal('keepRatio' in on('drink', bad), false, String(bad));
+    assert.equal(yieldForRatio(18, 2.5), 45);
+    assert.equal(yieldForRatio(18.3, 2.5), 45.8); // a tenth of a gram
+    assert.equal(yieldForRatio(0, 2.5), null);
+    assert.equal(yieldForRatio(30, 50), 1500);
+    assert.equal(yieldForRatio(41, 50), null); // 2050 is above the largest yield
+    assert.equal(yieldForRatio(NaN, 2), null);
+});
+
+test('keepRatioMoves: yield or dose are kept with keepRatio; both is the default; doseForRatio stays in range', () => {
+    const k = moves => ok([{ id: 'k', kind: 'tile-line', tile: 'drink', text: 'L', keepRatio: 2, keepRatioMoves: moves }])[0];
+    assert.equal(k('dose').keepRatioMoves, 'dose');
+    assert.equal(k('yield').keepRatioMoves, 'yield');
+    for (const v of ['both', 'x', 3, null, undefined]) assert.equal('keepRatioMoves' in k(v), false, String(v));
+    // no keepRatio, no moves
+    assert.equal('keepRatioMoves' in ok([{ id: 'k', kind: 'tile-line', tile: 'drink', text: 'L', keepRatioMoves: 'dose' }])[0], false);
+    assert.equal(doseForRatio(45, 2.5), 18);
+    assert.equal(doseForRatio(46, 2.5), 18.4);
+    assert.equal(doseForRatio(90, 2), null); // 45 g is above the largest dose
+    assert.equal(doseForRatio(1, 5), null);  // 0.2 g is below the smallest
+    assert.equal(doseForRatio(NaN, 2), null);
 });
 
 test('ratio-action: open or call only, one per answer, drawn by the skin', () => {

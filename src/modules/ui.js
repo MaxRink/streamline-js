@@ -24,7 +24,7 @@ import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
 import { stepValue, formatRatio } from './value-format.js';
 import { shiftedTemperatures } from './brew-temp.js';
-import { resolveStepSize } from './plugin-surfaces.js';
+import { resolveStepSize, yieldForRatio, doseForRatio } from './plugin-surfaces.js';
 import { clampSetValue } from './plugin-surfaces.js';
 
 
@@ -217,16 +217,50 @@ export function flashPlusMinusButton(button) {
     }, 280);
 }
 
+// Plugin `keepRatio` (a Drink hint or line that says so): a new dose carries the
+// yield with it. Set by the surface renderer, null when no such surface is shown.
+let keepRatio = null;
+let keepRatioMoves = 'both'; // 'both' | 'yield' | 'dose': which tile a change moves
+export function setDrawnKeepRatio(ratio, moves = 'both') { keepRatio = ratio || null; keepRatioMoves = moves; }
+const ratioMovesYield = () => keepRatio && keepRatioMoves !== 'dose';
+const ratioMovesDose = () => keepRatio && keepRatioMoves !== 'yield';
+
 function updateDoseValue(type, newValue) {
     const doseInEl = document.getElementById('dose-in-value');
     const drinkOutEl = document.getElementById('drink-out-value');
     const currentDoseIn = doseInEl ? parseFloat(doseInEl.textContent) : 0;
     const currentDoseOut = drinkOutEl ? parseFloat(drinkOutEl.textContent) : 0;
 
-    const targetYield = type === 'out' ? parseFloat(newValue) : currentDoseOut;
+    let targetYield = type === 'out' ? parseFloat(newValue) : currentDoseOut;
+    // The yield is worked out here, not by the plugin afterwards, so dose and yield
+    // reach Decaid together and the ratio on screen never shows the new dose over the
+    // old yield. The callers repaint the ratio label from what is on screen.
+    let ratioYield = null;
+    let targetDose = type === 'in' ? parseFloat(newValue) : currentDoseIn;
+    let ratioDose = null;
+    if (type === 'in' && ratioMovesYield()) {
+        ratioYield = yieldForRatio(parseFloat(newValue), keepRatio);
+        if (ratioYield !== null) {
+            targetYield = ratioYield;
+            updateDrinkOut(ratioYield);
+        }
+    } else if (type === 'out' && ratioMovesDose()) {
+        ratioDose = doseForRatio(parseFloat(newValue), keepRatio);
+        if (ratioDose !== null) {
+            targetDose = ratioDose;
+            updateDoseInDisplay(ratioDose);
+        }
+    }
+    // Paint both tiles from the pair that is about to be sent. A dose tap and a drink
+    // tap inside one debounce each fire later with their own number; without this the
+    // later write left the other tile showing the earlier tap's value.
+    if (ratioYield !== null || ratioDose !== null) {
+        updateDoseInDisplay(targetDose);
+        updateDrinkOut(targetYield);
+    }
     const payload = {
         context: {
-            targetDoseWeight: type === 'in' ? parseFloat(newValue) : currentDoseIn,
+            targetDoseWeight: targetDose,
             targetYield
         }
     };
@@ -240,9 +274,11 @@ function updateDoseValue(type, newValue) {
     return updateWorkflow(payload).then(() => {
         logger.debug(`Dose ${type} value updated via workflow:`, newValue);
         if (type === 'in') {
-            window.app?.saveContextToActiveProfile?.({ targetDoseWeight: parseFloat(newValue) });
+            window.app?.saveContextToActiveProfile?.({ targetDoseWeight: parseFloat(newValue),
+                ...(ratioYield !== null && { targetYield: ratioYield }) });
         } else {
-            window.app?.saveContextToActiveProfile?.({ targetYield: parseFloat(newValue) });
+            window.app?.saveContextToActiveProfile?.({ targetYield: parseFloat(newValue),
+                ...(ratioDose !== null && { targetDoseWeight: ratioDose }) });
         }
     }).catch(error => {
         logger.error(`Failed to update dose ${type} value via workflow:`, error);
@@ -358,13 +394,15 @@ function runPluginSet(field, value) {
     markTileInteraction();
     if (field === 'targetDoseWeight') {
         const done = updateDoseValue('in', n);
-        updateDrinkOutPresetsDisplay(n, drink);
+        // A Drink keepRatio may have moved the yield with it.
+        updateDrinkOutPresetsDisplay(n, parseFloat(document.getElementById('drink-out-value')?.textContent) || drink);
         flashElement(document.getElementById('dose-in-value'));
         return { ok: true, done };
     }
     if (field === 'targetYield') {
         const done = updateDoseValue('out', n);
-        updateDrinkOutPresetsDisplay(dose, n);
+        // A Drink keepRatio may have moved the dose with it.
+        updateDrinkOutPresetsDisplay(parseFloat(document.getElementById('dose-in-value')?.textContent) || dose, n);
         flashElement(document.getElementById('drink-out-value'));
         return { ok: true, done };
     }
@@ -2658,7 +2696,12 @@ export function initUI(callbacks) {
         });
     }
 
-    setupValueAdjuster('drink-out-minus', 'drink-out-plus', 'drink-out-value', () => activeStepSize('targetYield'), 0, (val) => `${val}g`, (val) => { updateDoseValue('out', val); updateDrinkRatio(); }, syncDrinkOutPresets);
+    setupValueAdjuster('drink-out-minus', 'drink-out-plus', 'drink-out-value', () => activeStepSize('targetYield'), 0, (val) => `${val}g`, (val) => { updateDoseValue('out', val); updateDrinkRatio(); }, (fmt) => {
+        // With the ratio locked both ways each tap moves the dose on screen at once too.
+        const ratioDose = ratioMovesDose() ? doseForRatio(parseFloat(fmt), keepRatio) : null;
+        if (ratioDose !== null) { updateDoseInDisplay(ratioDose); updateDrinkRatio(); }
+        syncDrinkOutPresets(fmt);
+    });
     {
         const tempMinusBtn = document.getElementById('temp-minus');
         const tempPlusBtn = document.getElementById('temp-plus');
@@ -2667,7 +2710,12 @@ export function initUI(callbacks) {
             tempPlusBtn.addEventListener('click', incrementBrewTemp);
         }
     }
-    setupValueAdjuster('dose-in-minus', 'dose-in-plus', 'dose-in-value', () => activeStepSize('targetDoseWeight'), 0, (val) => `${val}g`, (val) => { updateDoseValue('in', val); updateDrinkRatio(); }, syncDrinkOutPresets);
+    setupValueAdjuster('dose-in-minus', 'dose-in-plus', 'dose-in-value', () => activeStepSize('targetDoseWeight'), 0, (val) => `${val}g`, (val) => { updateDoseValue('in', val); updateDrinkRatio(); }, (fmt) => {
+        // Each tap moves the yield on screen at once (the write itself waits for the debounce).
+        const ratioYield = ratioMovesYield() ? yieldForRatio(parseFloat(fmt), keepRatio) : null;
+        if (ratioYield !== null) { updateDrinkOut(ratioYield); updateDrinkRatio(); }
+        syncDrinkOutPresets(fmt);
+    });
     // A plugin `stepsize` on grind overrides the built-in whole-number/0.1 rule.
     const grindStepNow = () => drawnStepSizes.grinderSetting ? activeStepSize('grinderSetting') : grindStep;
     setupValueAdjuster('grind-minus', 'grind-plus', 'grind-value', grindStepNow, 0, (val) => Number.isInteger(grindStepNow()) ? String(Math.round(val)) : val.toFixed(1), updateGrindValue);

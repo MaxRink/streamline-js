@@ -15,7 +15,7 @@ import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-m
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
 import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
-    getStoredStepSize, storeStepSize, setDrawnStepSizes } from './ui.js';
+    getStoredStepSize, storeStepSize, setDrawnStepSizes, setDrawnKeepRatio } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -664,6 +664,8 @@ function render(rawEntries) {
     const container = document.getElementById('header-right-controls');
     const anchor = container?.firstChild;
     const drawnSizes = {};
+    let drawnKeepRatio = null; // from the first drawn Drink surface that asks
+    let drawnKeepMoves = 'both';
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
     let headerButtons = 0;
     let saverButtons = 0;
@@ -713,9 +715,12 @@ function render(rawEntries) {
             usedSlots.add(slot);
             const a = surface.action;
             if (a?.type === 'stepsize' && !drawnSizes[a.field]) drawnSizes[a.field] = a.sizes;
+            // A plugin mode on Drink owns the yield, so the ratio is not held for it.
+            if (surface.keepRatio && !drawnKeepRatio && !modeTiles.has('drink')) { drawnKeepRatio = surface.keepRatio; drawnKeepMoves = surface.keepRatioMoves || 'both'; }
         }
     }
     setDrawnStepSizes(drawnSizes);
+    setDrawnKeepRatio(drawnKeepRatio, drawnKeepMoves);
 
     if (!mainHidden) {
         for (const tile of modeTiles) {
