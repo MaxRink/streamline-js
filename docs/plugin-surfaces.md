@@ -161,12 +161,37 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
 | `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
-| `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active`, `size` |
-| `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active`, `size` |
+| `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active`, `size`, `keepRatio`, `keepRatioMoves` |
+| `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active`, `size`, `keepRatio`, `keepRatioMoves` |
 | `tile-mode` | an option in the toggle under a tile's label | see [Tile modes](#tile-modes) |
 
 `tile` is one of `dose`, `drink`, `grind`, `temperature`; a `tile-mode` can also be on `steam`, `hotwater` or `flush`. Lengths are characters. Text is shown with
 `textContent`, never as HTML.
+
+## Keep ratio
+
+A Drink `tile-hint` or `tile-line` may carry `keepRatio`, a number from 0.1 to 50 (rounded to hundredths):
+`{ "id": "lock", "kind": "tile-line", "tile": "drink", "text": "Ratio 1:2.5", "active": true, "keepRatio": 2.5 }`.
+While that surface is drawn, the skin holds the ratio itself: a new dose moves the yield to dose x ratio (to a tenth
+of a gram) in the same write, so dose, yield and `profile.target_weight` reach Decaid together, and the Drink value,
+the Dose value and the `(1:x)` label change at once. The ratio never shows the new dose over the old yield. This
+covers the dose `-` / `+` (each tap moves the other tile on screen, the write follows after the pause), the numpad,
+the typed value and a plugin `set` or `step`. It does not touch dose and yield presets (they name both numbers) or a
+tile a plugin `tile-mode` owns. If dose x ratio is outside 1 to 2000 g the dose goes alone.
+
+By default the ratio holds whichever number the user changes: a dose moves the yield and a yield moves the dose
+(yield / ratio, to a tenth of a gram, within 1 to 30 g), so a hand-edited yield no longer changes the ratio. The
+user changes the ratio through a `ratio-action`, and the plugin sends the new `keepRatio`. `keepRatioMoves` narrows
+this: `"yield"` moves only the yield when the dose changes, `"dose"` only the dose when the yield changes; `"both"`
+is the default and is ignored without `keepRatio`. For the yield side it covers the Drink `-` / `+`, the numpad,
+the typed value and a plugin `set` or `step`. A dose that would leave 1 to 30 g is not applied and the yield goes
+alone.
+
+The plugin owns the switch: send `keepRatio` while its lock is on and leave it out when it is off (the next `skin`
+read, which the skin does after its own writes and on a `live` push, takes effect). With `keepRatioMoves: "yield"`, a yield changed by hand keeps
+the old behaviour: the plugin sees it through `events.workflow` and puts the new ratio in its next answer. Only the
+first drawn Drink surface with `keepRatio` counts, and a Drink `tile-line` is not drawn while a plugin `tile-mode`
+is on Drink.
 
 ## Text size
 
@@ -395,9 +420,10 @@ grind and the profile temperature that `set` itself writes (see the `brewTempera
 
 ## Notes on ratio keeping
 
-- Keeping a ratio while the dose changes is only possible as a dose `tile-mode` (the plugin owns the value and
-  can write yield), or as a pill with `call` + `active` + `live` that tells the plugin to hold the ratio and
-  shows its state. Put the pill under the Drink label as a `tile-line`, or under the value as a `tile-hint`; a
+- Keeping a ratio while the dose changes: put `keepRatio` on the Drink hint or line that shows the lock (see Keep
+  ratio above); the skin then moves the yield with the dose itself. A dose `tile-mode` (the plugin owns the value
+  and can write yield) also works. Writing the yield only afterwards, from `events.workflow`, leaves the ratio
+  wrong on screen for a moment and does not update `profile.target_weight`. Put the pill under the Drink label as a `tile-line`, or under the value as a `tile-hint`; a
   `tile-mode` on Drink takes the label slot, so use the hint then. Store the switch where other apps can see it,
   for example `context.extras.lockRatio`.
 - The plugin sees a changed dose through its `events.workflow` listener, writes `yield = dose x ratio` with

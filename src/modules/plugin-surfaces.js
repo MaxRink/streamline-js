@@ -41,6 +41,31 @@ const STEP_MAX = 100;
 // Brew temperature depends on the unit, so it is not steppable.
 export const STEPSIZE_FIELDS = ['targetDoseWeight', 'targetYield', 'grinderSetting'];
 const STEPSIZE_MAX_SIZES = 4;
+
+// `keepRatio` on a Drink hint or line: while the surface is shown, a new dose also
+// moves the yield to dose x ratio, in the same write. The plugin owns the switch (it
+// sends the field while its lock is on) and the number.
+export const KEEP_RATIO_LIMITS = { min: 0.1, max: 50 };
+function parseKeepRatio(value) {
+    const n = toNumber(value);
+    return n !== null && n >= KEEP_RATIO_LIMITS.min && n <= KEEP_RATIO_LIMITS.max ? Math.round(n * 100) / 100 : null;
+}
+// Which tile a change moves: each moves the other ("both", the default, so the ratio holds
+// whichever the user changes), only a dose moves the yield ("yield"), or only a yield moves
+// the dose ("dose").
+export const KEEP_RATIO_MOVES = ['both', 'yield', 'dose'];
+// The dose for `yieldWeight` at `ratio`, to a tenth of a gram; null when it would leave
+// the range a dose may have (the yield then goes alone).
+export function doseForRatio(yieldWeight, ratio) {
+    const d = Math.round(yieldWeight / ratio * 10) / 10;
+    return Number.isFinite(d) && d >= SET_LIMITS.targetDoseWeight.min && d <= SET_LIMITS.targetDoseWeight.max ? d : null;
+}
+// The yield for `dose` at `ratio`, to a tenth of a gram; null when it would leave
+// the range a yield may have (the dose then goes alone, as without a lock).
+export function yieldForRatio(dose, ratio) {
+    const y = Math.round(dose * ratio * 10) / 10;
+    return Number.isFinite(y) && y >= 1 && y <= 2000 ? y : null;
+}
 const STEPSIZE_MAX = 10;
 
 // `tile-mode` adds an option to the toggle under a left-column tile's label.
@@ -356,6 +381,8 @@ function parseSurface(raw) {
         // `active` marks a pill or line as switched on (a lock, a chosen option).
         return { id, kind, tile: raw.tile, text, ...(title && { title }),
             ...(parseSize(raw.size) && { size: parseSize(raw.size) }),
+            ...(raw.tile === 'drink' && parseKeepRatio(raw.keepRatio) && { keepRatio: parseKeepRatio(raw.keepRatio),
+                ...(KEEP_RATIO_MOVES.includes(raw.keepRatioMoves) && raw.keepRatioMoves !== 'both' && { keepRatioMoves: raw.keepRatioMoves }) }),
             ...(raw.active === true && { active: true }), ...(action && { action }) };
     }
 
