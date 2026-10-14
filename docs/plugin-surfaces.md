@@ -40,7 +40,7 @@ that does not validate is dropped, and the rest still shows.
   re-read the workflow. Any other body (`{"what":"workflow"}`, no body, text that is not JSON) re-reads both.
   A plugin that only wants to push (for example decent-sync) declares an http `skin` endpoint and a websocket
   endpoint, with `api` and `emit` in `permissions`, and answers `{"version":1,"surfaces":[],"live":{"endpoint":"changed"}}`;
-  empty `surfaces` with `live` is valid. The same push also makes the DYE strip re-read its data.
+  empty `surfaces` with `live` is valid. A push that re-reads the workflow (anything but `{"what":"skin"}`) also makes the DYE strip re-read its data.
   Messages should be sent when something changed, not on a timer faster than a second. Without `live`, or if the
   socket cannot open, the minute poll above still applies.
 - Tile surfaces are placed from the label's measured size, so they are only drawn while the dashboard is visible;

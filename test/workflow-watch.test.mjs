@@ -107,22 +107,26 @@ test('a profile switch shows up as a title change', () => {
     const match = source.match(/async function refreshWorkflowTiles\(\) \{[\s\S]*?\r?\n\}/);
     if (!match) throw new Error('refreshWorkflowTiles not found in app.js');
 
-    const build = ({ baseline, workflow, msSinceEdit = 60_000, subPage = false } = {}) => {
-        const calls = { painted: [], reloads: 0, fetches: 0 };
+    const build = ({ baseline, workflow, msSinceEdit = 60_000, subPage = false, force = false, editAfterRead = false, getWorkflowImpl } = {}) => {
+        const calls = { painted: [], reloads: 0, fetches: 0, retries: 0 };
+        const state = { force };
+        let sinceEdit = msSinceEdit;
         const refresh = new Function(
             'isSubPage', 'ui', 'getWorkflow', 'logger', 'loadInitialData',
             'workflowTileValues', 'tilesToPaint',
             'WORKFLOW_REFRESH_MIN_GAP_MS', 'WORKFLOW_EDIT_GUARD_MS', 'WORKFLOW_TILE_PAINTERS',
-            'seed', 'calls',
+            'refreshWorkflowTilesSoon', 'seed', 'calls', 'state',
             `let lastWorkflowTiles = seed;
              let lastWorkflowRefreshAt = 0;
-             let pendingForcedRefresh = false;
+             let pendingForcedRefresh = state.force;
+             state.read = () => pendingForcedRefresh;
              ${match[0]}
              return refreshWorkflowTiles;`
         )(
             () => subPage,
-            { msSinceTileInteraction: () => msSinceEdit },
-            async () => { calls.fetches++; return workflow; },
+            { msSinceTileInteraction: () => sinceEdit },
+            getWorkflowImpl ? async () => { calls.fetches++; return getWorkflowImpl(); }
+                : async () => { calls.fetches++; if (editAfterRead) sinceEdit = 100; return workflow; },
             { info() {}, warn() {} },
             async () => { calls.reloads++; },
             workflowTileValues,
@@ -130,10 +134,12 @@ test('a profile switch shows up as a title change', () => {
             2000,
             5000,
             new Proxy({}, { get: (_t, key) => (value) => calls.painted.push([key, value]) }),
+            () => { calls.retries++; },
             baseline,
             calls,
+            state,
         );
-        return { refresh, calls };
+        return { refresh, calls, state };
     };
 
     const base = () => ({
@@ -199,6 +205,52 @@ test('a profile switch shows up as a title change', () => {
         const { refresh, calls } = build({ baseline: workflowTileValues(base()), workflow: base(), subPage: true });
         await refresh();
         assert.equal(calls.fetches, 0);
+    });
+
+    test('a forced refresh survives every skipped read and clears after an applied one', async () => {
+        const wf = base();
+        const baseline = workflowTileValues(wf);
+        for (const opts of [{ subPage: true }, { msSinceEdit: 100 }]) {
+            const { refresh, state } = build({ baseline, workflow: wf, force: true, ...opts });
+            await refresh();
+            assert.equal(state.read(), true, JSON.stringify(opts));
+        }
+        // time gap: a second refresh right after the first is skipped
+        const gap = build({ baseline, workflow: wf, force: true });
+        await gap.refresh();
+        assert.equal(gap.state.read(), false);
+        gap.state.force = true;
+        const { calls } = gap;
+        const painted = calls.painted.length;
+        await gap.refresh();
+        assert.equal(calls.painted.length, painted);
+        assert.equal(calls.fetches, 1);
+
+        // failed read keeps the force
+        const failed = build({ baseline, workflow: wf, force: true, getWorkflowImpl: async () => { throw new Error('x'); } });
+        await failed.refresh();
+        assert.equal(failed.state.read(), true);
+    });
+
+    test('an edit during the read drops it, keeps the force and the baseline, and retries', async () => {
+        const moved = base();
+        moved.hotWaterData.volume = 100;
+        const { refresh, calls, state } = build({
+            baseline: workflowTileValues(base()), workflow: moved, force: true, editAfterRead: true,
+        });
+        await refresh();
+        assert.equal(calls.fetches, 1);
+        assert.deepEqual(calls.painted, []);
+        assert.equal(state.read(), true);
+        assert.equal(calls.retries, 1);
+    });
+
+    test('a forced read repaints the four tiles then clears the flag', async () => {
+        const wf = base();
+        const { refresh, calls, state } = build({ baseline: workflowTileValues(wf), workflow: wf, force: true });
+        await refresh();
+        assert.deepEqual(calls.painted.map(p => p[0]).sort(), ['brewTemp', 'dose', 'grind', 'yield']);
+        assert.equal(state.read(), false);
     });
 
     test('an unchanged workflow paints nothing', async () => {
