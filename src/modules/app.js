@@ -1035,6 +1035,7 @@ function handleScaleData(data) {
     const scaleInfoContainer = document.getElementById('scale-info-container');
     const currentWeight = data.weight;
     latestScaleWeight = currentWeight;
+    api.setLatestScaleReading(currentWeight);
     latestScaleWeightFlow = data.weightFlow ?? null; // server-smoothed flow for the chart's weight trace
     const batteryValue = data.batteryLevel ?? data.battery;
     if (batteryValue !== null && batteryValue !== undefined) {

@@ -6,11 +6,11 @@
 // A failed or slow read hides that plugin's surfaces and never blocks the
 // dashboard. With no plugin answering `skin` nothing is drawn.
 
-import { getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
+import { getFreshScaleReading, getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, scaleDoseWeight, fitOverlaySize } from './plugin-surfaces.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
@@ -205,6 +205,20 @@ function openOverlay(plugin, action, pageUrl, onClose) {
         const type = event.data?.type;
         if (type === 'streamline:ready') clearTimeout(timer);
         else if (type === 'streamline:close') finish();
+        else if (type === 'streamline:size') {
+            // The page says how big its content is: the dialog fits it, so a small form is
+            // a small dialog over the dashboard. The page draws its own card; the dialog is
+            // transparent from here on. Sizes are held to the default dialog's limits.
+            if (event.origin !== frameOrigin) return;
+            const fitted = fitOverlaySize(event.data?.width, event.data?.height, window.innerWidth, window.innerHeight);
+            if (!fitted) return;
+            dialog.style.width = `${fitted.width}px`;
+            dialog.style.height = `${fitted.height}px`;
+            dialog.style.background = 'transparent';
+            // An iframe whose colour scheme differs from the page around it is painted opaque.
+            frame.style.colorScheme = 'normal';
+            frame.style.background = 'transparent';
+        }
         else if (type === 'streamline:numpad') {
             // Only the page the overlay opened (not one the frame navigated to), only
             // right after a tap, and not again straight after a cancel: a page must not
@@ -285,6 +299,15 @@ async function openPluginNumpad(plugin, key, input) {
     }
 }
 
+// The dose a "use the scale" tap would set: the scale's fresh reading, only when it is a
+// real dose and the machine is not making anything (a cup on the scale during a shot or a
+// flush is not a dose). null refuses the tap.
+const NOT_FOR_DOSE_STATES = ['espresso', 'steam', 'steamRinse', 'hotWater', 'flush'];
+function scaleDoseForTap() {
+    if (NOT_FOR_DOSE_STATES.includes(currentMachineState)) return null;
+    return scaleDoseWeight(getFreshScaleReading());
+}
+
 function bindAction(el, plugin, action, surface) {
     if (action?.type === 'call' && action.input) {
         // The user types the number: the skin's own numpad, then the same call.
@@ -331,7 +354,9 @@ function bindAction(el, plugin, action, surface) {
         });
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
-            applyPluginSetAsync(action.field, action.value).then(applied => {
+            const value = action.from === 'scale' ? scaleDoseForTap() : action.value;
+            if (value === null) { logger.warn('Plugin set from the scale refused:', surface.id); return; }
+            applyPluginSetAsync(action.field, value).then(applied => {
                 if (!applied) logger.warn('Plugin set not applied:', action.field);
                 else refreshPluginSurfaces();
             });

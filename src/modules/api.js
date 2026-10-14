@@ -1451,6 +1451,15 @@ export async function getWorkflow() {
 let workflowWritesInFlight = 0;
 export function hasWorkflowWriteInFlight() { return workflowWritesInFlight > 0; }
 
+// The scale's latest weight, kept here so a plugin's "use the scale as the dose" tap can
+// read it without reaching into app.js. Stale after a few seconds: a scale that stopped
+// sending (switched off, out of range) must not hand out its last number.
+let scaleReading = { weight: null, at: 0 };
+export function setLatestScaleReading(weight) { scaleReading = { weight, at: Date.now() }; }
+export function getFreshScaleReading(maxAgeMs = 3000) {
+    return scaleReading.weight !== null && Date.now() - scaleReading.at <= maxAgeMs ? scaleReading.weight : null;
+}
+
 export async function updateWorkflow(data) {
     workflowWritesInFlight += 1;
     try {

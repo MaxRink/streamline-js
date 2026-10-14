@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+import { scaleDoseWeight, fitOverlaySize, parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
     nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
@@ -469,6 +469,33 @@ test('keepRatioMoves: yield or dose are kept with keepRatio; both is the default
     assert.equal(doseForRatio(90, 2), null); // 45 g is above the largest dose
     assert.equal(doseForRatio(1, 5), null);  // 0.2 g is below the smallest
     assert.equal(doseForRatio(NaN, 2), null);
+});
+
+test('set from the scale: dose only, no value; the reading must be a real dose', () => {
+    const set = extra => ok([{ id: 's', kind: 'tile-hint', tile: 'dose', text: 'Use scale', action: { type: 'set', ...extra } }])[0];
+    assert.deepEqual(set({ field: 'targetDoseWeight', from: 'scale' }).action, { type: 'set', field: 'targetDoseWeight', from: 'scale' });
+    // a value alongside is not kept; other fields and sources drop the action
+    assert.equal('value' in set({ field: 'targetDoseWeight', from: 'scale', value: 99 }).action, false);
+    for (const bad of [{ field: 'targetYield', from: 'scale' }, { field: 'grinderSetting', from: 'scale' },
+        { field: 'targetDoseWeight', from: 'plugin' }, { field: 'targetDoseWeight', from: null }, { field: 'targetDoseWeight', from: 5 }]) {
+        assert.equal(set(bad).action, undefined, JSON.stringify(bad));
+    }
+    assert.equal(scaleDoseWeight(18.34), 18.3);
+    assert.equal(scaleDoseWeight(30), 30);
+    assert.equal(scaleDoseWeight(0.96), 1); // rounds into range
+    for (const bad of [0, 0.9, 30.1, 200, -3, NaN, Infinity, null, undefined, '18']) assert.equal(scaleDoseWeight(bad), null, String(bad));
+});
+
+test('overlay size: held to the default dialog and the screen, junk ignored', () => {
+    assert.deepEqual(fitOverlaySize(420, 300, 1920, 1200), { width: 420, height: 300 });
+    assert.deepEqual(fitOverlaySize(5000, 5000, 1920, 1200), { width: 1100, height: 760 });
+    assert.deepEqual(fitOverlaySize(5000, 5000, 800, 600), { width: 752, height: 540 }); // 94% x 90% of the screen
+    assert.deepEqual(fitOverlaySize(10, 10, 1920, 1200), { width: 280, height: 160 });
+    assert.deepEqual(fitOverlaySize(419.6, 300.4, 1920, 1200), { width: 420, height: 300 });
+    assert.deepEqual(fitOverlaySize(400, 300, 200, 100), { width: 280, height: 160 }); // a tiny screen keeps the minimum
+    for (const bad of [[NaN, 100], [100, Infinity], ['300', 200], [null, 200], [undefined, undefined]]) {
+        assert.equal(fitOverlaySize(bad[0], bad[1], 1920, 1200), null, JSON.stringify(bad));
+    }
 });
 
 test('ratio-action: open or call only, one per answer, drawn by the skin', () => {

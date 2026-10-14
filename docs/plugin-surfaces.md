@@ -339,6 +339,13 @@ An invalid action drops the action only; the surface still shows, inert.
   and opens the page instead.
 
   Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
+  - **Fit the dialog to the page.** Post `{ type: 'streamline:size', width: 420, height: 300 }` (CSS pixels of
+    your content) and the dialog shrinks to that size, so a small form is a small dialog over the dashboard. From
+    then on the dialog and the frame are transparent: draw your own card (its own background, radius and shadow) and
+    keep `html` and `body` transparent. Sizes are held to the default dialog (at most 1100 x 760 and 94% x 90% of
+    the screen) and to at least 280 x 160. Send it when the page has loaded and again when its content changes
+    size. Without a size message the dialog stays at the default size with a solid background. The skin's close
+    button (top right of the dialog) and a tap outside still close it. Only the page the overlay opened is heard.
   - **The stock numpad.** Post `{ type: 'streamline:numpad', id: 'r1', title: 'Ratio', unit: 'x', min: 1, max: 5,
     decimals: 1, value: 2.5 }` and the skin opens its own full-screen numpad over the overlay (see `input` under
     `call` for the fields and limits). The answer comes back to that frame as
@@ -372,6 +379,13 @@ An invalid action drops the action only; the surface still shows, inert.
   the tile's minimum is 0, and dose, yield and brew temperature use a higher one here (grind is the same 0). `value` is a number or a numeric string; it is clamped to that
   range and rounded to hundredths. It goes through the same setters as a tile edit, so **the active profile
   remembers it** until it is changed again.
+
+  **From the scale.** `{ "type": "set", "field": "targetDoseWeight", "from": "scale" }` (dose only, no `value`) makes
+  the skin read the scale itself when the pill is tapped and set that weight as the dose, so the plugin needs no
+  scale socket of its own. The reading is rounded to a tenth of a gram and is used only if it is a real dose (1 to
+  30 g: a full cup is refused, never clamped), if it is fresh (the scale sent a frame in the last 3 seconds) and if
+  the machine is not making espresso, steam, hot water or a flush. Otherwise the tap does nothing. The plugin still
+  decides when to show the pill and what its text says; use `active` to mark it.
 
   > **`brewTemperature` moves the whole curve.** `value` is where the profile's *first* step goes, and every other
   > step moves by the same amount, exactly like the Brew tile's `-`/`+`: a profile with steps 94, 90, 88 set to 92
