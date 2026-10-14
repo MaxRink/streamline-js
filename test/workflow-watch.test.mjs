@@ -180,14 +180,14 @@ test('a profile switch shows up as a title change', () => {
         assert.ok(calls.painted.some(([k, v]) => k === 'steamFlow' && v === 0.4));
     });
 
-    test('a moved secondary tile is painted along with the four main tiles', async () => {
+    test('a moved secondary tile is painted with the rest', async () => {
         const moved = base();
         moved.hotWaterData.volume = 100;
         const { refresh, calls } = build({ baseline: workflowTileValues(base()), workflow: moved });
 
         await refresh();
         assert.ok(calls.painted.some(([k, v]) => k === 'hotWaterVolume' && v === 100));
-        assert.ok(!calls.painted.some(([k]) => k === 'steamFlow'), 'unmoved secondary tiles are not painted');
+        assert.ok(calls.painted.some(([k, v]) => k === 'steamFlow' && v === 0.8), 'unmoved steam is repainted too');
     });
 
     test('a profile switch reloads instead of painting tiles piecemeal', async () => {
@@ -246,27 +246,28 @@ test('a profile switch shows up as a title change', () => {
         assert.equal(calls.retries, 1);
     });
 
-    test('a forced read repaints the four tiles then clears the flag', async () => {
+    test('a forced read repaints every forced tile then clears the flag', async () => {
         const wf = base();
         const { refresh, calls, state } = build({ baseline: workflowTileValues(wf), workflow: wf, force: true });
         await refresh();
-        assert.deepEqual(calls.painted.map(p => p[0]).sort(), ['brewTemp', 'dose', 'grind', 'yield']);
+        assert.deepEqual(calls.painted.map(p => p[0]).sort(), ['brewTemp', 'dose', 'flush', 'grind', 'hotWaterTemp', 'hotWaterVolume', 'milkStop', 'steamDuration', 'steamFlow', 'yield']);
         assert.equal(state.read(), false);
     });
 
-    test('an unchanged workflow still repaints only the four main tiles', async () => {
+    test('an unchanged workflow still repaints every forced tile', async () => {
         const { refresh, calls } = build({ baseline: workflowTileValues(base()), workflow: base() });
         await refresh();
         assert.equal(calls.fetches, 1);
-        assert.deepEqual(calls.painted.map(([k]) => k).sort(), ['brewTemp', 'dose', 'grind', 'yield']);
+        assert.deepEqual(calls.painted.map(([k]) => k).sort(), ['brewTemp', 'dose', 'flush', 'grind', 'hotWaterTemp', 'hotWaterVolume', 'milkStop', 'steamDuration', 'steamFlow', 'yield']);
     });
 }
 
-test('tilesToPaint: force repaints the four tiles even when the baseline matches', () => {
+test('tilesToPaint: force repaints every forced tile even when the baseline matches', () => {
     const tiles = { profileTitle: 'A', dose: 18, yield: 36, grind: '5', brewTemp: 93, steamDuration: 30 };
     assert.deepEqual(tilesToPaint(tiles, { ...tiles }, { force: true }),
-        { dose: 18, yield: 36, grind: '5', brewTemp: 93 });
-    assert.deepEqual(FORCED_KEYS, ['dose', 'yield', 'grind', 'brewTemp']);
+        { dose: 18, yield: 36, grind: '5', brewTemp: 93, steamDuration: 30 });
+    assert.deepEqual(FORCED_KEYS.slice(0, 4), ['dose', 'yield', 'grind', 'brewTemp']);
+    assert.ok(!FORCED_KEYS.includes('profileTitle'));
 });
 
 test('tilesToPaint: without force it is changedTileValues', () => {
@@ -283,6 +284,6 @@ test('tilesToPaint: null values are never returned and profileTitle is not force
 
 test('tilesToPaint: unknown previous state with force still returns the four keys', () => {
     const next = { profileTitle: 'A', dose: 18, yield: 36, grind: '5', brewTemp: 93, flush: 5 };
-    assert.deepEqual(tilesToPaint(null, next, { force: true }), { dose: 18, yield: 36, grind: '5', brewTemp: 93 });
+    assert.deepEqual(tilesToPaint(null, next, { force: true }), { dose: 18, yield: 36, grind: '5', brewTemp: 93, flush: 5 });
     assert.deepEqual(tilesToPaint(null, next), {});
 });

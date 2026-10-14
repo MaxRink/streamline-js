@@ -756,6 +756,9 @@ function handleData(data) {
     resetDataTimeout(); // Reset the timer every time data is received.
 
     const { state, substate } = data.state;
+    // A shot ending, a wake or a flush finishing is when the workflow most likely
+    // moved; Decaid has no workflow socket, so read it on the state change too.
+    if (previousState.state && previousState.state !== state) refreshWorkflowTilesSoon();
     const wasHeating = isHeatingState(previousState.state, previousState.substate);
     const isHeating = isHeatingState(state, substate);
     // 0 = no fresh estimate; the snapshot still decides whether we're heating at all.
@@ -1760,7 +1763,7 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
 // re-reads the document. Re-read it when the user comes back to the app, and on
 // a slow timer for a change made while they are looking at it.
 //
-// The four main tiles (dose, yield, grind, brew temperature) are painted from the
+// All tiles the workflow carries (dose, yield, grind, brew temperature, steam, hot water, flush) are painted from the
 // workflow on every read, so the screen shows what Decaid holds, not only what
 // moved since the last read. Only an edit that has not reached Decaid yet is
 // protected: a tile press waiting out its debounce, or a PUT still on the wire.
@@ -1768,7 +1771,7 @@ if (assignedProfileRecord && assignedProfileRecord.profile &&
 // a change a plugin made in answer to it shows up. A different profile means a
 // wholesale repaint, name included, since a profile switch moves the brew temp and
 // the title together.
-const WORKFLOW_POLL_MS = 15_000;
+const WORKFLOW_POLL_MS = 20_000;
 const WORKFLOW_REFRESH_MIN_GAP_MS = 250; // focus + visibilitychange can both fire
 // A tile press is pushed after a one second debounce, so a press this recent has
 // not reached Decaid yet: painting now would reassign the very variable the
