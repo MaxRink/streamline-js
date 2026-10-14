@@ -1446,7 +1446,21 @@ export async function getWorkflow() {
 
 }
 
+// PUT /workflow requests on the wire. The dashboard's read-back waits for zero so
+// it never paints a value older than a write that has not landed yet.
+let workflowWritesInFlight = 0;
+export function hasWorkflowWriteInFlight() { return workflowWritesInFlight > 0; }
+
 export async function updateWorkflow(data) {
+    workflowWritesInFlight += 1;
+    try {
+        return await putWorkflow(data);
+    } finally {
+        workflowWritesInFlight -= 1;
+    }
+}
+
+async function putWorkflow(data) {
     // Deep copy to avoid side effects on the original object.
     const dataToSend = JSON.parse(JSON.stringify(data));
 
