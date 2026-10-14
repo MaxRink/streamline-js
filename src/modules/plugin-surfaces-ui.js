@@ -236,7 +236,7 @@ function bindAction(el, plugin, action, surface) {
             storeStepSize(action.field, next);
             document.querySelectorAll('[data-stepsize-field]').forEach(node => {
                 if (node.dataset.stepsizeField !== action.field) return;
-                node.textContent = formatStepSize(next);
+                node.textContent = formatStepSize(next, action.field);
                 if (node.parentElement && node.parentElement !== document.body && node.parentElement.tagName === 'BUTTON') {
                     node.parentElement.title = node.parentElement.dataset.customTitle || node.textContent;
                 }
@@ -260,7 +260,7 @@ function buildTileSurface(plugin, surface) {
     if (surface.action?.type === 'stepsize') {
         // Drawn from this device's stored size, so a redraw keeps it correct.
         el.dataset.stepsizeField = surface.action.field;
-        el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field)));
+        el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field)), surface.action.field);
     }
     el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     const title = surface.title || el.textContent;
@@ -466,7 +466,7 @@ const callQueue = createCallQueue({
 
 // A mode shares one lane per tile (newest value wins). A fixed-value hint or line
 // is its own lane, so tapping it never supersedes a mode's pending value.
-const callKey = (plugin, surface) => (surface.kind === 'tile-hint' || surface.kind === 'tile-line'
+const callKey = (plugin, surface) => (surface.kind === 'tile-hint' || surface.kind === 'tile-line' || surface.kind === 'ratio-action'
     ? `${plugin.id}:${surface.id}`
     : `${plugin.id}:${surface.tile}`);
 
@@ -497,6 +497,44 @@ export function callMode(plugin, surface, number, { immediate = true, extra } = 
 // -> true when everything was drawn. Tile placement measures the label
 // (offsetTop/Height/Width), which is 0 while the main page is display:none, so
 // tiles are skipped then and the caller must not remember the answer as drawn.
+// The built-in "(1:x)" label under Drink is not ours to remove, so a plugin's
+// ratio-action only attaches a click handler and a look to it, and render() takes
+// both off again before every redraw.
+let ratioUndo = null;
+function clearRatioAction() {
+    if (ratioUndo) ratioUndo();
+    ratioUndo = null;
+}
+
+function placeRatioAction(plugin, surface) {
+    const label = document.getElementById('drink-ratio-value');
+    if (!label || !surface.action) return false;
+    // bindAction wires the click onto a throwaway node; the label forwards to it,
+    // so the call / open code is shared with every other surface.
+    const proxy = document.createElement('span');
+    bindAction(proxy, plugin, surface.action, surface);
+    const onClick = event => { event.stopPropagation(); proxy.click(); };
+    const saved = { cursor: label.style.cursor, padding: label.style.padding, margin: label.style.margin,
+        decoration: label.style.textDecoration, title: label.title, role: label.getAttribute('role'), tab: label.getAttribute('tabindex') };
+    label.addEventListener('click', onClick);
+    label.style.cursor = 'pointer';
+    // A 19px line is too small to tap: padding grows the target, the negative margin cancels it.
+    label.style.padding = '8px 0';
+    label.style.margin = '-8px 0';
+    label.style.textDecoration = 'underline dotted';
+    label.title = surface.title || label.title;
+    label.setAttribute('role', 'button');
+    label.setAttribute('tabindex', '0');
+    ratioUndo = () => {
+        label.removeEventListener('click', onClick);
+        Object.assign(label.style, { cursor: saved.cursor, padding: saved.padding, margin: saved.margin, textDecoration: saved.decoration });
+        label.title = saved.title;
+        if (saved.role === null) label.removeAttribute('role'); else label.setAttribute('role', saved.role);
+        if (saved.tab === null) label.removeAttribute('tabindex'); else label.setAttribute('tabindex', saved.tab);
+    };
+    return true;
+}
+
 function render(rawEntries) {
     // A hint or line whose call endpoint the plugin does not declare is drawn
     // inert, like a surface with no action, so it does not look tappable.
@@ -514,6 +552,7 @@ function render(rawEntries) {
     });
     touchedSections.forEach(el => { el.style.position = ''; });
     touchedSections = [];
+    clearRatioAction();
 
     const container = document.getElementById('header-right-controls');
     const anchor = container?.firstChild;
@@ -556,6 +595,10 @@ function render(rawEntries) {
         }
         if (mainHidden) continue;
         if (surface.kind === 'tile-mode') continue; // drawn per tile below
+        if (surface.kind === 'ratio-action') {
+            if (!ratioUndo) placeRatioAction(plugin, surface); // first plugin wins
+            continue;
+        }
         if (surface.kind === 'tile-line' && modeTiles.has(surface.tile)) continue;
         const slot = `${surface.kind}:${surface.tile}`;
         if (usedSlots.has(slot) || !TILES[surface.tile]) continue;

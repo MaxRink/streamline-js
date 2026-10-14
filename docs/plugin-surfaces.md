@@ -160,6 +160,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 |---|---|---|
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
+| `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
 | `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active` |
 | `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active` |
 | `tile-mode` | an option in the toggle under a tile's label | see [Tile modes](#tile-modes) |
@@ -169,10 +170,11 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 
 ## Limits
 
-- At most 16 surfaces per plugin, 1 `header-button`, 1 `screensaver-button`, 1 `tile-hint` and 1 `tile-line` per tile, and up to 3 `tile-mode` per tile (see Modes); extras are dropped in order.
+- At most 16 surfaces per plugin, 1 `header-button`, 1 `screensaver-button`, 1 `ratio-action`, 1 `tile-hint` and 1 `tile-line` per tile, and up to 3 `tile-mode` per tile (see Modes); extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
 - Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
 - Only one `screensaver-button` is drawn in total across all plugins, first plugin wins, as for `header-button`.
+- Only one `ratio-action` is drawn in total across all plugins, first plugin wins.
 - `id` is 1 to 40 characters of `A-Z a-z 0-9 _ -` and unique within the answer.
 - `image` must be `https:` without credentials.
 - Unknown `kind`s are ignored, so a newer plugin on an older skin shows less rather than failing.
@@ -184,6 +186,12 @@ A `screensaver-button` is drawn at the top centre of the screensaver, for a plug
 - It never wakes the machine and sends no machine command. A tap on it is not a tap on the saver, so the saver stays up. The saver is left only by waking the machine, which the plugin button does not do; the user taps the saver elsewhere, as before.
 - Pressing it brings the panel back to the user's brightness (display only) so the page can be read. With `overlay`, closing the dialog dims the panel again if the machine is still asleep. With `page`, the skin is left; on return the first snapshot raises the saver and dims again, and boot sends no wake.
 - It sits at the top right of the saver and is shown on every saver, the image saver and the black screen.
+
+## Ratio action
+
+The skin's own "(1:2.7)" label under Drink does nothing when tapped. A `ratio-action` gives it a tap: the label keeps its text and gets a dotted underline and a larger tap area while a plugin has declared one. It takes `open` (`page` or `overlay`, so the plugin can draw a "set ratio" sheet) or `call` with a fixed `value` (a toggle or a cycle). Without a valid action it is dropped and the label stays as before.
+
+After a `call` the skin reads `skin` and the workflow again, so a yield the plugin wrote shows at once. An overlay that wrote the workflow should `emit` on the plugin's `live` socket before it closes.
 
 ## Tile modes
 
@@ -288,10 +296,11 @@ An invalid action drops the action only; the surface still shows, inert.
   Once the value is stored the skin reads `skin` again, so the plugin's pills reflect the new number (no
   `workflow-refresh` is sent).
 - **`stepsize`**: `{ "type": "stepsize", "field": "targetDoseWeight", "sizes": [1, 0.5, 0.1] }` on `tile-hint` and
-  `tile-line` only. `field` is `targetDoseWeight` or `targetYield` (grind has its own step setting, brew
-  temperature is not steppable). `sizes` has 1 to 4 numbers, each greater than 0 and at most 10, rounded to
+  `tile-line` only. `field` is `targetDoseWeight`, `targetYield` or `grinderSetting` (brew
+  temperature is not steppable). On grind a whole-number size shows whole numbers and any other size shows one
+  decimal; without a grind `stepsize` the tile keeps its own rule (1 for a whole number, 0.1 otherwise). `sizes` has 1 to 4 numbers, each greater than 0 and at most 10, rounded to
   hundredths; anything else drops the action. The pill changes what the tile's own `-` / `+` move by: each tap
-  moves to the next size and wraps. The skin draws the pill text itself (`±0.5 g`, from the size stored on this
+  moves to the next size and wraps. The skin draws the pill text itself (`±0.5 g`, no `g` on grind, from the size stored on this
   device; your `text` is ignored), and the choice is kept per field in this device's local storage, not synced.
   The size applies only while a `stepsize` surface for that field is drawn; when the plugin goes away the
   tile's step is 1 again. The numpad and presets are unaffected. A plugin `tile-mode` on the tile intercepts
@@ -332,7 +341,7 @@ grind and the profile temperature that `set` itself writes (see the `brewTempera
 - Keeping a ratio while the dose changes is only possible as a dose `tile-mode` (the plugin owns the value and
   can write yield), or as a pill with `call` + `active` + `live` that tells the plugin to hold the ratio and
   shows its state.
-- Tapping the ratio to enter a new one needs an overlay (`open` with `presentation: "overlay"`); a pill cannot
-  take numeric input.
+- Tapping the ratio to enter a new one is a `ratio-action` that opens an overlay (`open` with
+  `presentation: "overlay"`); a pill cannot take numeric input.
 - Whether the Decaid plugin runtime can read the scale snapshot or machine state is not promised here; do not
   depend on it.

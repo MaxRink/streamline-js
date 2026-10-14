@@ -75,7 +75,7 @@ test('stepsize: valid action parses, sizes rounded to hundredths', () => {
 
 test('stepsize: invalid actions are dropped and the surface stays inert', () => {
     const bad = [{ sizes: [1, 2, 3, 4, 5] }, { sizes: [] }, { sizes: [0] }, { sizes: [-1] }, { sizes: [10.01] },
-        { sizes: [0.004] }, { sizes: ['x'] }, { sizes: 1 }, { field: 'grinderSetting' }, { field: 'brewTemperature' }];
+        { sizes: [0.004] }, { sizes: ['x'] }, { sizes: 1 }, { field: 'brewTemperature' }];
     for (const over of bad) {
         const [s] = ok([stepsize(over)]);
         assert.ok(s, JSON.stringify(over));
@@ -112,6 +112,13 @@ test('stepsize helpers: next wraps, unknown current goes to the first, text form
     assert.equal(resolveStepSize([1, 0.5], 3), 1);
     assert.equal(formatStepSize(0.5), '±0.5 g');
     assert.equal(formatStepSize(1), '±1 g');
+    assert.equal(formatStepSize(0.5, 'grinderSetting'), '±0.5');
+});
+
+test('stepsize: grind takes it too, with a unit-less default pill text', () => {
+    const [s] = ok([{ id: 'g', kind: 'tile-line', tile: 'grind', action: { type: 'stepsize', field: 'grinderSetting', sizes: [1, 0.5] } }]);
+    assert.deepEqual(s.action, { type: 'stepsize', field: 'grinderSetting', sizes: [1, 0.5] });
+    assert.equal(s.text, '±1');
 });
 
 test('text is capped, stripped of control characters, and never needed as HTML', () => {
@@ -383,6 +390,19 @@ test('screensaver-button: one per answer, independent of the header button', () 
     assert.deepEqual(ok([s('a'), s('b')]).map(x => x.id), ['a']);
     const h = { id: 'h', kind: 'header-button', label: 'H' };
     assert.equal(ok([h, s('a')]).length, 2);
+});
+
+test('ratio-action: open or call only, one per answer, drawn by the skin', () => {
+    const r = (extra, id = 'r') => ok([{ id, kind: 'ratio-action', ...extra }]);
+    const open = { type: 'open', view: 'ratio', presentation: 'overlay' };
+    const call = { type: 'call', endpoint: 'ratio', field: 'tap', value: 1 };
+    assert.deepEqual(r({ action: open })[0], { id: 'r', kind: 'ratio-action', action: open });
+    assert.deepEqual(r({ action: call, title: 'Set ratio' })[0], { id: 'r', kind: 'ratio-action', title: 'Set ratio', action: call });
+    assert.equal(r({}).length, 0); // no action: dead label
+    assert.equal(r({ action: { type: 'set', field: 'targetYield', value: 36 } }).length, 0);
+    assert.equal(r({ action: { type: 'step', field: 'targetYield', by: 1 } }).length, 0);
+    assert.equal(r({ action: { type: 'call', endpoint: 'ratio', field: 'tap' } }).length, 0); // call needs its fixed value
+    assert.deepEqual(ok([{ id: 'a', kind: 'ratio-action', action: open }, { id: 'b', kind: 'ratio-action', action: call }]).map(x => x.id), ['a']);
 });
 
 test('live names a websocket endpoint; it is only used when the plugin declares it', () => {
