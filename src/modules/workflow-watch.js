@@ -56,7 +56,8 @@ export function changedTileValues(previous, next) {
 // tile edit or an earlier poll read it) while the tile still shows something
 // else, so a diff alone would never repaint. profileTitle is not here: a title
 // change runs the heavier loadInitialData path, which a force must not trigger.
-export const FORCED_KEYS = ['dose', 'yield', 'grind', 'brewTemp'];
+export const FORCED_KEYS = ['dose', 'yield', 'grind', 'brewTemp',
+    'steamDuration', 'steamFlow', 'milkStop', 'hotWaterVolume', 'hotWaterTemp', 'flush'];
 
 // What to paint: the diff, plus with `force` every present forced key of `next`.
 export function tilesToPaint(previous, next, { force = false } = {}) {
