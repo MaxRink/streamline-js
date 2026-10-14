@@ -1822,6 +1822,9 @@ async function refreshWorkflowTiles() {
     const now = Date.now();
     if (now - lastWorkflowRefreshAt < WORKFLOW_REFRESH_MIN_GAP_MS) return;
     lastWorkflowRefreshAt = now;
+    // Captured before the await: a force raised while this read is in flight
+    // belongs to a later read and must survive it.
+    const force = pendingForcedRefresh;
 
     let workflow;
     try {
@@ -1832,8 +1835,14 @@ async function refreshWorkflowTiles() {
     }
     if (!workflow) return;
 
-    const force = pendingForcedRefresh;
-    pendingForcedRefresh = false;
+    // The user touched a tile while the read was in flight. Painting (or moving
+    // the baseline) would overwrite that edit with the older server value, so
+    // drop this read and keep the force for a retry after the guard.
+    if (ui.msSinceTileInteraction() < WORKFLOW_EDIT_GUARD_MS) {
+        if (pendingForcedRefresh) refreshWorkflowTilesSoon();
+        return;
+    }
+    if (force) pendingForcedRefresh = false;
     const tiles = workflowTileValues(workflow);
     const changed = tilesToPaint(lastWorkflowTiles, tiles, { force });
     lastWorkflowTiles = tiles;
