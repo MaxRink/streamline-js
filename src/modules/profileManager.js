@@ -8,6 +8,7 @@ import { getTranslation, fitTextToBox } from './i18n.js';
 import { resolveProfileKeyByTitle } from './active-profile.js';
 import { loadProfileOverrides, saveProfileOverride, clearProfileOverride, applyOverridesToRecords } from './profile-overrides.js';
 import { applyFlowCalibrationForProfile } from './flow-calibration.js';
+import { profileAtBrewTemp } from './brew-temp.js';
 
 /**
  * Rename a profile by ID
@@ -565,14 +566,15 @@ function dropProfileOverrides(profileId) {
     });
 }
 
-// Fold the user's saved brew temperature onto a COPY of a profile. The tile's
-// editor writes every step at once (ui.js updateTemperatureValue), so one saved
-// number restores the whole profile; a profile with no saved override, or with
-// no steps, comes back untouched. Never mutates the cached record.
+// Fold the user's saved brew temperature onto a COPY of a profile. The saved
+// number is where the profile's first step sits; every other step keeps its own
+// distance from it (brew-temp.js), so the profile's shape survives. A profile
+// with no saved override, or with no steps, comes back untouched. Never mutates
+// the cached record, which is what the shape is measured from.
 export function withSavedBrewTemp(profile, metadata) {
     const temp = metadata?.brewTemperature;
     if (!Number.isFinite(temp) || !Array.isArray(profile?.steps)) return profile;
-    return { ...profile, steps: profile.steps.map(step => ({ ...step, temperature: temp })) };
+    return profileAtBrewTemp(profile, temp);
 }
 
 // Steam duration/flow aren't profile fields (they live on the workflow, not

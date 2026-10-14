@@ -23,6 +23,7 @@ import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation,
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
 import { stepValue, formatRatio } from './value-format.js';
+import { shiftedTemperatures } from './brew-temp.js';
 import { resolveStepSize } from './plugin-surfaces.js';
 import { clampSetValue } from './plugin-surfaces.js';
 
@@ -296,14 +297,22 @@ export function updateDrinkOutPresetsDisplay(doseIn, drinkOut) {
     syncPresetHighlight(document.getElementById('drink-out-presets'), t => t === target);
 }
 
+// Moves the whole curve so the first step sits at `newValue` and every other step
+// keeps its distance from it (brew-temp.js). The distances come from the saved
+// profile when it is the one running, so a copy that was already flattened gets
+// its shape back; otherwise from the live steps.
 export function updateTemperatureValue(newValue) {
     return getWorkflow().then(workflow => {
         if (workflow && workflow.profile && workflow.profile.steps) {
-            // Update temperature on ALL steps as number (not string)
-            workflow.profile.steps.forEach(step => {
-                step.temperature = parseFloat(newValue);
-            });
-            
+            const target = parseFloat(newValue);
+            const live = workflow.profile.steps;
+            const saved = window.app?.getActiveProfileRecord?.()?.profile;
+            const shapeOf = saved && Array.isArray(saved.steps) && saved.steps.length === live.length
+                && saved.title === workflow.profile.title ? saved.steps : live;
+            const temps = shiftedTemperatures(shapeOf.map(step => step.temperature), target);
+            // Numbers, not strings. No usable first step: one temperature for every step.
+            live.forEach((step, i) => { step.temperature = temps ? temps[i] : target; });
+
             // Partial update via workflow - only send profile field
             return updateWorkflow({ profile: workflow.profile }).then(() => {
                 logger.debug('Temperature updated via workflow:', newValue);
@@ -337,8 +346,8 @@ function runPluginSet(field, value) {
         return { ok: true, done };
     }
     if (field === 'brewTemperature') {
-        // Celsius, like the workflow. Same setter as the tile: every step of the
-        // profile gets this temperature.
+        // Celsius, like the workflow. Same setter as the tile: the first step goes
+        // here and the other steps keep their distance from it.
         markTileInteraction();
         const done = updateTemperatureValue(n);
         updateTemperatureDisplay(n);
