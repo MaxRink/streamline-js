@@ -254,7 +254,7 @@ function parseSurface(raw) {
         // A `stepsize` pill is drawn by the skin from the device's stored size, so
         // its `text` is optional and ignored.
         const text = cleanText(raw.text, kind === 'tile-hint' ? CAPS.hint : CAPS.text)
-            || (action?.type === 'stepsize' ? formatStepSize(action.sizes[0]) : '');
+            || (raw.action?.type === 'stepsize' ? formatStepSize(action?.sizes?.[0] ?? 1) : '');
         if (!text) return null;
         const title = kind === 'tile-hint' ? cleanText(raw.title, CAPS.title) : '';
         // `active` marks a pill or line as switched on (a lock, a chosen option).

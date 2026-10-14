@@ -194,7 +194,11 @@ function bindAction(el, plugin, action, surface) {
             const next = nextStepSize(action.sizes, resolveStepSize(action.sizes, getStoredStepSize(action.field)));
             storeStepSize(action.field, next);
             document.querySelectorAll('[data-stepsize-field]').forEach(node => {
-                if (node.dataset.stepsizeField === action.field) node.textContent = formatStepSize(next);
+                if (node.dataset.stepsizeField !== action.field) return;
+                node.textContent = formatStepSize(next);
+                if (node.parentElement && node.parentElement !== document.body && node.parentElement.tagName === 'BUTTON') {
+                    node.parentElement.title = node.parentElement.dataset.customTitle || node.textContent;
+                }
             });
         });
     } else if (action?.type === 'set') {
@@ -218,7 +222,7 @@ function buildTileSurface(plugin, surface) {
         el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field)));
     }
     el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    const title = surface.title || surface.text;
+    const title = surface.title || el.textContent;
     // Switched on: the skin's blue and bold, so a lock or a chosen option reads at a glance.
     if (surface.active) el.dataset.active = '1';
 
@@ -234,6 +238,7 @@ function buildTileSurface(plugin, surface) {
     root.dataset.pluginSurface = surface.id;
     root.dataset.agentId = `plugin-tile:${surface.tile}:${surface.kind}`;
     root.title = title;
+    if (surface.title) root.dataset.customTitle = surface.title;
     return { root, el };
 }
 

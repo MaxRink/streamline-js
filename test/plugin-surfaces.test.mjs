@@ -76,6 +76,20 @@ test('stepsize: invalid actions are dropped and the surface stays inert', () => 
     }
 });
 
+test('stepsize: invalid sizes with no text keep the surface inert with a placeholder', () => {
+    const [s] = ok([{ id: 'ss', kind: 'tile-hint', tile: 'dose', action: { type: 'stepsize', field: 'targetDoseWeight', sizes: [] } }]);
+    assert.ok(s);
+    assert.equal(s.action, undefined);
+    assert.equal(s.text, '±1 g');
+});
+
+test('stepValue clamps to min', async () => {
+    const { stepValue } = await import('../src/modules/value-format.js');
+    assert.equal(stepValue(5, 10, -1, 0), 0);
+    assert.equal(stepValue(5, 0.5, -1, 0), 4.5);
+    assert.equal(stepValue(5, 1, 1), 6);
+});
+
 test('stepsize: only on tile-hint and tile-line', () => {
     const action = { type: 'stepsize', field: 'targetDoseWeight', sizes: [1] };
     assert.equal(ok([{ id: 'a', kind: 'header-button', label: 'B', action }])[0].action, undefined);
