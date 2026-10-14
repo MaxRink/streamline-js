@@ -12,7 +12,7 @@ import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint } from './
 import { planTileModes, createCallQueue } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
-import { applyPluginSet, isAutoSteamMode } from './ui.js';
+import { applyPluginSet, applyPluginStep, isAutoSteamMode } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -180,6 +180,10 @@ function bindAction(el, plugin, action, surface) {
         } else if (url) {
             el.addEventListener('click', () => window.location.assign(url));
         }
+    } else if (action?.type === 'step') {
+        el.addEventListener('click', () => {
+            if (!applyPluginStep(action.field, action.by)) logger.warn('Plugin step not applied:', action.field);
+        });
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
             if (!applyPluginSet(action.field, action.value)) logger.warn('Plugin set not applied:', action.field);
