@@ -353,6 +353,10 @@ function setSelectedMode(tile, key) {
     if (key) selectedMode[tile] = key; else delete selectedMode[tile];
     paintToggle(tile);
     announceMode(tile);
+    // A mode that asked for it applies its own value as soon as it is chosen, as if
+    // the user had tapped a preset (a flow and time pair set by one tap).
+    const chosen = key && (drawnModes[tile] || []).find(m => m.key === key);
+    if (chosen?.surface.applyOnSelect) callMode(chosen.plugin, chosen.surface, chosen.surface.value, { immediate: true });
 }
 
 function paintToggle(tile) {

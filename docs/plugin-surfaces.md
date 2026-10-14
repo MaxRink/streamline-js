@@ -210,6 +210,8 @@ A `tile-mode` lets a plugin add its own option to a left-column tile, the way th
 | `presets` | up to 4 numbers shown in the tile's preset row while the mode is selected; only Brew, Drink, Flush and Steam have a preset row, Grind and Dose ignore them |
 | `menu` | optional, up to 4 `{ "label": "Reset to 0%", "value": 0 }` (label 24 characters, `value` clamped to `min`..`max`); extra items in each preset's long-press menu |
 | `presetsEditable` | optional, `false` to stop the user changing the presets from that menu (default `true`) |
+| `sub` | optional, up to 8 characters on a second line under the value, on `steam` and `drink` only (for a flow beside a time: `1.0ml/s`); it is text, so keep it in step with what your `call` does |
+| `applyOnSelect` | optional, `true` to make the skin send the mode's `value` to your `call` as soon as the user picks the mode, as if they had tapped a preset (for a mode that sets more than one thing at once); default `false` |
 | `action` | required, a `call`; a mode without a valid one is dropped |
 
 While the mode is selected the tile shows `value` and `unit`, `-` / `+` step by `step`, tapping the value opens the

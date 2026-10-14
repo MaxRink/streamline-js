@@ -174,8 +174,8 @@ function paint(tile) {
     if (!state) return;
     const { surface } = state;
     const text = formatModeValue(surface, state.value);
-    state.valueEl.textContent = text;
-    state.valueEl.setAttribute('aria-label', `${surface.label} ${text}`);
+    (state.textEl || state.valueEl).textContent = text;
+    state.valueEl.setAttribute('aria-label', `${surface.label} ${text}${state.hasSub ? ' ' + surface.sub : ''}`);
     for (const button of state.presetButtons) {
         button.classList.toggle('preset-active', Number(button.dataset.modeValue) === state.value);
     }
@@ -219,6 +219,19 @@ function draw(tile, plugin, surface, { keepValue = false } = {}) {
         event.preventDefault();
         openNumpad(tile);
     });
+    // A second line under the value (a flow beside a time) on the tiles whose box
+    // holds two lines; elsewhere it is ignored.
+    if (dom.ownBox && surface.sub) {
+        mine.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[110px] flex flex-col items-center text-center text-[var(--text-primary)]';
+        const main = document.createElement('span');
+        main.className = 'text-[25.5px] font-bold';
+        const second = document.createElement('span');
+        second.className = 'text-[19.5px] font-semibold';
+        second.textContent = surface.sub;
+        mine.append(main, second);
+        state.textEl = main;
+        state.hasSub = true;
+    }
     hideEl(hidden);
     hidden.parentElement.appendChild(mine);
     state.overlay.push(mine);

@@ -42,6 +42,7 @@ export const MODE_TILES = [...TILES, 'steam', 'flush'];
 export const MODE_LIMITS = {
     label: 6,        // characters in the toggle option
     unit: 3,         // characters appended to the value
+    sub: 8,          // characters of the second line (steam and drink only), e.g. a flow
     presets: 4,      // the preset row has four slots
     menu: 4,         // extra items in a preset's long-press menu
     menuLabel: 24,
@@ -193,6 +194,7 @@ function parseMode(raw, id, action) {
     const label = cleanText(raw.label, MODE_LIMITS.label);
     if (!label) return null;
     const unit = cleanText(raw.unit, MODE_LIMITS.unit);
+    const secondLine = cleanText(raw.sub, MODE_LIMITS.sub);
 
     const decimals = raw.decimals == null ? 0 : raw.decimals;
     if (!Number.isInteger(decimals) || decimals < 0 || decimals > MODE_LIMITS.decimals) return null;
@@ -232,6 +234,7 @@ function parseMode(raw, id, action) {
     }
     return { id, kind: 'tile-mode', tile: raw.tile, label, ...(unit && { unit }),
         value: clamp(value), min, max, step, decimals, presets, ...(menu.length && { menu }),
+        ...(secondLine && { sub: secondLine }), ...(raw.applyOnSelect === true && { applyOnSelect: true }),
         ...(raw.presetsEditable === false && { presetsEditable: false }), action };
 }
 

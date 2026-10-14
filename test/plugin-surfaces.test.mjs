@@ -236,6 +236,15 @@ test('tile-mode: label and unit are capped, up to three modes per tile', () => {
     assert.deepEqual(many.map(x => x.id), ['pct', 'other', 'third', 'dose-m']);
 });
 
+test('tile-mode: sub is capped text and applyOnSelect needs a real true', () => {
+    const m = ok([mode({ sub: 'abcdefghijkl', applyOnSelect: true })])[0];
+    assert.equal(m.sub, 'abcdefgh');
+    assert.equal(m.applyOnSelect, true);
+    const plain = ok([mode({ sub: '   ', applyOnSelect: 'yes' })])[0];
+    assert.equal('sub' in plain, false);
+    assert.equal('applyOnSelect' in plain, false);
+});
+
 test('call is only valid on a tile-mode; the mode may share a tile with a hint and a line', () => {
     const call = { type: 'call', endpoint: 'apply', field: 'percent' };
     const s = ok([
