@@ -266,9 +266,16 @@ An invalid action drops the action only; the surface still shows, inert.
     outside the dialog and on Escape, then re-reads `skin` and the workflow.
 
   The frame is sandboxed (`allow-scripts allow-same-origin allow-forms`): it cannot navigate the skin and has no
-  popups. Decaid sends no `X-Frame-Options` or CSP on a plugin's `ui` response, so it can be framed as is. To
-  allow only the skin, send `Content-Security-Policy: frame-ancestors <skin origin>` yourself; the skin's origin
-  is the `Origin` of its requests (or the `Referer` of the frame request), the embed URL carries no `returnTo`.
+  popups.
+
+  **Your `ui` response must allow framing when the skin is on another origin.** Decaid adds
+  `X-Frame-Options: SAMEORIGIN` to every plugin page, so a skin served from a different origin than Decaid (a dev
+  server on `:8044` against Decaid on `:8080`) gets "refused to connect" in the dialog. Send
+  `Content-Security-Policy: frame-ancestors 'self' <skin origin>` on the `ui` response: a browser ignores
+  `X-Frame-Options` when `frame-ancestors` is present. The skin's origin is the `Origin` of its requests, or the
+  `Referer` of the frame request; the embed URL carries no `returnTo`. When the skin and Decaid share an origin
+  (the production setup) `SAMEORIGIN` already allows it. Without a ready message the skin gives up after 3 seconds
+  and opens the page instead.
 
   Messages are accepted only from the overlay's own frame. Only one overlay is open at a time.
 - **`step`**: `{ "type": "step", "field": "targetDoseWeight", "by": -0.5 }` on tile kinds only. Moves the
