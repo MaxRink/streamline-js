@@ -2877,7 +2877,7 @@ function bindSkipStepHandler() {
 let lastPuckVisible = null;
 
 export function updateMachineStatus(data) {
-    const { status, state, substate, stepName, timeValue, isClickable,  isHeating, isHeatingFromTimeToReady, steamTemperature } = data;
+    const { status, state, substate, stepName, profileStepName, timeValue, isClickable,  isHeating, isHeatingFromTimeToReady, steamTemperature } = data;
     // Puck (group-head) temperature only means anything while a shot is pulling,
     // so it joins the telemetry row for espresso and leaves again afterwards.
     const puckVisible = state === MachineState.ESPRESSO;
@@ -3043,7 +3043,10 @@ export function updateMachineStatus(data) {
             // Special handling for preinfusion/pouring state to show time counting up
             // NOTE: We want the label to be able to change from "Preinfusion" to "Pouring"
             // without resetting the timer when the state transitions.
-            const stageText = isPreinfusionState ? getTranslation('Preinfusion') : getTranslation('Pouring');
+            // The profile's own step name when known; profile text is untrusted and lands in innerHTML.
+            const stageText = profileStepName
+                ? Object.assign(document.createElement('div'), { textContent: profileStepName }).innerHTML
+                : isPreinfusionState ? getTranslation('Preinfusion') : getTranslation('Pouring');
 
             // Always store the latest stage text so the running interval can pick it up
             machineStatusEl.currentPreinfusionOrPouringStageText = stageText;

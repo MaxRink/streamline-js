@@ -947,6 +947,10 @@ function handleData(data) {
         state: state,
         substate: substate,
         stepName: formatStateString(substate), // Use formatted substate as step name
+        // The running profile step's own name. The active record follows favourite
+        // switches; the chart's profile is only set on page load.
+        profileStepName: (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())
+            ?.steps?.[data.profileFrame]?.name?.trim() || '',
         timeValue: data.elapsedTime, // Use elapsed time from data if available
         isClickable: (substate === 'preinfusion' || substate === 'pouring'), // Make preinfusion/pouring steps clickable
         isHeating: isHeating, // Pass heating state to UI
