@@ -160,6 +160,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 |---|---|---|
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
+| `shot-strip` | the info row (Water, Steam, Tank, Clock, Weight) | `cells` (1–9), `show` (`shot` default, or `always`); see Shot strip |
 | `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
 | `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active`, `size`, `keepRatio`, `keepRatioMoves` |
 | `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active`, `size`, `keepRatio`, `keepRatioMoves` |
@@ -167,6 +168,29 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 
 `tile` is one of `dose`, `drink`, `grind`, `temperature`; a `tile-mode` can also be on `steam`, `hotwater` or `flush`. Lengths are characters. Text is shown with
 `textContent`, never as HTML.
+
+## Shot strip
+
+A `shot-strip` replaces the info row (Water, Steam, Tank, Clock, Weight) with up to 9 live readings of the shot, laid out on a 9-column grid. With `show: "shot"` (the default) it appears while an espresso runs and the normal row returns afterwards; `show: "always"` keeps it up. One strip is drawn in total, first plugin wins. The numbers come from the skin's own snapshot stream; the plugin only picks cells and how to judge them. The grid follows the Figma dashboard: the page is 12 columns, the left control column takes 3 and the info row the other 9. Each column is an equal share of the row, so a reading stays put as its digits change. A cell that is wider than its columns shrinks to fit them, so give a cell with a goal two columns (the default while there is room) and a bare value one. `step` shows `-` outside an espresso, and `weight` shows `-` with no scale connected.
+
+```json
+{ "id": "strip", "kind": "shot-strip", "show": "shot", "cells": [
+  { "cell": "weight", "col": 1, "span": 3, "bar": true },
+  { "cell": "pressure", "dot": { "greenWithin": 0.05, "amberWithin": 0.15 } },
+  { "cell": "flow", "color": "flow", "dot": { "greenWithin": 0.05, "amberWithin": 0.15,
+      "colors": { "good": "ongoing", "warn": "amber", "bad": "red" } } },
+  { "cell": "puckTemp" }, { "cell": "step" },
+  { "label": "Preinf", "text": "12 s", "color": "accent" } ] }
+```
+
+- **`col` and `span`:** `col` (1–9) puts a cell in a column and `span` (1–9) makes it that many columns wide; a `bar` runs across all of them. A cell with `col` and no `span` is one column wide. Without `col`, cells fill the free columns left to right, two columns each while every remaining cell can still get a column, otherwise one; a cell that does not fit is dropped. A cell that overlaps one before it is dropped, and a span past the right edge is cut. The 9-cell limit counts cells before layout. Cells are drawn by column, not by their order in the list.
+- **Built-in cells:** `weight` (goal: the Drink value), `pressure`, `flow`, `puckTemp`, `waterTemp` (goal: the profile's mix temperature; `puckTemp`'s goal is its group temperature) and `step` (frame number and name, cut to 18 characters). A goal is shown as `value / goal`. A pressure goal is used on pressure steps and a flow goal on flow steps; the other shows no goal. `label` renames a cell (12 characters).
+- **Your own cell:** `{ "label", "text", "color" }`, with no `cell`: fixed text (16) from the plugin's answer. Change it by answering `skin` again; `live` pushes make that immediate.
+- **`dot`:** a status dot judged from how far the reading is from its goal, as a fraction of the goal: within `greenWithin` is good, within `amberWithin` is warn, beyond is bad (`0 < greenWithin < amberWithin <= 2`). The plugin sets the thresholds; `colors` picks tokens for `good`, `warn`, `bad` (default `ongoing`, `amber`, `red`). Fits pressure, flow and temperatures; weight is far from its goal until the shot ends, so give it a `bar`.
+- **`goalSize`:** `small` (14 px), `medium` (17) or `large` (22.5, the skin's own row size) for the goal text after the value. Without it the goal uses the skin's size. Only on cells with a goal; an unknown value is ignored.
+- **`bar`:** a thin progress bar under the cell, `value / goal`. Where the step has no goal (flow on a pressure step, pressure on a flow step) it fills against a scale instead: `barMax` (a positive number up to 1000) or the default of 12 for pressure, 8 for flow and 100 for temperatures.
+- **`dot` and `bar`** need a cell with a goal (not `step`, not your own cell); otherwise they are dropped.
+- **Colour tokens** (`color` and dot `colors`), from the Streamline style guide, light and dark: `pressure`, `flow`, `temp`, `weight`, `ongoing`, `accent`, `text`, `muted`, `red`, `amber`. The label, dot and bar are drawn in the token; the value stays in the primary text colour. Defaults follow the chart: weight, pressure, flow, temperature. `temp` and `weight` are the chart's pale trace colours, better on a bar than as a label. `flow` has no dark token and reuses the light one; `amber` is not in the style guide.
 
 ## Keep ratio
 
@@ -223,7 +247,7 @@ break a tile's layout.
 
 ## Limits
 
-- At most 16 surfaces per plugin, 1 `header-button`, 1 `screensaver-button`, 1 `ratio-action`, 1 `tile-hint` and 1 `tile-line` per tile, and up to 3 `tile-mode` per tile (see Modes); extras are dropped in order.
+- At most 16 surfaces per plugin, 1 `header-button`, 1 `screensaver-button`, 1 `ratio-action`, 1 `shot-strip`, 1 `tile-hint` and 1 `tile-line` per tile, and up to 3 `tile-mode` per tile (see Modes); extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
 - Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
 - Only one `screensaver-button` is drawn in total across all plugins, first plugin wins, as for `header-button`.

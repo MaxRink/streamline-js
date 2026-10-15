@@ -11,6 +11,7 @@ import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
     nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
+import { setShotStrip } from './plugin-shot-strip.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
@@ -772,6 +773,7 @@ function render(rawEntries) {
             if (surface.keepRatio && !drawnKeepRatio && !modeTiles.has('drink')) { drawnKeepRatio = surface.keepRatio; drawnKeepMoves = surface.keepRatioMoves || 'both'; }
         }
     }
+    setShotStrip(mainHidden ? null : entries.find(e => e.surface.kind === 'shot-strip')?.surface || null);
     setDrawnStepSizes(drawnSizes);
     setDrawnKeepRatio(drawnKeepRatio, drawnKeepMoves);
 

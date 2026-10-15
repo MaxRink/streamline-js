@@ -383,6 +383,140 @@ function parseMode(raw, id, action) {
         ...(raw.presetsEditable === false && { presetsEditable: false }), action };
 }
 
+// A live shot strip: a few readings drawn in the info row during an espresso (or
+// always). The skin reads the numbers; the plugin picks which cells, their colour
+// tokens and how a dot or bar judges a reading against its goal. No plugin code runs.
+export const STRIP_BUILTIN = ['weight', 'pressure', 'flow', 'puckTemp', 'waterTemp', 'step'];
+const STRIP_WITH_GOAL = ['weight', 'pressure', 'flow', 'puckTemp', 'waterTemp'];
+export const STRIP_COLORS = ['pressure', 'flow', 'temp', 'weight', 'ongoing', 'accent', 'text', 'muted', 'red', 'amber'];
+export const STRIP_SHOW = ['shot', 'always'];
+// The info row is a 9-column grid: in the Figma dashboard (a 12-column page) the left
+// control column takes 3 columns and the info row the other 9.
+export const STRIP_COLUMNS = 9;
+export const STRIP_MAX_CELLS = STRIP_COLUMNS;
+const STRIP_DOT_COLORS = { good: 'ongoing', warn: 'amber', bad: 'red' };
+const stripColor = v => (STRIP_COLORS.includes(v) ? v : null);
+
+function parseStripDot(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const green = toNumber(raw.greenWithin);
+    const amber = toNumber(raw.amberWithin);
+    if (green === null || amber === null || green <= 0 || amber <= green || amber > 2) return null;
+    const colors = { ...STRIP_DOT_COLORS };
+    for (const k of Object.keys(colors)) if (stripColor(raw.colors?.[k])) colors[k] = raw.colors[k];
+    return { greenWithin: green, amberWithin: amber, colors };
+}
+
+const gridInt = v => (Number.isInteger(v) && v >= 1 && v <= STRIP_COLUMNS ? v : null);
+
+// Gives every cell a `col` and `span` on the grid. A cell that asks for a column
+// keeps it, one column wide unless it sets `span` (cut to the grid's edge); one that
+// overlaps an earlier cell is dropped. Cells without a column fill the free columns
+// left to right, each taking `span`, or two columns while the free columns allow every
+// cell still to place one, else one.
+export function stripLayout(cells) {
+    const taken = Array(STRIP_COLUMNS + 1).fill(false);
+    const free = (col, span) => col + span - 1 <= STRIP_COLUMNS && taken.slice(col, col + span).every(t => !t);
+    const take = (col, span) => taken.fill(true, col, col + span);
+    const placed = new Map();
+    cells.forEach((cell, i) => {
+        if (!cell.col) return;
+        const span = Math.min(cell.span || 1, STRIP_COLUMNS - cell.col + 1);
+        if (!free(cell.col, span)) return;
+        take(cell.col, span);
+        placed.set(i, { col: cell.col, span });
+    });
+    let autosLeft = cells.filter(c => !c.col).length;
+    cells.forEach((cell, i) => {
+        if (cell.col) return;
+        const freeCols = taken.slice(1).filter(t => !t).length;
+        const want = cell.span || (freeCols >= autosLeft + 1 ? 2 : 1);
+        autosLeft -= 1;
+        for (const span of [...new Set([want, 1])]) {
+            const col = Array.from({ length: STRIP_COLUMNS }, (_, c) => c + 1).find(c => free(c, span));
+            if (col) { take(col, span); placed.set(i, { col, span }); return; }
+        }
+    });
+    return cells.flatMap((cell, i) => {
+        const at = placed.get(i);
+        if (!at) return [];
+        const { col: _c, span: _s, ...rest } = cell;
+        return [{ ...rest, ...at }];
+    }).sort((a, b) => a.col - b.col);
+}
+
+function parseStripCell(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const cell = parseStripCellBody(raw);
+    if (!cell) return null;
+    const col = gridInt(raw.col);
+    const span = gridInt(raw.span);
+    return { ...cell, ...(col && { col }), ...(span && { span }) };
+}
+
+function parseStripCellBody(raw) {
+    const color = stripColor(raw.color);
+    const label = cleanText(raw.label, 12);
+    if (raw.cell == null) { // a cell of the plugin's own: a label and a text
+        const text = cleanText(raw.text, 16);
+        return label && text ? { label, text, ...(color && { color }) } : null;
+    }
+    if (!STRIP_BUILTIN.includes(raw.cell)) return null;
+    const goal = STRIP_WITH_GOAL.includes(raw.cell);
+    const dot = goal && parseStripDot(raw.dot);
+    return { cell: raw.cell, ...(label && { label }), ...(color && { color }),
+        ...(dot && { dot }), ...(goal && raw.bar === true && { bar: true,
+            ...(toNumber(raw.barMax) > 0 && toNumber(raw.barMax) <= BAR_MAX_LIMIT && { barMax: toNumber(raw.barMax) }) }),
+        ...(goal && SURFACE_SIZES.includes(raw.goalSize) && { goalSize: raw.goalSize }) };
+}
+
+// -> a number and its goal for one built-in cell, or nulls when the frame has none.
+// `ctx`: { sample (snapshot), weight, yieldGoal, step: { name, pump } }.
+export function stripReading(cell, { sample = {}, weight = null, yieldGoal = null, step = null } = {}) {
+    const num = v => (Number.isFinite(v) ? v : null);
+    const pos = v => (Number.isFinite(v) && v > 0 ? v : null);
+    switch (cell) {
+        case 'weight': return { value: num(weight), goal: pos(yieldGoal) };
+        // A pressure goal means something only on a pressure step, a flow goal on a flow step.
+        case 'pressure': return { value: num(sample.pressure), goal: step?.pump === 'flow' ? null : pos(sample.targetPressure) };
+        case 'flow': return { value: num(sample.flow), goal: step?.pump === 'pressure' ? null : pos(sample.targetFlow) };
+        case 'puckTemp': return { value: num(sample.groupTemperature), goal: pos(sample.targetGroupTemperature) };
+        case 'waterTemp': return { value: num(sample.mixTemperature), goal: pos(sample.targetMixTemperature) };
+        default: return { value: null, goal: null };
+    }
+}
+
+// -> 'good' | 'warn' | 'bad' by how far `value` is from `goal` (a fraction of it).
+export function stripDotLevel(dot, value, goal) {
+    if (!dot || !Number.isFinite(value) || !Number.isFinite(goal) || goal <= 0) return null;
+    const off = Math.abs(value - goal) / goal;
+    return off <= dot.greenWithin ? 'good' : off <= dot.amberWithin ? 'warn' : 'bad';
+}
+
+// A bar fills against the goal; where the step has none (flow on a pressure step) it
+// fills against a scale: the plugin's `barMax`, else these.
+export const STRIP_BAR_MAX = { pressure: 12, flow: 8, puckTemp: 100, waterTemp: 100 };
+const BAR_MAX_LIMIT = 1000;
+
+// -> how full a bar is, 0..1 (value / goal, or / max without a goal), or null.
+export function stripBarFraction(value, goal, max = null) {
+    const whole = Number.isFinite(goal) && goal > 0 ? goal : max;
+    if (!Number.isFinite(value) || !Number.isFinite(whole) || whole <= 0) return null;
+    return Math.min(1, Math.max(0, value / whole));
+}
+
+function parseStrip(raw, id) {
+    if (!Array.isArray(raw.cells)) return null;
+    const cells = [];
+    for (const item of raw.cells) {
+        const cell = cells.length < STRIP_MAX_CELLS ? parseStripCell(item) : null;
+        if (cell) cells.push(cell);
+    }
+    const laid = stripLayout(cells);
+    if (!laid.length) return null;
+    return { id, kind: 'shot-strip', show: STRIP_SHOW.includes(raw.show) ? raw.show : 'shot', cells: laid };
+}
+
 function parseSurface(raw) {
     if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !ID_RE.test(raw.id)) return null;
     const { id, kind } = raw;
@@ -415,6 +549,7 @@ function parseSurface(raw) {
     }
 
     if (kind === 'tile-mode') return parseMode(raw, id, action);
+    if (kind === 'shot-strip') return parseStrip(raw, id);
 
     if (kind === 'tile-hint' || kind === 'tile-line') {
         if (!TILES.includes(raw.tile)) return null;

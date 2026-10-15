@@ -804,6 +804,8 @@ export function closeExpandedChart() {
     flushMainRender();
 }
 
+export function getCurrentProfile() { return currentProfile; }
+
 export function setCurrentProfile(profile) {
     currentProfile = profile;
     resetProfileTracking(); // Encapsulate the reset logic

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scaleDoseWeight, scaleDoseFor, fitOverlaySize, parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
+import { STRIP_BAR_MAX, stripLayout, STRIP_COLUMNS, stripReading, stripDotLevel, stripBarFraction, STRIP_MAX_CELLS, scaleDoseWeight, scaleDoseFor, fitOverlaySize, parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, RESERVED_ENDPOINTS, MAX_SURFACES,
     nextStepSize, resolveStepSize, formatStepSize } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
@@ -566,4 +566,99 @@ test('pushWants: only {"what":"skin"} skips the workflow re-read', () => {
 test('an empty surfaces list with live is a valid answer', () => {
     assert.deepEqual(parseSkinAnswer({ version: 1, surfaces: [], live: { endpoint: 'changed' } }),
         { surfaces: [], live: { endpoint: 'changed' } });
+});
+
+const strip = body => parseSkinAnswer({ version: 1, surfaces: [{ id: 's', kind: 'shot-strip', ...body }] }).surfaces[0];
+
+test('shot-strip: built-in and own cells parse, bad ones drop, nine at most, show defaults to shot', () => {
+    const s = strip({ cells: [
+        { cell: 'weight', color: 'weight', bar: true, dot: { greenWithin: 0.05, amberWithin: 0.15 } },
+        { cell: 'step', bar: true, dot: { greenWithin: 0.05, amberWithin: 0.15 }, color: 'nope' },
+        { cell: 'nope' }, { label: 'Pre', text: '12 s', color: 'accent' }, { label: 'x' }, null,
+        ...Array(8).fill({ cell: 'flow' })] });
+    assert.equal(s.show, 'shot');
+    assert.equal(s.cells.length, STRIP_MAX_CELLS);
+    assert.deepEqual(s.cells[0].dot.colors, { good: 'ongoing', warn: 'amber', bad: 'red' });
+    assert.equal(s.cells[0].bar, true);
+    assert.equal(strip({ cells: [{ cell: 'flow', goalSize: 'medium' }, { cell: 'step', goalSize: 'large' }, { cell: 'weight', goalSize: 'huge' }] }).cells
+        .map(c => c.goalSize).join(), 'medium,,');
+    assert.equal(strip({ cells: [{ cell: 'flow', goalSize: 'small' }] }).cells[0].goalSize, 'small');
+    assert.deepEqual(s.cells[1], { cell: 'step', col: 2, span: 1 }); // no goal: dot, bar and the unknown colour are dropped
+    assert.deepEqual(s.cells[2], { label: 'Pre', text: '12 s', color: 'accent', col: 3, span: 1 });
+    assert.equal(strip({ show: 'always', cells: [{ cell: 'flow' }] }).show, 'always');
+    assert.equal(strip({ show: 'x', cells: [{ cell: 'flow' }] }).show, 'shot');
+    assert.equal(strip({ cells: [] }), undefined);
+    assert.equal(strip({}), undefined);
+});
+
+test('shot-strip: dot thresholds must be ordered and colours come from the token list', () => {
+    const dot = d => strip({ cells: [{ cell: 'flow', dot: d }] }).cells[0].dot;
+    assert.equal(dot({ greenWithin: 0.2, amberWithin: 0.1 }), undefined);
+    assert.equal(dot({ greenWithin: 0, amberWithin: 0.1 }), undefined);
+    assert.equal(dot({ greenWithin: 0.1 }), undefined);
+    assert.deepEqual(dot({ greenWithin: 0.1, amberWithin: 0.3, colors: { good: 'flow', bad: '#f00', warn: 7 } }).colors,
+        { good: 'flow', warn: 'amber', bad: 'red' });
+});
+
+test('shot-strip: one per plugin, the second is dropped', () => {
+    const cells = [{ cell: 'flow' }];
+    const out = parseSkinAnswer({ version: 1, surfaces: [
+        { id: 'a', kind: 'shot-strip', cells }, { id: 'b', kind: 'shot-strip', cells }] });
+    assert.deepEqual(out.surfaces.map(x => x.id), ['a']);
+});
+
+test('stripReading: goals follow the step\'s control mode', () => {
+    const sample = { pressure: 8.5, flow: 2, targetPressure: 9, targetFlow: 2.2, groupTemperature: 92, mixTemperature: 93, targetMixTemperature: 93, targetGroupTemperature: 90 };
+    assert.deepEqual(stripReading('pressure', { sample, step: { pump: 'pressure' } }), { value: 8.5, goal: 9 });
+    assert.equal(stripReading('pressure', { sample, step: { pump: 'flow' } }).goal, null);
+    assert.equal(stripReading('flow', { sample, step: { pump: 'pressure' } }).goal, null);
+    assert.equal(stripReading('flow', { sample }).goal, 2.2);
+    assert.deepEqual(stripReading('weight', { weight: 20.5, yieldGoal: 36 }), { value: 20.5, goal: 36 });
+    assert.deepEqual(stripReading('weight', {}), { value: null, goal: null });
+    assert.equal(stripReading('waterTemp', { sample: { mixTemperature: 90, targetMixTemperature: 0 } }).goal, null);
+    assert.deepEqual(stripReading('puckTemp', { sample }), { value: 92, goal: 90 });
+    assert.equal(stripReading('waterTemp', { sample }).goal, 93);
+});
+
+test('stripDotLevel and stripBarFraction judge a reading against its goal', () => {
+    const dot = { greenWithin: 0.05, amberWithin: 0.15 };
+    assert.equal(stripDotLevel(dot, 9.4, 9), 'good');
+    assert.equal(stripDotLevel(dot, 8.0, 9), 'warn');
+    assert.equal(stripDotLevel(dot, 6, 9), 'bad');
+    assert.equal(stripDotLevel(dot, 12, 9), 'bad'); // over counts as much as under
+    assert.equal(stripDotLevel(dot, null, 9), null);
+    assert.equal(stripDotLevel(dot, 9, 0), null);
+    assert.equal(stripDotLevel(null, 9, 9), null);
+    assert.equal(stripBarFraction(18, 36), 0.5);
+    assert.equal(stripBarFraction(50, 36), 1);
+    assert.equal(stripBarFraction(-1, 36), 0);
+    assert.equal(stripBarFraction(5, 0), null);
+    assert.equal(stripBarFraction(2, null, 8), 0.25); // no goal: the scale
+    assert.equal(stripBarFraction(2, 4, 8), 0.5); // a goal wins
+    assert.equal(stripBarFraction(2, null, null), null);
+    assert.equal(strip({ cells: [{ cell: 'flow', bar: true, barMax: 1001 }, { cell: 'flow', bar: true, barMax: '6' }] }).cells
+        .map(c => c.barMax).join(), ',6');
+    assert.deepEqual(STRIP_BAR_MAX, { pressure: 12, flow: 8, puckTemp: 100, waterTemp: 100 });
+    assert.equal(strip({ cells: [{ cell: 'flow', bar: true, barMax: 6 }, { cell: 'flow', bar: true, barMax: -1 }, { cell: 'flow', barMax: 6 }] }).cells
+        .map(c => c.barMax).join(), '6,,');
+});
+
+test('stripLayout: nine columns; explicit columns kept, overlaps dropped, the rest fill left to right', () => {
+    assert.equal(STRIP_COLUMNS, 9);
+    const at = cells => stripLayout(cells).map(c => `${c.id}:${c.col}+${c.span}`).join(' ');
+    assert.equal(at([{ id: 'a' }, { id: 'b' }, { id: 'c' }]), 'a:1+2 b:3+2 c:5+2');
+    assert.equal(at(Array.from({ length: 9 }, (_, i) => ({ id: i }))), '0:1+1 1:2+1 2:3+1 3:4+1 4:5+1 5:6+1 6:7+1 7:8+1 8:9+1');
+    assert.equal(at([{ id: 'a' }, { id: 'b', col: 1, span: 3 }]), 'b:1+3 a:4+2'); // explicit cells are placed first
+    assert.equal(at([{ id: 'a', col: 3, span: 2 }, { id: 'b', col: 4 }]), 'a:3+2'); // b overlaps a: dropped
+    assert.equal(at([{ id: 'a', col: 8, span: 5 }]), 'a:8+2'); // cut at the grid's edge
+    assert.equal(at([{ id: 'a', col: 1, span: 9 }, { id: 'b' }]), 'a:1+9'); // no room left
+    assert.equal(at([{ id: 'a', col: 1 }, { id: 'b', col: 2 }, { id: 'c', col: 3 }]), 'a:1+1 b:2+1 c:3+1'); // col alone is one column
+    assert.equal(at([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }]), '1:1+2 2:3+2 3:5+2 4:7+2 5:9+1'); // 2 columns while room allows
+    assert.equal(at([{ id: 'w', col: 1, span: 3 }, ...[1, 2, 3, 4, 5].map(id => ({ id }))]), 'w:1+3 1:4+2 2:6+1 3:7+1 4:8+1 5:9+1');
+});
+
+test('shot-strip: col and span parse as grid integers and place the cells', () => {
+    const s = strip({ cells: [{ cell: 'weight', col: 1, span: 4, bar: true }, { cell: 'flow', col: 12 }, { cell: 'pressure', col: 6, span: 0 },
+        { cell: 'step', col: 9, span: 1.5 }] });
+    assert.deepEqual(s.cells.map(c => `${c.cell}:${c.col}+${c.span}`), ['weight:1+4', 'pressure:6+1', 'flow:7+2', 'step:9+1']); // flow's col 12 is off the grid: it fills free columns
 });
