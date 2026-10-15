@@ -31,6 +31,7 @@ import { loadStyle } from './vendor-loader.js';
 import { loadECharts } from './echarts-loader.js';
 import { initHelpLauncher } from './help-launcher.js';
 import { clearDyeWorkflowContext } from './dyeStrip.js';
+import { SLEEP_PROFILE_KEY, sleepProfileMark, shouldApplyWakeProfile } from './wake-profile.js';
 import { isVisualizerEnabled, isAutoUploadEnabled } from './visualizer.js';
 
 window.app = { api, ui, chart };
@@ -819,6 +820,15 @@ function handleData(data) {
         ui.updateMachineStatus({ status: "Disconnected" }); // Show disconnected when in error state
     }
 
+    // Remember which profile the machine went to sleep with, so waking can tell a
+    // profile chosen during sleep from the one it was left on.
+    if (state === MachineState.SLEEPING && previousState.state !== MachineState.SLEEPING) {
+        getWorkflow().then(wf => {
+            const mark = sleepProfileMark(wf);
+            try { if (mark) sessionStorage.setItem(SLEEP_PROFILE_KEY, mark); } catch (e) { /* private mode */ }
+        }).catch(() => {});
+    }
+
     // Reload data when machine wakes from sleep
     const wasSleeping = previousState.state === MachineState.SLEEPING;
     if (wasSleeping && state !== MachineState.SLEEPING && state !== MachineState.ERROR) {
@@ -827,7 +837,14 @@ function handleData(data) {
 
         if (api.isWakeProfileEnabled()) {
             const wakeProfileId = api.getWakeProfileId();
-            if (wakeProfileId) profileManager.loadProfileForWake(wakeProfileId);
+            if (wakeProfileId) {
+                let mark = null;
+                try { mark = sessionStorage.getItem(SLEEP_PROFILE_KEY); sessionStorage.removeItem(SLEEP_PROFILE_KEY); } catch (e) { /* private mode */ }
+                getWorkflow().then(wf => {
+                    if (shouldApplyWakeProfile(mark, wf)) return profileManager.loadProfileForWake(wakeProfileId);
+                    logger.info('Wake profile skipped: a different profile was chosen while the machine slept.');
+                }).catch(() => profileManager.loadProfileForWake(wakeProfileId));
+            }
         }
 
         // Hold off "[Reconnect]" — REA fires devices ws scanning ~3s after wake.
