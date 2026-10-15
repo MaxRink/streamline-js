@@ -695,10 +695,12 @@ function lift(module, patterns) {
         /function handleWorkflowUpdatedForAutoSave\(workflow, dataToSend\) \{[\s\S]*?\r?\n\}/,
     ]);
 
-    const build = ({ patch = () => ({ dose: 1 }) } = {}) => {
+    // `records` is dyeStrip's dye2RecordsDialIn: true means the installed DYE2 does
+    // this itself and none of the lifted code may write (see pluginRecordsDialIn).
+    const build = ({ patch = () => ({ dose: 1 }), records = false } = {}) => {
         const saveCalls = [];
         const fn = new Function(
-            'AUTOSAVE_TARGETS', 'AUTOSAVE_DEBOUNCE_MS', 'isDye2Enabled', 'setTimeout', 'clearTimeout', 'saveItemFields', 'logger', 'profileDrifted',
+            'AUTOSAVE_TARGETS', 'AUTOSAVE_DEBOUNCE_MS', 'isDye2Enabled', 'setTimeout', 'clearTimeout', 'saveItemFields', 'logger', 'profileDrifted', 'dye2RecordsDialIn',
             `${body}\nreturn { handleWorkflowUpdatedForAutoSave, setActiveItem: v => { activeItem = v; }, getActiveItem: () => activeItem };`
         );
         const handler = fn(
@@ -710,6 +712,7 @@ function lift(module, patterns) {
             async (kind, id, fields) => { saveCalls.push({ kind, id, fields }); },
             { error() {}, info() {} },
             profileDrifted,
+            records,
         );
         return { ...handler, saveCalls };
     };
@@ -736,5 +739,18 @@ function lift(module, patterns) {
         assert.notEqual(getActiveItem(), null);
         assert.equal(saveCalls.length, 1);
         assert.deepEqual(saveCalls[0], { kind: 'recipe', id: '1', fields: { dose: 1 } });
+    });
+
+    test('a DYE2 that records dial-in itself: the skin writes nothing, whatever is armed', () => {
+        const { handleWorkflowUpdatedForAutoSave, setActiveItem, getActiveItem, saveCalls } = build({
+            records: true,
+            patch: () => { throw new Error('must not run while DYE2 records for itself'); },
+        });
+        setActiveItem({ kind: 'recipe', id: '1', profileId: null, profileFingerprint: profileFingerprint(profileA) });
+
+        handleWorkflowUpdatedForAutoSave({ profile: profileA }, { profile: profileA });
+
+        assert.deepEqual(saveCalls, []);
+        assert.notEqual(getActiveItem(), null); // not its job to clear either
     });
 }

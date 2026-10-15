@@ -136,3 +136,31 @@ export function changedFields(patch, stored) {
     }
     return out;
 }
+
+// ── DYE2 records its own dial-in ────────────────────────────────────────────
+// A DYE2 that declares a `selection` http endpoint holds `events.workflow` and
+// records dashboard dial-in edits onto the armed item itself, off Decaid's
+// workflowUpdated push. Against that plugin the skin is read-only again (see the
+// single-writer rule in dye2-plugin/docs/KV_CONTRACT.md): it POSTs what it
+// applied and writes nothing. An older DYE2 declares no such endpoint, and the
+// auto-save in dyeStrip.js stays the only way its items follow the dashboard.
+// The endpoint list comes from GET /api/v1/plugins, which the strip already reads.
+export function pluginRecordsDialIn(plugins, pluginId = 'dye2.reaplugin') {
+    const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === pluginId) : null;
+    if (!plugin?.loaded || !Array.isArray(plugin.api)) return false;
+    return plugin.api.some(e => e?.type === 'http' && e?.id === 'selection');
+}
+
+/**
+ * Which cell to highlight after a trip to DYE2, from the selection DYE2 itself
+ * persisted (KV key `selection`). Returns the cached item's own id — compared
+ * strictly against it when rendering — or null when that item is gone. Only the
+ * highlight: DYE2 owns the arming and the profile-drift check now.
+ */
+export function armedSelectionId(sel, { recipes, favs }) {
+    if (!sel || sel.id == null) return null;
+    const list = sel.kind === 'recipe' ? recipes : sel.kind === 'favourite' ? favs : null;
+    if (!Array.isArray(list)) return null;
+    const found = list.find(x => x && String(x.id) === String(sel.id));
+    return found ? found.id : null;
+}

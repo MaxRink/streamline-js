@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
-    parseDyeReturn, resolveReturn, changedFields,
+    parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -97,4 +97,32 @@ test('scopedClearContext: only flagged, only present, flags go with the values',
     );
     // an unknown flag is cleared as a flag only, never as a value
     assert.deepEqual(scopedClearContext({ profile: 'p', extras: { dye: { v: 1, profile: true } } }), { extras: { dye: { profile: null } } });
+});
+
+test('pluginRecordsDialIn: only a loaded DYE2 that declares the selection endpoint', () => {
+    const api = [{ type: 'http', id: 'dashboard' }, { type: 'http', id: 'selection' }, { type: 'websocket', id: 'changed' }];
+    assert.equal(pluginRecordsDialIn([{ id: 'dye2.reaplugin', loaded: true, api }]), true);
+    // an older DYE2: no such endpoint, so the skin keeps its own auto-save
+    assert.equal(pluginRecordsDialIn([{ id: 'dye2.reaplugin', loaded: true, api: [{ type: 'http', id: 'dashboard' }] }]), false);
+    assert.equal(pluginRecordsDialIn([{ id: 'dye2.reaplugin', loaded: false, api }]), false);
+    // a websocket of the same name is not the endpoint we POST to
+    assert.equal(pluginRecordsDialIn([{ id: 'dye2.reaplugin', loaded: true, api: [{ type: 'websocket', id: 'selection' }] }]), false);
+    assert.equal(pluginRecordsDialIn([{ id: 'other.reaplugin', loaded: true, api }]), false);
+    // unreachable bridge / junk: fall back to the skin's own auto-save, never throw
+    assert.equal(pluginRecordsDialIn(null), false);
+    assert.equal(pluginRecordsDialIn([]), false);
+    assert.equal(pluginRecordsDialIn([{ id: 'dye2.reaplugin', loaded: true }]), false);
+});
+
+test('armedSelectionId: the cached item own id, or null when it is gone', () => {
+    const lists = { recipes: [{ id: '2' }], favs: [{ id: 7 }] };
+    assert.equal(armedSelectionId({ kind: 'recipe', id: '2' }, lists), '2');
+    // ids compare as strings but the cached item's own type is returned, since the
+    // highlight is compared strictly against it
+    assert.equal(armedSelectionId({ kind: 'favourite', id: '7' }, lists), 7);
+    assert.equal(armedSelectionId({ kind: 'recipe', id: '9' }, lists), null);
+    assert.equal(armedSelectionId({ kind: 'other', id: '2' }, lists), null);
+    assert.equal(armedSelectionId(null, lists), null);
+    assert.equal(armedSelectionId({ kind: 'recipe' }, lists), null);
+    assert.equal(armedSelectionId({ kind: 'recipe', id: '2' }, { recipes: undefined, favs: [] }), null);
 });

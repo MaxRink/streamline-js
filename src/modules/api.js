@@ -1240,14 +1240,16 @@ export async function deleteKVValue(namespace, key) {
 
 // ─── DYE2 KV bridge ──────────────────────────────────────────────────────────
 // DYE2 (a separate flutter_js plugin) persists auto-favourites and recipes as a
-// single JSON array per key under this namespace. Streamline is normally a
-// read-only consumer of it (see dye2-plugin/KV_CONTRACT.md) — the one sanctioned
-// exception is dyeStrip.js's recipe/favourite auto-save, which patches a single
-// item's dashboardVariables/snapshot fields onto a freshly re-read array. There
-// is no field-level API (DYE2's own pages mutate the same way — read the whole
-// array, edit one item client-side, POST the whole array back), and no
-// version/ETag on this endpoint, so a write here races any concurrent DYE2
-// write the same way DYE2's own pages would race each other.
+// single JSON array per key under this namespace. Streamline is a read-only
+// consumer of it (see dye2-plugin/KV_CONTRACT.md). The one write left is
+// dyeStrip.js's recipe/favourite auto-save, and it is a FALLBACK: a DYE2 that
+// declares a `selection` endpoint records dial-in edits itself and the skin then
+// writes nothing. Against an older DYE2 the auto-save patches a single item's
+// dashboardVariables/snapshot fields onto a freshly re-read array. There is no
+// field-level API (DYE2's own pages mutate the same way — read the whole array,
+// edit one item client-side, POST the whole array back), and no version/ETag on
+// this endpoint, so a write here races any concurrent DYE2 write the same way
+// DYE2's own pages would race each other.
 export const DYE2_KV_NAMESPACE = 'dye2.reaplugin';
 
 // Read one DYE2 collection key as an array. A never-written key makes the bridge
