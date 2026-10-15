@@ -12,7 +12,7 @@ export const MAX_MODES_PER_PLUGIN_TILE = 3; // tile-modes one plugin may add to 
 
 // `menu-item` adds an entry to one of the skin's long-press menus. The list is fixed
 // and each menu has its own small context (see docs/plugin-surfaces.md).
-export const MENUS = ['shot-history', 'favourite'];
+export const MENUS = ['shot-history', 'favourite', 'profile'];
 export const MAX_MENU_ITEMS_PER_PLUGIN = 3; // per menu
 
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];

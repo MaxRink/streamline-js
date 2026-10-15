@@ -677,6 +677,7 @@ test('shot-strip: col and span parse as grid integers and place the cells', () =
         const [ok] = answer([{ id: 'a', kind: 'menu-item', menu: 'shot-history', label: 'Rate this shot', action: open }]);
         assert.deepEqual(ok, { id: 'a', kind: 'menu-item', menu: 'shot-history', label: 'Rate this shot',
             action: { type: 'open', view: 'rate', presentation: 'overlay' } });
+        assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'profile', label: 'x', action: open }]).length, 1);
         assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'nope', label: 'x', action: open }]).length, 0);
         assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'favourite', label: '', action: open }]).length, 0);
         assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'favourite', label: 'x' }]).length, 0);

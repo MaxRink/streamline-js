@@ -159,7 +159,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `kind` | Where | Fields |
 |---|---|---|
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
-| `menu-item` | the skin's long-press menus | `menu` (`shot-history` or `favourite`), `label` (40), `action` (`open` or `call`, required); see Menu items |
+| `menu-item` | the skin's long-press menus | `menu` (`shot-history`, `favourite` or `profile`), `label` (40), `action` (`open` or `call`, required); see Menu items |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
 | `shot-strip` | the info row (Water, Steam, Tank, Clock, Weight) | `cells` (1–9), `show` (`shot` default, or `always`); see Shot strip |
 | `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
@@ -280,6 +280,7 @@ A `menu-item` adds an entry to one of the skin's long-press menus, below a divid
 |---|---|---|
 | `shot-history` | long-press on the shot history panel | `shotId` |
 | `favourite` | long-press on a top favourite button | `slot` (1-based), and `profileId` when the slot has a profile |
+| `profile` | long-press on a profile in the profile selector | `profileId` |
 
 - **`open`** works as everywhere else (`page` or `overlay`, `fit`, `closeOnShot`). The context is added to the page's
   URL as query parameters (`?shotId=...`, `?slot=2&profileId=...`).

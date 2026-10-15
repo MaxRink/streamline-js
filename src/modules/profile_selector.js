@@ -8,6 +8,7 @@ import { initChart, plotProfile } from './chart.js';
 import { translatePage, getTranslation } from './i18n.js';
 import { loadPage } from './router.js';
 import { openContextMenu, closeContextMenu } from './context-menu.js';
+import { pluginMenuEntries } from './plugin-menu-items.js';
 import { showProfileQrModal, initQrShareModal } from './qrShare.js';
 
 const initializedProfileRoots = new WeakSet();
@@ -524,6 +525,8 @@ function showProfileContextMenu(key, profileRecord, anchorEl) {
         },
     ];
 
+    // Entries plugins add (kind `menu-item`, menu `profile`) for the profile pressed.
+    items.push(...pluginMenuEntries('profile', { profileId: String(key) }));
     openContextMenu(anchorEl, items);
 }
 
