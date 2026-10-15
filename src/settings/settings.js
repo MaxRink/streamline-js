@@ -7230,6 +7230,7 @@ function setupVisualizerEventListeners() {
             });
             passwordInput.value = '';
             visualizerPasswordIsSet = visualizerSaved.passwordIsSet;
+            applyVisualizerServerForm();
             setStatus(`${getTranslation('Active Visualizer server')}: ${serverUrl}`);
             ui.showToast('Visualizer settings saved successfully', 3000, 'success');
         } catch (error) {
