@@ -7,7 +7,14 @@ export const SLEEP_PROFILE_KEY = 'streamline.sleepProfile';
 
 /** What identifies the profile in the workflow at the moment the machine goes to sleep. */
 export function sleepProfileMark(workflow) {
-    return profileFingerprint(workflow?.profile);
+    return identity(workflow?.profile);
+}
+
+// The yield is a dial-in value (the dashboard folds it into target_weight), not which
+// profile was chosen, so changing it while asleep must not count as a different profile.
+function identity(profile) {
+    if (!profile) return null;
+    return profileFingerprint({ ...profile, target_weight: undefined, target_volume: undefined });
 }
 
 /**
@@ -18,7 +25,7 @@ export function sleepProfileMark(workflow) {
  */
 export function shouldApplyWakeProfile(mark, liveWorkflow) {
     if (!mark) return true;
-    const live = profileFingerprint(liveWorkflow?.profile);
+    const live = identity(liveWorkflow?.profile);
     if (!live) return true;
     return live === mark;
 }

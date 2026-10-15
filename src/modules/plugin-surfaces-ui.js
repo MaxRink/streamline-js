@@ -240,7 +240,10 @@ function openOverlay(plugin, action, pageUrl, onClose, context) {
     let lastNumpadCancelAt = 0;
     // `fallback`: the overlay never became ready and the page is opened instead.
     // onClose (re-dim) must not run then, or the page opens at saver brightness.
+    let finished = false;
     const finish = (event, fallback = false) => {
+        if (finished) return;
+        finished = true;
         clearTimeout(timer);
         clearTimeout(graceTimer);
         window.removeEventListener('message', onMessage);
@@ -256,8 +259,11 @@ function openOverlay(plugin, action, pageUrl, onClose, context) {
     };
     // `closeOnShot`: tell the page, then close, so a plugin page never covers a shot.
     const onShotStart = () => {
+        document.removeEventListener('streamline:espresso-start', onShotStart);
         try { frame.contentWindow?.postMessage({ type: 'streamline:espresso-start' }, frameOrigin); } catch { /* frame gone */ }
-        finish();
+        // The message is a queued task: tearing the frame down in this one would discard
+        // the page before it ran.
+        setTimeout(() => finish(), 80);
     };
     if (action.closeOnShot) document.addEventListener('streamline:espresso-start', onShotStart);
     const onMessage = event => {
@@ -850,7 +856,11 @@ export async function refreshPluginSurfaces() {
             if (endpoint) live.set(plugin.id, endpoint);
         }
         syncLive(live);
-        setMenuEntries(entries.filter(e => e.surface.kind === 'menu-item'));
+        // Only entries that can run: a call needs an endpoint the plugin declares, an open
+        // needs its `ui` page. An entry that does nothing when tapped is worse than none.
+        setMenuEntries(entries.filter(e => e.surface.kind === 'menu-item' && (e.surface.action?.type === 'call'
+            ? callableEndpoint(e.plugin, e.surface.action.endpoint)
+            : !!pluginUiUrl(e.plugin, API_BASE_URL, null, { view: e.surface.action?.view }))));
         // Skip the DOM work when nothing changed: a rebuild resizes the header
         // controls, which re-runs the strip fit.
         const key = JSON.stringify(entries.map(e => [e.plugin.id, e.surface]));

@@ -1030,7 +1030,9 @@ const DYE_CONTEXT_FIELDS = {
     beanBatchId: null, coffeeName: null, coffeeRoaster: null,
     grinderId: null, grinderModel: null,
     baristaName: null, drinkerName: null,
-    extras: { basketId: null, basketName: null, rpm: null, note: null },
+    // The marker goes with the values: left behind, its stale flags would have the
+    // scoped clean-up null whatever another plugin sets under those names later.
+    extras: { basketId: null, basketName: null, rpm: null, note: null, dye: null },
 };
 
 // Is there anything to clear? Without this the post-shot and boot hooks would PUT
@@ -1057,7 +1059,7 @@ async function scopedClearSupported() {
     try {
         const plugins = await getPlugins();
         const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === PLUGIN_ID) : null;
-        value = !!plugin && !isOlderVersion(plugin.version, DYE_MARKER_VERSION);
+        value = !!plugin && plugin.loaded !== false && !isOlderVersion(plugin.version, DYE_MARKER_VERSION);
     } catch (e) { /* treated as unsupported */ }
     scopedClearCache = { at: Date.now(), value };
     return value;

@@ -324,7 +324,7 @@ function lift(module, patterns) {
             'grinderModel', 'baristaName', 'drinkerName']) {
             assert.equal(sent[key], null, key);
         }
-        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null });
+        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null, dye: null });
         assert.ok(!('targetDoseWeight' in sent));
         assert.ok(!('targetYield' in sent));
         assert.ok(!('grinderSetting' in sent), 'the grind tile is not DYE2-owned');

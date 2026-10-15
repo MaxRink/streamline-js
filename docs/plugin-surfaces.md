@@ -285,8 +285,9 @@ A `menu-item` adds an entry to one of the skin's long-press menus, below a divid
 - **`open`** works as everywhere else (`page` or `overlay`, `fit`, `closeOnShot`). The context is added to the page's
   URL as query parameters (`?shotId=...`, `?slot=2&profileId=...`).
 - **`call`** POSTs the context as a JSON object (`{"shotId":"..."}`) to the plugin's own http endpoint; the endpoint
-  must be declared in the manifest, and `skin` and Decaid's own plugin routes are refused. The skin re-reads `skin`
-  afterwards. A failed call shows a short error toast.
+  must be declared in the manifest, and `skin` and Decaid's own plugin routes are refused. After a successful call the
+  skin re-reads `skin`; a failed one shows a short error toast. An entry whose endpoint (or `ui` page) the plugin does
+  not declare is not shown.
 - **Labels** are at most 40 characters, written with `textContent`, and shown with the plugin's name after them
   (`Rate this shot · Derek`, name cut at 14 characters), so an entry cannot pose as a built-in one.
 - **Limits:** at most 3 per plugin per menu, 6 per menu across all plugins (the first ones win), and the shared 16 surfaces

@@ -98,7 +98,7 @@ const CAPS = { label: 24, text: 40, hint: 24, title: 80, image: 2048 };
 function cleanText(value, max) {
     if (typeof value !== 'string') return '';
     // eslint-disable-next-line no-control-regex
-    return value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
+    return value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, '').trim().slice(0, max);
 }
 
 function httpsUrl(value) {

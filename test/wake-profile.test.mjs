@@ -21,3 +21,8 @@ test('no mark or no readable workflow keeps the old behaviour (load it)', () => 
     assert.equal(shouldApplyWakeProfile(sleepProfileMark({ profile: a }), {}), true);
     assert.equal(sleepProfileMark(null), null);
 });
+
+test('a yield changed while asleep is not a different profile', () => {
+    const mark = sleepProfileMark({ profile: a });
+    assert.equal(shouldApplyWakeProfile(mark, { profile: { ...a, target_weight: 42 } }), true);
+});

@@ -1113,7 +1113,7 @@ function openFavoriteContextMenu(button, index) {
 
     // Entries plugins add (kind `menu-item`, menu `favourite`): the slot, 1-based as the
     // user counts them, and the profile on it when there is one.
-    items.push(...pluginMenuEntries('favourite', { slot: index + 1, ...(profileKey && { profileId: String(profileKey) }) }));
+    items.push(...pluginMenuEntries('favourite', { slot: index + 1, ...(assigned && { profileId: String(profileKey) }) }));
 
     openContextMenu(button, items);
 }

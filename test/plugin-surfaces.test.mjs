@@ -716,6 +716,10 @@ test('shot-strip: col and span parse as grid integers and place the cells', () =
         assert.deepEqual(ran, [['a', { shotId: '9' }]]);
         assert.deepEqual(pluginMenuEntries('favourite', { slot: 2 }).map(i => i.label).slice(1), ['Lb · Derek']);
         assert.equal(menuItemLabel('Rate', ''), 'Rate');
+        // a blank or invisible name falls back to the id, never to a bare label
+        setMenuRunner(() => {});
+        setMenuEntries([{ plugin: { id: 'derek', name: '  \u200B ' }, surface: { id: 'z', kind: 'menu-item', menu: 'favourite', label: 'Delete shot', action: open } }]);
+        assert.equal(pluginMenuEntries('favourite', {})[1].label, 'Delete shot · derek');
         setMenuRunner(null);
         assert.deepEqual(pluginMenuEntries('shot-history', {}), []);
     });

@@ -18,9 +18,12 @@ export function setMenuRunner(fn) {
     runner = typeof fn === 'function' ? fn : null;
 }
 
+// Zero-width and bidi controls could hide a name or reorder a label.
+const stripInvisible = value => String(value ?? '').replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, '').trim();
+
 /** "Rate this shot · Derek"; the plugin's name keeps it from posing as a built-in. */
 export function menuItemLabel(label, pluginName) {
-    const name = String(pluginName || '').trim().slice(0, NAME_CAP);
+    const name = stripInvisible(pluginName).slice(0, NAME_CAP);
     return name ? `${label} · ${name}` : label;
 }
 
@@ -38,7 +41,7 @@ export function pluginMenuEntries(menu, context = {}) {
     return [
         { divider: true },
         ...picked.map(entry => ({
-            label: menuItemLabel(entry.surface.label, entry.plugin?.name || entry.plugin?.id),
+            label: menuItemLabel(entry.surface.label, stripInvisible(entry.plugin?.name) || entry.plugin?.id),
             onSelect: () => run(entry, context),
         })),
     ];
