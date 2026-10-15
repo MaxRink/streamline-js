@@ -382,6 +382,12 @@ An invalid action drops the action only; the surface still shows, inert.
     answers. A request is answered only while the page the overlay opened is in the frame, only right after a tap
     (browser user activation), and not within 3 seconds of a cancel, so a page cannot keep the numpad over the
     overlay's close button; send the request from a tap handler and do not re-ask at once after `null`.
+  - **No flash of the default window.** Add `"fit": true` to the `open` action (`{ "type": "open", "view": "next",
+    "presentation": "overlay", "fit": true }`) when your page will post `streamline:size`. The dialog then stays
+    invisible (transparent, with the frame and the close button hidden) until the first size message arrives, so the
+    default window never shows. If the page posts `streamline:ready` but no size within 300 ms, the skin shows
+    the default window with its solid background, as it does without `fit`. If `ready` never comes, the page opens
+    as usual after 3 seconds. `fit` is ignored on `presentation: "page"`. Post the first size from your load handler, measured with `getBoundingClientRect()`; a hidden frame may not run `requestAnimationFrame` or `ResizeObserver` callbacks until it is shown, so use those only for later size changes. While the dialog is invisible a tap on it or Escape still closes it.
 - **`step`**: `{ "type": "step", "field": "targetDoseWeight", "by": -0.5 }` on tile kinds only. Moves the
   tile's current value by `by` (a non-zero number, at most 100 either way) and goes through the same setter as
   `set`, so the result is clamped to the same range and the profile remembers it. `field` is `targetDoseWeight`,

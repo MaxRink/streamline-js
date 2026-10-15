@@ -110,10 +110,14 @@ function httpsUrl(value) {
 // Anything unknown falls back to `page` and never invalidates the surface.
 function parseOpen(action) {
     const view = typeof action.view === 'string' ? action.view : '';
+    const presentation = PRESENTATIONS.includes(action.presentation) ? action.presentation : 'page';
+    // `fit`: the overlay's page will report its size (streamline:size), so the dialog stays
+    // invisible until it does. Only an overlay has a dialog to hold back.
     return {
         type: 'open',
         view: ID_RE.test(view) ? view : '',
-        presentation: PRESENTATIONS.includes(action.presentation) ? action.presentation : 'page',
+        presentation,
+        ...(presentation === 'overlay' && action.fit === true && { fit: true }),
     };
 }
 
