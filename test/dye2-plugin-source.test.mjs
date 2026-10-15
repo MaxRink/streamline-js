@@ -695,12 +695,12 @@ function lift(module, patterns) {
         /function handleWorkflowUpdatedForAutoSave\(workflow, dataToSend\) \{[\s\S]*?\r?\n\}/,
     ]);
 
-    // `records` is dyeStrip's dye2RecordsDialIn: true means the installed DYE2 does
+    // `records` is dyeStrip's dye2Armed: true means DYE2 confirmed it armed the item and does
     // this itself and none of the lifted code may write (see pluginRecordsDialIn).
     const build = ({ patch = () => ({ dose: 1 }), records = false } = {}) => {
         const saveCalls = [];
         const fn = new Function(
-            'AUTOSAVE_TARGETS', 'AUTOSAVE_DEBOUNCE_MS', 'isDye2Enabled', 'setTimeout', 'clearTimeout', 'saveItemFields', 'logger', 'profileDrifted', 'dye2RecordsDialIn',
+            'AUTOSAVE_TARGETS', 'AUTOSAVE_DEBOUNCE_MS', 'isDye2Enabled', 'setTimeout', 'clearTimeout', 'saveItemFields', 'logger', 'profileDrifted', 'dye2Armed',
             `${body}\nreturn { handleWorkflowUpdatedForAutoSave, setActiveItem: v => { activeItem = v; }, getActiveItem: () => activeItem };`
         );
         const handler = fn(

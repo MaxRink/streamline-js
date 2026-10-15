@@ -65,6 +65,11 @@ let activeItemId = null; // transient highlight of the last-applied F/R cell
 // Does the installed DYE2 record dial-in edits itself? Re-read with the strip data
 // (a plugin update lands without a skin reload). False keeps the legacy auto-save.
 let dye2RecordsDialIn = false;
+// DYE2 confirmed (200) the item the last apply armed, so it is the one recording and
+// the skin writes nothing. The capability flag above is only a hint read from the
+// plugin list; this is what decides who records, per apply.
+let dye2Armed = false;
+let applySeq = 0; // taps in quick succession: only the newest apply arms
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -192,13 +197,22 @@ function fitStripCells(nav) {
 // recognise this apply as its own echo. Arming also cancels whatever record DYE2 had
 // pending for the item armed before. An id with no stable identity (a `recent:` entry)
 // posts an empty body, which clears the selection.
-function postSelection(kind, id) {
+async function postSelection(kind, id) {
     const body = (id != null && String(id).indexOf('recent:') !== 0) ? { kind, id: String(id) } : {};
-    return fetch(`${PLUGIN_BASE}/selection`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    }).catch(e => logger.warn('dyeStrip: selection post failed', e));
+    // One retry: until DYE2 answers, whatever it had armed before still has a record
+    // pending that only a successful arm cancels.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const res = await fetch(`${PLUGIN_BASE}/selection`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (res.ok) return true;
+            if (res.status === 404) return false; // an older DYE2 has no such endpoint
+        } catch (e) { logger.warn('dyeStrip: selection post failed', e); }
+    }
+    return false;
 }
 
 // Fetch the live workflow, merge the item onto it, PUT, then refresh the left
@@ -212,15 +226,21 @@ export async function applyFavourite(fav) {
     } else {
         await applyFavLegacy(live, fav); // snapshot + copyMask
     }
+    const seq = ++applySeq;
     await withAutoSaveSuppressed(() => updateWorkflow(live));
+    if (seq !== applySeq) return; // a newer tap owns the arming
     // Arm the item the dial-in belongs to, after the PUT lands so a failed apply never
-    // arms anything on a stale item. A DYE2 that records for itself just needs to be
-    // told which item; otherwise the legacy auto-save below needs the drift anchors
-    // too: profileId from fav.workflow?.profile (items saved by this version) or
-    // snapshot.profileId (legacy), with profileFingerprint backing it up for Decaid,
-    // whose workflow.profile carries no id at all.
-    if (dye2RecordsDialIn) {
-        await postSelection('favourite', fav.id);
+    // arms anything on a stale item. DYE2 always hears about it: it records off the
+    // workflow push whatever the skin believes, so a missed arm would write this
+    // item's values onto the one armed before. A DYE2 that confirms records for
+    // itself; otherwise (older plugin, or the post failed) the legacy auto-save below
+    // needs the drift anchors: profileId from fav.workflow?.profile (items saved by this
+    // version) or snapshot.profileId (legacy), with profileFingerprint backing it up
+    // for Decaid, whose workflow.profile carries no id at all.
+    dye2Armed = await postSelection('favourite', fav.id);
+    if (seq !== applySeq) return;
+    if (dye2Armed) {
+        activeItem = null;
     } else {
         activeItem = {
             kind: 'favourite',
@@ -243,11 +263,16 @@ export async function applyRecipe(recipe) {
     // Steam / hot-water / flush are NOT in the stored workflow — live-merge them.
     const dv = recipe.dashboardVariables || {};
     await mergeRecipeLiveSettings(live, dv);
+    const seq = ++applySeq;
     await withAutoSaveSuppressed(() => updateWorkflow(live));
+    if (seq !== applySeq) return; // a newer tap owns the arming
     // Arm this recipe for the dial-in that follows — see applyFavourite for why it
-    // happens after the PUT and why only the legacy path needs the drift anchors.
-    if (dye2RecordsDialIn) {
-        await postSelection('recipe', recipe.id);
+    // happens after the PUT, is always posted, and why only the legacy path needs the
+    // drift anchors.
+    dye2Armed = await postSelection('recipe', recipe.id);
+    if (seq !== applySeq) return;
+    if (dye2Armed) {
+        activeItem = null;
     } else {
         activeItem = {
             kind: 'recipe',
@@ -478,7 +503,7 @@ export function openPluginOverlay(page) {
         // that records for itself already holds the selection in its own storage,
         // so there is nothing to park.
         try {
-            const parked = dye2RecordsDialIn ? null : serializeSelection(activeItem);
+            const parked = dye2Armed ? null : serializeSelection(activeItem);
             if (parked) sessionStorage.setItem(SELECTION_KEY, parked);
             else sessionStorage.removeItem(SELECTION_KEY);
         } catch (e) { /* private mode: selection simply does not survive */ }
@@ -965,6 +990,12 @@ export async function enableDye2Ui() {
 // profile nav back to its original position (byte-identical to stock Streamline).
 export function disableDye2Ui() {
     clearActiveItem();
+    // DYE2 keeps recording against what it has armed whatever the header shows, so a
+    // switched-off strip must release it, or later dial-in edits land on that recipe.
+    if (dye2Armed || dye2RecordsDialIn) {
+        dye2Armed = false;
+        postSelection('', null).catch(() => {});
+    }
     forgetParkedSelection(); // a trip made while DYE2 was on must not re-arm later
     const profileNav = document.getElementById('profile-fav-nav');
     const toggle = document.getElementById('dye-strip-toggle');
@@ -1180,7 +1211,7 @@ function handleWorkflowUpdatedForAutoSave(workflow, dataToSend) {
     // The installed DYE2 records dial-in itself: writing here too would race it on the
     // same array, and it is the one that owns the schema. (activeItem is never set in
     // that mode either — this is belt and braces, and documents why.)
-    if (dye2RecordsDialIn) return;
+    if (dye2Armed) return;
     if (autoSaveSuppressed || !activeItem || !isDye2Enabled()) return;
     if (profileDrifted(activeItem, workflow)) {
         clearActiveItem();
@@ -1237,8 +1268,11 @@ async function restoreParkedSelection() {
     // nothing. It kept recording while this page was away, so there is no fold to do
     // and no param to trust — the KV key IS the answer (host.storage writes land in
     // the ordinary KV store, see dye2-plugin/docs/KV_CONTRACT.md).
-    if (dye2RecordsDialIn) {
-        forgetParkedSelection(); // a trip made before the plugin update must not re-arm
+    // A parked selection means the skin, not DYE2, was recording when the page left
+    // (the arm post failed): the legacy restore below applies to it.
+    let parkedRaw = null;
+    try { parkedRaw = sessionStorage.getItem(SELECTION_KEY); } catch (e) { /* private mode */ }
+    if (dye2RecordsDialIn && !parkedRaw) {
         stripReturnParam();
         const before = activeItemId;
         const sel = await getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => null);
