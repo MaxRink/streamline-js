@@ -87,3 +87,42 @@ test('the plugin\'s own refusal reaches the caller for the toast', async () => {
     reset({ visualizerEnabled: 'true' });
     await assert.rejects(() => uploadShotToVisualizer('short'), /too short/);
 });
+
+// ── custom server URL policy ──
+const { normalizeServerUrl, planServerChange, pluginSupportsCustomServer, VISUALIZER_DEFAULT_SERVER: D } =
+    await import('../src/modules/visualizer-server.js');
+
+test('empty means hosted default', () => {
+    assert.equal(normalizeServerUrl('  ').url, D);
+    assert.equal(normalizeServerUrl(undefined).url, D);
+});
+
+test('equivalent spellings collapse', () => {
+    const forms = ['https://V.example.com', 'https://v.example.com/', 'https://v.example.com//', 'https://v.example.com:443'];
+    for (const f of forms) assert.equal(normalizeServerUrl(f).url, 'https://v.example.com');
+});
+
+test('path prefix kept, trailing slash dropped', () => {
+    assert.equal(normalizeServerUrl('https://h.example/viz/').url, 'https://h.example/viz');
+});
+
+test('invalid values rejected', () => {
+    for (const bad of ['visualizer', 'ftp://h.example', 'https://u:p@h.example', 'https://h.example/?a=1', 'https://h.example/#x']) {
+        assert.equal(normalizeServerUrl(bad).ok, false, bad);
+    }
+});
+
+test('plan: same / changed / invalid / unsupported', () => {
+    const base = { activeUrl: D, supported: true };
+    assert.equal(planServerChange({ ...base, input: 'https://visualizer.coffee/' }).state, 'same');
+    assert.equal(planServerChange({ ...base, input: 'http://10.0.0.5:3000' }).state, 'changed');
+    assert.equal(planServerChange({ ...base, input: 'nope' }).state, 'invalid');
+    assert.equal(planServerChange({ ...base, supported: false, input: 'https://h.example' }).state, 'unsupported');
+    assert.equal(planServerChange({ ...base, supported: false, input: '' }).state, 'same');
+});
+
+test('capability read from plugin settings schema', () => {
+    assert.equal(pluginSupportsCustomServer({ settings: { Username: {}, ServerUrl: {} } }), true);
+    assert.equal(pluginSupportsCustomServer({ settings: { Username: {} } }), false);
+    assert.equal(pluginSupportsCustomServer(null), false);
+});

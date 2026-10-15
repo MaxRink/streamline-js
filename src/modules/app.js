@@ -2151,7 +2151,7 @@ async function initVisualizer() {
     if (username && encodedPassword) {
         try {
             const password = atob(encodedPassword); // Decode password
-            const isValid = await verifyVisualizerCredentials(username, password);
+            const { valid: isValid } = await verifyVisualizerCredentials(username, password);
             if (isValid) {
                 logger.info('Saved Visualizer credentials are valid.');
 

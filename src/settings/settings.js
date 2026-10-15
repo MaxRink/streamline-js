@@ -11,6 +11,7 @@ import { isBengleMachine, setMachineModel } from '../modules/machine.js';
 import { resolveSteamStopMode, applyMilkProbeGate } from '../modules/steam-mode.js';
 import { summarizeFirmwareCatalog, isFirmwareCancellationError, estimateRemainingSeconds, isUploadComplete, estimateVerifyRemainingSeconds, estimateTotalRemainingSeconds, FIRMWARE_VERIFY_SECONDS, formatDuration } from '../modules/firmware-progress.js';
 import { setScreensaverSuppressed, isMachineAsleep } from '../modules/screensaver-policy.js';
+import { VISUALIZER_DEFAULT_SERVER, VISUALIZER_SERVER_SETTING, normalizeServerUrl, pluginSupportsCustomServer, planServerChange } from '../modules/visualizer-server.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, resolveScreensaverDateFormat, resolveScreensaverClockFormat, resolveScreensaverClockPosition } from '../modules/screensaver-clock.js';
 import { ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewComposite, ledLiveWriteState } from '../modules/led-color.js';
 import { LED_SEQUENCE_KEY, MIN_STEP_DURATION_MS, MAX_STEP_DURATION_MS, LED_TRIGGER_STATES, parseLedSequence, serializeLedSequence, addStep, removeStep, updateStep, moveStep, toggleTriggerState } from '../modules/led-sequence.js';
@@ -6424,6 +6425,11 @@ export function renderExtensionsSettings() {
                             <div class="grid grid-cols-4">
                                 <div class="col-span-3 flex flex-col gap-6">
                                     <div class="flex flex-col gap-2">
+                                        <label for="visualizer-server" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Server:">Server:</label>
+                                        <input type="url" id="visualizer-server" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" class="w-full max-w-[500px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="${VISUALIZER_DEFAULT_SERVER}">
+                                        <p id="visualizer-server-status" class="text-[var(--text-primary)] text-[20px]"></p>
+                                    </div>
+                                    <div class="flex flex-col gap-2">
                                         <label for="visualizer-username" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Username:">Username:</label>
                                         <input type="text" id="visualizer-username" class="w-full max-w-[500px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer username">
                                     </div>
@@ -6898,6 +6904,44 @@ function setupPluginCard(cardEl, pluginId, plugins) {
 // PR #588: secure values are returned as { isSet } state, never plaintext.
 let visualizerPasswordIsSet = false;
 
+// What the plugin has stored, as last loaded: the server the credentials belong
+// to, and whether it can take a different one at all. The form is judged against
+// this -- never against what is merely typed.
+let visualizerSaved = { url: VISUALIZER_DEFAULT_SERVER, username: '', passwordIsSet: false, supported: false };
+let visualizerLoadSeq = 0; // a load that outlives its page must not paint a later one
+
+const VISUALIZER_PASSWORD_PLACEHOLDER = 'Enter your Visualizer password';
+
+// Re-judge the form after the server field changes. A different server drops
+// the previous account's username and masked password -- they were never valid
+// there -- while typing the saved server back restores them. Returns the plan.
+function applyVisualizerServerForm() {
+    const serverInput = document.getElementById('visualizer-server');
+    const usernameInput = document.getElementById('visualizer-username');
+    const passwordInput = document.getElementById('visualizer-password');
+    const statusEl = document.getElementById('visualizer-server-status');
+    if (!serverInput || !usernameInput || !passwordInput) return null;
+
+    const plan = planServerChange({ input: serverInput.value, activeUrl: visualizerSaved.url, supported: visualizerSaved.supported });
+    const same = plan.state === 'same';
+    if (plan.state !== 'invalid' && plan.state !== 'unsupported') {
+        const wasSame = usernameInput.dataset.server !== 'other';
+        if (same && !wasSame) usernameInput.value = visualizerSaved.username;
+        if (!same && wasSame) usernameInput.value = '';
+        usernameInput.dataset.server = same ? 'saved' : 'other';
+        if (!same) passwordInput.value = '';
+        visualizerPasswordIsSet = same && visualizerSaved.passwordIsSet;
+        passwordInput.placeholder = visualizerPasswordIsSet
+            ? 'Password saved — leave empty to keep'
+            : VISUALIZER_PASSWORD_PLACEHOLDER;
+    }
+    if (statusEl) {
+        statusEl.textContent = plan.error
+            || (same ? `Active server: ${visualizerSaved.url}` : `New server: enter your username and password for ${plan.url}`);
+    }
+    return plan;
+}
+
 // Function to set up event listeners for the Visualizer settings
 function setupVisualizerEventListeners() {
     const saveButton = document.getElementById('save-visualizer-credentials');
@@ -6916,6 +6960,12 @@ function setupVisualizerEventListeners() {
 
     // Load existing settings when the form loads
     loadVisualizerSettings();
+
+    const serverInput = document.getElementById('visualizer-server');
+    if (serverInput) {
+        serverInput.addEventListener('input', applyVisualizerServerForm);
+        serverInput.addEventListener('change', applyVisualizerServerForm);
+    }
 
     // Initially hide the form if the Visualizer integration is off
     if (enabledToggle && formContainer && !enabledToggle.checked) {
@@ -6963,8 +7013,26 @@ function setupVisualizerEventListeners() {
 
     // Add click handler for the save button
     saveButton.addEventListener('click', async () => {
+        if (saveButton.disabled) return;
         const username = usernameInput.value.trim();
         const password = passwordInput.value; // Don't trim password as spaces might be valid
+
+        const plan = applyVisualizerServerForm();
+        if (!plan || plan.error) {
+            ui.showToast(plan?.error || 'Visualizer settings are not ready', 3500, 'error');
+            return;
+        }
+        // A server the saved credentials don't belong to needs its own
+        // password, verified there, before anything is stored.
+        const serverChanged = plan.state === 'changed';
+        if (serverChanged && !password) {
+            ui.showToast('Enter your password for the new Visualizer server', 3000, 'error');
+            return;
+        }
+        // Always name the server when the plugin supports one: omitting it for
+        // the hosted default would verify against the plugin's stored custom
+        // server instead. An older plugin never sees the field.
+        const serverForVerify = visualizerSaved.supported ? plan.url : undefined;
 
         if (!username) {
             ui.showToast('Please enter your Visualizer username', 1500, 'error');
@@ -6980,10 +7048,22 @@ function setupVisualizerEventListeners() {
                 // Import verifyVisualizerCredentials from api.js
                 const { verifyVisualizerCredentials } = await import('../modules/api.js');
 
-                const isValid = await verifyVisualizerCredentials(username, password);
+                saveButton.disabled = true;
+                let result;
+                try {
+                    result = await verifyVisualizerCredentials(username, password, serverForVerify);
+                } finally {
+                    saveButton.disabled = false;
+                }
 
-                if (!isValid) {
-                    ui.showToast('Visualizer log-in failed, check credentials', 900, 'error');
+                if (!result.valid) {
+                    // error = the check itself failed (unreachable, TLS, plugin);
+                    // otherwise the server answered and said no.
+                    ui.showToast(
+                        result.error
+                            ? `Could not reach ${plan.url}: ${result.error}`
+                            : 'Visualizer log-in failed, check credentials',
+                        result.error ? 5000 : 900, 'error');
                     return; // Stop here if credentials are bad
                 }
 
@@ -7018,9 +7098,24 @@ function setupVisualizerEventListeners() {
             AutoUpload: isAutoUploadEnabled(),
             LengthThreshold: minDuration
         };
+        // Only a backend that declares the setting is sent it; an older one
+        // would drop it and keep talking to the hosted server.
+        if (visualizerSaved.supported) settingsPayload[VISUALIZER_SERVER_SETTING] = plan.url;
 
         try {
             await setPluginSettings(pluginId, settingsPayload);
+            visualizerSaved = {
+                ...visualizerSaved,
+                url: plan.url,
+                username,
+                passwordIsSet: !!password || (visualizerPasswordIsSet && !serverChanged),
+            };
+            visualizerPasswordIsSet = visualizerSaved.passwordIsSet;
+            const pw = document.getElementById('visualizer-password');
+            if (pw && document.body.contains(saveButton)) {
+                pw.value = '';
+                applyVisualizerServerForm();
+            }
             ui.showToast('Visualizer settings saved successfully', 3000, 'success');
         } catch (error) {
             console.error('Failed to save visualizer plugin settings:', error);
@@ -7031,11 +7126,15 @@ function setupVisualizerEventListeners() {
 
 // Function to load existing Visualizer settings
 async function loadVisualizerSettings() {
+    const seq = ++visualizerLoadSeq;
     try {
-        const { getPluginSettings } = await import('../modules/api.js');
+        const { getPluginSettings, getPlugins } = await import('../modules/api.js');
         const pluginId = 'visualizer.reaplugin';
 
-        const savedSettings = await getPluginSettings(pluginId);
+        const [savedSettings, plugins] = await Promise.all([getPluginSettings(pluginId), getPlugins()]);
+        if (seq !== visualizerLoadSeq) return;
+        const plugin = Array.isArray(plugins) ? plugins.find(p => p.id === pluginId) : null;
+        const supported = pluginSupportsCustomServer(plugin);
 
         const usernameInput = document.getElementById('visualizer-username');
         const passwordInput = document.getElementById('visualizer-password');
@@ -7062,9 +7161,22 @@ async function loadVisualizerSettings() {
         const passwordVal = savedSettings?.Password;
         visualizerPasswordIsSet = passwordVal != null &&
             (typeof passwordVal === 'object' ? passwordVal.isSet === true : !!passwordVal);
-        passwordInput.placeholder = visualizerPasswordIsSet
-            ? 'Password saved — leave empty to keep'
-            : 'Enter your Visualizer password';
+        // An older Decaid has no server setting and talks to the hosted server.
+        const savedUrl = supported ? normalizeServerUrl(savedSettings?.[VISUALIZER_SERVER_SETTING]) : null;
+        visualizerSaved = {
+            url: savedUrl?.ok ? savedUrl.url : VISUALIZER_DEFAULT_SERVER,
+            username: savedSettings?.Username || '',
+            passwordIsSet: visualizerPasswordIsSet,
+            supported,
+        };
+        const serverInput = document.getElementById('visualizer-server');
+        if (serverInput) {
+            serverInput.value = visualizerSaved.url === VISUALIZER_DEFAULT_SERVER ? '' : visualizerSaved.url;
+            serverInput.disabled = !supported;
+            serverInput.title = supported ? '' : 'Update Decaid to use a custom Visualizer server';
+        }
+        usernameInput.dataset.server = 'saved';
+        applyVisualizerServerForm();
 
         // The master switch used to be the plugin's AutoUpload flag and nothing
         // else, so it left no key of its own behind: for an existing install,
