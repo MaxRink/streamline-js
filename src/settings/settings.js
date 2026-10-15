@@ -6422,22 +6422,31 @@ export function renderExtensionsSettings() {
 
                     <div class="justify-between grid-cols-4 mt-2 w-full">
                         <div id="visualizer-form-container" class="w-full mt-6">
-                            <div class="grid grid-cols-4">
-                                <div class="col-span-3 flex flex-col gap-6">
-                                    <div class="flex flex-col gap-2">
-                                        <label for="visualizer-server" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Server:">Server:</label>
-                                        <input type="url" id="visualizer-server" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" class="w-full max-w-[500px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="${VISUALIZER_DEFAULT_SERVER}">
-                                        <p id="visualizer-server-status" class="text-[var(--text-primary)] text-[20px]"></p>
-                                    </div>
+                            <div class="flex flex-col gap-8 w-full">
+                                <!-- Account: credentials side by side, the server tucked under Advanced -->
+                                <div class="flex flex-col gap-6">
+                                    <div class="grid grid-cols-2 gap-6">
                                     <div class="flex flex-col gap-2">
                                         <label for="visualizer-username" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Username:">Username:</label>
-                                        <input type="text" id="visualizer-username" class="w-full max-w-[500px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer username">
+                                        <input type="text" id="visualizer-username" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer username">
                                     </div>
                                     <div class="flex flex-col gap-2">
                                         <label for="visualizer-password" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Password:">Password:</label>
-                                        <input type="password" id="visualizer-password" class="w-full max-w-[500px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer password">
+                                        <input type="password" id="visualizer-password" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer password">
                                     </div>
-                                    <div class="flex items-center justify-between gap-4 max-w-[500px]">
+                                    </div>
+                                    <details id="visualizer-advanced" class="w-full">
+                                        <summary class="cursor-pointer text-[var(--text-primary)] text-[24px]" data-i18n-key="Advanced">Advanced</summary>
+                                    <div class="flex flex-col gap-2 mt-4">
+                                        <label for="visualizer-server" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Server:">Server:</label>
+                                        <input type="url" id="visualizer-server" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="${VISUALIZER_DEFAULT_SERVER}">
+                                        <p id="visualizer-server-status" class="text-[var(--text-primary)] text-[20px]"></p>
+                                    </div>
+                                    </details>
+                                </div>
+                                <!-- Uploads: the switch and its threshold side by side -->
+                                <div class="grid grid-cols-2 gap-6 items-center">
+                                    <div class="flex items-center justify-between gap-6">
                                         <div class="flex flex-col">
                                             <label for="visualizer-auto-upload" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Auto-upload shots to Visualizer">Auto-upload shots to Visualizer</label>
                                             <p class="text-[var(--text-primary)] text-[20px]" data-i18n-key="Off: long-press the shot history panel to upload a shot yourself.">Off: long-press the shot history panel to upload a shot yourself.</p>
@@ -6453,7 +6462,7 @@ export function renderExtensionsSettings() {
                                         <input type="number" id="visualizer-min-duration" class="w-24 p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" min="1" value="5">
                                     </div>
                                 </div>
-                                <div class="col-span-1 col-end-5 flex justify-end">
+                                <div class="flex justify-end">
                                     <button id="save-visualizer-credentials" class=" w-[150px] h-[50px] pt-3 pb-[15px] border border-solid border-[var(--mimoja-blue-v2)] text-[var(--profile-button-text-color)] rounded-[22.5px]">
                                         Save Credentials
                                     </button>
@@ -7019,6 +7028,8 @@ function setupVisualizerEventListeners() {
 
         const plan = applyVisualizerServerForm();
         if (!plan || plan.error) {
+            const advanced = document.getElementById('visualizer-advanced');
+            if (advanced) advanced.open = true;
             ui.showToast(plan?.error || 'Visualizer settings are not ready', 3500, 'error');
             return;
         }
@@ -7175,6 +7186,9 @@ async function loadVisualizerSettings() {
             serverInput.disabled = !supported;
             serverInput.title = supported ? '' : 'Update Decaid to use a custom Visualizer server';
         }
+        // Hosted users never see the field; a custom server is shown open.
+        const advanced = document.getElementById('visualizer-advanced');
+        if (advanced) advanced.open = visualizerSaved.url !== VISUALIZER_DEFAULT_SERVER;
         usernameInput.dataset.server = 'saved';
         applyVisualizerServerForm();
 
