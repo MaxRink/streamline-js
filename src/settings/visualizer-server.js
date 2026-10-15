@@ -50,3 +50,35 @@ export function visualizerServerUrlsEqual(left, right) {
         return false;
     }
 }
+
+// Compatibility API for visualizer.js and older callers. The URL policy above
+// remains the single implementation; these adapters preserve the original
+// result shape while the settings page uses the stricter normalizer directly.
+export const VISUALIZER_DEFAULT_SERVER = DEFAULT_VISUALIZER_SERVER_URL;
+export const VISUALIZER_SERVER_SETTING = 'ServerUrl';
+
+export function normalizeServerUrl(input) {
+    try {
+        return { ok: true, url: normalizeVisualizerServerUrl(String(input ?? '').trim()) };
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+}
+
+export function isDefaultServer(url) {
+    return url === VISUALIZER_DEFAULT_SERVER;
+}
+
+export function pluginSupportsCustomServer(plugin) {
+    const schema = plugin?.settings;
+    return !!schema && typeof schema === 'object' && VISUALIZER_SERVER_SETTING in schema;
+}
+
+export function planServerChange({ input, activeUrl, supported }) {
+    const n = normalizeServerUrl(input);
+    if (!n.ok) return { state: 'invalid', error: n.error };
+    if (!supported && !isDefaultServer(n.url)) {
+        return { state: 'unsupported', url: n.url, error: 'This Decaid version only supports visualizer.coffee. Update Decaid to use another server.' };
+    }
+    return { state: n.url === activeUrl ? 'same' : 'changed', url: n.url };
+}
