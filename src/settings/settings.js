@@ -7295,18 +7295,18 @@ async function loadVisualizerSettings() {
         visualizerPasswordIsSet = passwordVal != null &&
             (typeof passwordVal === 'object' ? passwordVal.isSet === true : !!passwordVal);
         // An older Decaid has no server setting and talks to the hosted server.
-        const savedUrl = supported ? normalizeServerUrl(savedSettings?.[VISUALIZER_SERVER_SETTING]) : null;
+        const savedUrl = visualizerServerSettingSupported ? normalizeServerUrl(savedSettings?.[VISUALIZER_SERVER_SETTING]) : null;
         visualizerSaved = {
             url: savedUrl?.ok ? savedUrl.url : VISUALIZER_DEFAULT_SERVER,
             username: savedSettings?.Username || '',
             passwordIsSet: visualizerPasswordIsSet,
-            supported,
+            supported: visualizerServerSettingSupported,
         };
         const serverInput = document.getElementById('visualizer-server');
         if (serverInput) {
             serverInput.value = visualizerSaved.url === VISUALIZER_DEFAULT_SERVER ? '' : visualizerSaved.url;
-            serverInput.disabled = !supported;
-            serverInput.title = supported ? '' : 'Update Decaid to use a custom Visualizer server';
+            serverInput.disabled = !visualizerServerSettingSupported;
+            serverInput.title = visualizerServerSettingSupported ? '' : 'Update Decaid to use a custom Visualizer server';
         }
         // Hosted users never see the field; a custom server is shown open.
         const advanced = document.getElementById('visualizer-advanced');
