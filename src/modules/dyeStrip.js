@@ -23,6 +23,7 @@ import { logger } from './logger.js';
 import { fitTextToBox } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
+import { DYE_MARKER_VERSION, scopedClearContext } from './dye-context.js';
 import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
@@ -980,9 +981,36 @@ export function hasDyeContext(context, includeGrinderSetting = false) {
         || Object.keys(DYE_CONTEXT_FIELDS.extras).some(k => extras[k] != null);
 }
 
+// Does the installed DYE2 mark the fields it writes (DYE_MARKER_VERSION)? Then the
+// clean-up clears only those and leaves another plugin's values alone. Looked up
+// lazily and cached briefly: shots and boot both call the clean-up, and a plugin
+// update should be noticed without a reload. Unreachable or missing plugin means
+// "no marker": the stale-DYE2-context clean-up it always was.
+let scopedClearCache = { at: 0, value: false };
+async function scopedClearSupported() {
+    if (Date.now() - scopedClearCache.at < 5 * 60 * 1000) return scopedClearCache.value;
+    let value = false;
+    try {
+        const plugins = await getPlugins();
+        const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === PLUGIN_ID) : null;
+        value = !!plugin && !isOlderVersion(plugin.version, DYE_MARKER_VERSION);
+    } catch (e) { /* treated as unsupported */ }
+    scopedClearCache = { at: Date.now(), value };
+    return value;
+}
+
 export async function clearDyeWorkflowContext({ includeGrinderSetting = false } = {}) {
     try {
         const live = await getWorkflow();
+        // The whole-plugin switch-off clears everything DYE2-shaped; only the
+        // per-shot and boot hooks are scoped to what DYE2 flagged.
+        if (!includeGrinderSetting && await scopedClearSupported()) {
+            const scoped = scopedClearContext(live?.context);
+            if (!scoped) return false;
+            await updateWorkflow({ context: scoped });
+            logger.info('dyeStrip: cleared the workflow context fields DYE2 set');
+            return true;
+        }
         if (!hasDyeContext(live?.context, includeGrinderSetting)) return false;
         const context = { ...DYE_CONTEXT_FIELDS };
         if (includeGrinderSetting) context.grinderSetting = null;

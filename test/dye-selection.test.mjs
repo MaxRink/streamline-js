@@ -83,3 +83,18 @@ test('changedFields: only real differences, numeric strings compare equal', () =
     assert.deepEqual(changedFields({ dose: 18 }, undefined), { dose: 18 });
     assert.deepEqual(changedFields({}, { dose: 1 }), {});
 });
+
+// ── scoped post-shot clean-up ──
+import { scopedClearContext } from '../src/modules/dye-context.js';
+
+test('scopedClearContext: only flagged, only present, flags go with the values', () => {
+    assert.equal(scopedClearContext(null), null);
+    assert.equal(scopedClearContext({ coffeeName: 'x' }), null, 'no marker: caller falls back');
+    assert.equal(scopedClearContext({ coffeeName: 'x', extras: { dye: { v: 1 } } }), null);
+    assert.deepEqual(
+        scopedClearContext({ coffeeName: 'x', grinderModel: 'EG-1', extras: { rpm: 900, dye: { v: 1, coffeeName: true, rpm: true, note: true } } }),
+        { coffeeName: null, extras: { rpm: null, dye: { coffeeName: null, rpm: null, note: null } } },
+    );
+    // an unknown flag is cleared as a flag only, never as a value
+    assert.deepEqual(scopedClearContext({ profile: 'p', extras: { dye: { v: 1, profile: true } } }), { extras: { dye: { profile: null } } });
+});

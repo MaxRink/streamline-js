@@ -292,14 +292,17 @@ function lift(module, patterns) {
         /export async function clearDyeWorkflowContext\([\s\S]*?\r?\n\}/,
     ]);
 
-    const build = (context) => {
+    const { scopedClearContext } = await import('../src/modules/dye-context.js');
+    const build = (context, { scoped = false } = {}) => {
         const puts = [];
-        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger',
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext',
             `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
         const api = fn(
             async () => ({ context }),
             async (payload) => { puts.push(payload); return payload; },
             { info() {}, warn() {} },
+            async () => scoped,
+            scopedClearContext,
         );
         return { ...api, puts };
     };
@@ -342,6 +345,38 @@ function lift(module, patterns) {
         assert.equal(followingShot.targetDoseWeight, 18);
         assert.equal(followingShot.targetYield, 36);
         assert.equal(followingShot.grinderSetting, '21');
+    });
+
+    test('a DYE2 that marks its writes: only the flagged fields are cleared, another plugin\'s stay', async () => {
+        const context = {
+            ...dirty,
+            grinderModel: 'EG-1', // set by another plugin, never flagged
+            extras: { ...dirty.extras, dye: { v: 1, coffeeName: true, beanBatchId: true, note: true } },
+        };
+        const { clearDyeWorkflowContext, puts } = build(context, { scoped: true });
+        assert.equal(await clearDyeWorkflowContext(), true);
+        const sent = puts[0].context;
+        assert.equal(sent.coffeeName, null);
+        assert.equal(sent.beanBatchId, null);
+        assert.equal(sent.extras.note, null);
+        assert.deepEqual(sent.extras.dye, { coffeeName: null, beanBatchId: null, note: null });
+        for (const kept of ['coffeeRoaster', 'grinderId', 'grinderModel', 'baristaName', 'drinkerName']) {
+            assert.ok(!(kept in sent), kept);
+        }
+        assert.ok(!('rpm' in sent.extras) && !('basketId' in sent.extras));
+    });
+
+    test('marked DYE2 that wrote nothing: nothing is cleared, no PUT', async () => {
+        const { clearDyeWorkflowContext, puts } = build({ ...dirty, extras: { ...dirty.extras, dye: { v: 1 } } }, { scoped: true });
+        assert.equal(await clearDyeWorkflowContext(), false);
+        assert.equal(puts.length, 0);
+    });
+
+    test('the settings switch-off still clears everything, marked or not', async () => {
+        const { clearDyeWorkflowContext, puts } = build({ ...dirty, extras: { ...dirty.extras, dye: { v: 1, note: true } } }, { scoped: true });
+        await clearDyeWorkflowContext({ includeGrinderSetting: true });
+        assert.equal(puts[0].context.coffeeName, null);
+        assert.equal(puts[0].context.grinderSetting, null);
     });
 
     test('grinderSetting goes only when the whole plugin is switched off', async () => {
