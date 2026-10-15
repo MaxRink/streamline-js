@@ -485,6 +485,8 @@ export function connectWebSocket(onData, onReconnect) {
             previousMachineState = currentMachineState;
             currentMachineState = stateValue;
             if (previousMachineState === 'espresso' && stateValue !== 'espresso') espressoEndedAt = Date.now();
+            // Plugin overlays that asked for it close when a shot starts (see `closeOnShot`).
+            if (stateValue === 'espresso' && previousMachineState !== 'espresso') document.dispatchEvent(new Event('streamline:espresso-start'));
             // Keep the last frame so pages that need a live reading (the
             // sensor calibration capture) can take one without opening a
             // second socket -- this one is a process-wide singleton.

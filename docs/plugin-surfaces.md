@@ -388,6 +388,10 @@ An invalid action drops the action only; the surface still shows, inert.
     default window never shows. If the page posts `streamline:ready` but no size within 300 ms, the skin shows
     the default window with its solid background, as it does without `fit`. If `ready` never comes, the page opens
     as usual after 3 seconds. `fit` is ignored on `presentation: "page"`. Post the first size from your load handler, measured with `getBoundingClientRect()`; a hidden frame may not run `requestAnimationFrame` or `ResizeObserver` callbacks until it is shown, so use those only for later size changes. While the dialog is invisible a tap on it or Escape still closes it.
+  - **Close when a shot starts.** Add `"closeOnShot": true` to the `open` action (overlay only) and the skin posts
+    `{ type: 'streamline:espresso-start' }` to your page and closes the dialog when an espresso starts, so the page
+    never covers the shot. Use it for pages that are only useful before a shot (choosing the next coffee). Without
+    it the dialog stays open, as today. After it closes the skin re-reads `skin` and the workflow, as for any close.
 - **`step`**: `{ "type": "step", "field": "targetDoseWeight", "by": -0.5 }` on tile kinds only. Moves the
   tile's current value by `by` (a non-zero number, at most 100 either way) and goes through the same setter as
   `set`, so the result is clamped to the same range and the profile remembers it. `field` is `targetDoseWeight`,

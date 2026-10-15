@@ -118,6 +118,9 @@ function parseOpen(action) {
         view: ID_RE.test(view) ? view : '',
         presentation,
         ...(presentation === 'overlay' && action.fit === true && { fit: true }),
+        // `closeOnShot`: the page opts in to being closed when an espresso starts, so it never
+        // covers the shot. Only an overlay is covering anything.
+        ...(presentation === 'overlay' && action.closeOnShot === true && { closeOnShot: true }),
     };
 }
 

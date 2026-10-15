@@ -155,6 +155,10 @@ test('open: presentation is a hint, unknown values fall back to page', () => {
     assert.equal(open({ view: 'main', presentation: 'overlay', fit: 'yes' }).fit, undefined);
     assert.equal(open({ view: 'main', presentation: 'overlay' }).fit, undefined);
     assert.equal(open({ view: 'main', presentation: 'page', fit: true }).fit, undefined);
+    // closeOnShot: same rule, exactly true on an overlay
+    assert.equal(open({ view: 'main', presentation: 'overlay', closeOnShot: true }).closeOnShot, true);
+    assert.equal(open({ view: 'main', presentation: 'overlay', closeOnShot: 1 }).closeOnShot, undefined);
+    assert.equal(open({ view: 'main', presentation: 'page', closeOnShot: true }).closeOnShot, undefined);
 });
 
 test('step moves a steppable tile field by a bounded non-zero amount', () => {

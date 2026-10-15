@@ -210,6 +210,7 @@ function openOverlay(plugin, action, pageUrl, onClose) {
         clearTimeout(timer);
         clearTimeout(graceTimer);
         window.removeEventListener('message', onMessage);
+        document.removeEventListener('streamline:espresso-start', onShotStart);
         dialog.removeEventListener('close', finish);
         if (dialog.open) dialog.close();
         dialog.remove();
@@ -219,6 +220,12 @@ function openOverlay(plugin, action, pageUrl, onClose) {
         refreshPluginSurfaces();
         document.dispatchEvent(new Event('streamline:workflow-refresh'));
     };
+    // `closeOnShot`: tell the page, then close, so a plugin page never covers a shot.
+    const onShotStart = () => {
+        try { frame.contentWindow?.postMessage({ type: 'streamline:espresso-start' }, frameOrigin); } catch { /* frame gone */ }
+        finish();
+    };
+    if (action.closeOnShot) document.addEventListener('streamline:espresso-start', onShotStart);
     const onMessage = event => {
         if (event.source !== frame.contentWindow) return;
         const type = event.data?.type;
