@@ -2,6 +2,7 @@ import { connectWebSocket, getWorkflow, connectScaleWebSocket, ensureGatewayMode
 import { initScaling } from './scaling.js';
 import * as chart from './chart.js';
 import * as ui from './ui.js';
+import { paintShotStrip } from './plugin-shot-strip.js';
 import { initI18n, getTranslation, fitTelemetry } from './i18n.js';
 import { settingsReady } from './settingsSync.js';
 import { initUnits, formatTemp, fromDisplayTemp } from './units.js';
@@ -957,6 +958,9 @@ function handleData(data) {
         isHeatingFromTimeToReady: heatingSeconds > 0, // countdown available -> render the two-colour form
         steamTemperature: data.steamTemperature // Steam boiler temp — gates the steam "Heating" message
     });
+    paintShotStrip({ sample: data, weight: isScaleConnected || isBengleMachine() ? latestScaleWeight : null, state,
+        // The active record follows favourite switches; the chart's profile is only set on page load.
+        step: (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())?.steps?.[data.profileFrame] || null });
     ui.updateSleepButton(state);
     ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature });
     updateMilkProbeFromSnapshot(currentMilkProbeReading());
