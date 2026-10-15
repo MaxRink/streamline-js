@@ -23,7 +23,7 @@ import { logger } from './logger.js';
 import { fitTextToBox } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
-import { SELECTION_KEY, profileFingerprint, profileDrifted, serializeSelection, restoreSelection } from './dye-selection.js';
+import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
 const RECIPES_KEY = 'recipes';
@@ -1145,26 +1145,54 @@ async function saveItemFields(kind, id, fields) {
     logger.info(`dyeStrip: auto-saved to ${kind} ${id}: ${Object.keys(fields).join(', ')}`);
 }
 
-// Re-arm the selection parked by openPluginOverlay before a full-page trip to
-// DYE2. Read once and cleared: whatever the barista did there, the next reload
-// starts clean. Runs after the strip data is loaded, so a recipe deleted in DYE
-// is dropped rather than highlighted.
+// Settle the selection after a full-page trip to DYE2: re-arm the one parked by
+// openPluginOverlay, or the one DYE2 says it applied, and fold what DYE2 wrote to
+// the Workflow (dose/yield/grind) back into that item -- the dashboard does the
+// same for its own edits, so the two entry points should agree. The parked key is
+// read once and cleared; runs after the strip data is loaded, so an item deleted
+// in DYE is dropped rather than highlighted.
 async function restoreParkedSelection() {
     let raw = null;
     try {
         raw = sessionStorage.getItem(SELECTION_KEY);
         sessionStorage.removeItem(SELECTION_KEY);
     } catch (e) { /* private mode */ }
-    if (!raw) return;
+    const ret = parseDyeReturn(window.location.search);
+    if (ret.supported) {
+        // One-shot: a reload must not replay it.
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete(RETURN_PARAM);
+            window.history.replaceState(window.history.state, '', url.toString());
+        } catch (e) { /* non-critical */ }
+    }
+    if (!raw && !(ret.supported && ret.applied !== 'none')) return;
     // The strip is already tappable: a selection made during the GET below wins.
     const before = { item: activeItem, id: activeItemId };
     const workflow = (await getWorkflow()) || {};
     if (activeItem !== before.item || activeItemId !== before.id) return;
-    const item = restoreSelection(raw, { recipes: recipeCache, favs: favCache, workflow });
-    if (!item) return;
+    const { item, fold } = resolveReturn({ parked: raw, ret, recipes: recipeCache, favs: favCache, workflow });
+    if (!item) {
+        if (ret.supported && ret.applied === 'other') { activeItem = null; activeItemId = null; }
+        if (currentMode !== 'P') renderStrip(currentMode);
+        return;
+    }
     activeItem = item;
     activeItemId = item.id;
     if (currentMode !== 'P') renderStrip(currentMode);
+    if (fold) await foldWorkflowIntoItem(item, workflow);
+}
+
+async function foldWorkflowIntoItem(item, workflow) {
+    const target = AUTOSAVE_TARGETS[item.kind];
+    const list = item.kind === 'recipe' ? recipeCache : favCache;
+    const stored = list.find(x => x && String(x.id) === String(item.id));
+    if (!stored || !workflow?.context) return;
+    // Only the context: DYE2 edits dose, yield and grind, nothing else here.
+    const patch = target.patch({ context: workflow.context }, workflow);
+    const fields = changedFields(patch, stored[target.field]);
+    if (Object.keys(fields).length === 0) return;
+    await saveItemFields(item.kind, item.id, fields);
 }
 
 let workflowListenerRegistered = false;

@@ -72,3 +72,67 @@ export function restoreSelection(raw, { recipes, favs, workflow }) {
         profileFingerprint: saved.profileFingerprint ?? null,
     };
 }
+
+// ── Return from DYE2 ────────────────────────────────────────────────────────
+// A DYE2 that knows about this skin appends `dyeApplied` to its return URL:
+//   ''              nothing was applied inside DYE2
+//   'recipe:<id>' / 'favourite:<id>'   the item that was
+//   'other'         something with no stable id (a recent shot combination)
+// Its mere presence also tells the skin the DYE2 on the other end can be trusted
+// about what it applied; an older DYE2 sends nothing, and the skin must then not
+// write anything back to the parked item.
+export const RETURN_PARAM = 'dyeApplied';
+
+export function parseDyeReturn(search) {
+    let params;
+    try { params = new URLSearchParams(search); } catch { return { supported: false }; }
+    if (!params.has(RETURN_PARAM)) return { supported: false };
+    const v = params.get(RETURN_PARAM) || '';
+    if (v === '') return { supported: true, applied: 'none' };
+    if (v === 'other') return { supported: true, applied: 'other' };
+    const i = v.indexOf(':');
+    const kind = v.slice(0, i);
+    const id = v.slice(i + 1);
+    if (i > 0 && id && (kind === 'recipe' || kind === 'favourite')) {
+        return { supported: true, applied: 'item', kind, id };
+    }
+    return { supported: true, applied: 'other' };
+}
+
+/**
+ * Decide what the strip should hold after a return from DYE2.
+ * Returns { item, fold }: item is the selection to arm (or null for none) and
+ * fold says the live workflow's dose/yield/grind belong in that item. Fold is
+ * only ever true when DYE2 vouched for what it applied.
+ */
+export function resolveReturn({ parked, ret, recipes, favs, workflow }) {
+    const lists = { recipe: recipes, favourite: favs };
+    if (ret.supported && ret.applied === 'other') return { item: null, fold: false };
+    if (ret.supported && ret.applied === 'item') {
+        const list = lists[ret.kind];
+        const found = Array.isArray(list) ? list.find(x => x && String(x.id) === ret.id) : null;
+        if (!found) return { item: null, fold: false };
+        return {
+            item: {
+                kind: ret.kind,
+                id: found.id,
+                profileId: found.profileId ?? found.workflow?.profile?.id ?? found.snapshot?.profileId ?? null,
+                profileFingerprint: profileFingerprint(workflow?.profile),
+            },
+            fold: true,
+        };
+    }
+    const item = parked ? restoreSelection(parked, { recipes, favs, workflow }) : null;
+    return { item, fold: !!item && ret.supported };
+}
+
+/** The entries of `patch` that differ from what `stored` already holds. */
+export function changedFields(patch, stored) {
+    const out = {};
+    for (const [k, v] of Object.entries(patch || {})) {
+        const cur = stored?.[k];
+        const same = cur === v || (cur != null && v != null && Number.isFinite(Number(cur)) && Number(cur) === Number(v));
+        if (!same) out[k] = v;
+    }
+    return out;
+}

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
+    parseDyeReturn, resolveReturn, changedFields,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -42,4 +43,43 @@ test('restore: discarded when deleted, drifted, or unreadable', () => {
     assert.equal(restoreSelection('{not json', ctx), null);
     assert.equal(restoreSelection('null', ctx), null);
     assert.equal(restoreSelection(serializeSelection(item), { ...ctx, recipes: undefined }), null);
+});
+
+test('return param: absent means an older DYE2, empty means nothing applied', () => {
+    assert.deepEqual(parseDyeReturn(''), { supported: false });
+    assert.deepEqual(parseDyeReturn('?_=1'), { supported: false });
+    assert.deepEqual(parseDyeReturn('?dyeApplied='), { supported: true, applied: 'none' });
+    assert.deepEqual(parseDyeReturn('?dyeApplied=recipe:2'), { supported: true, applied: 'item', kind: 'recipe', id: '2' });
+    assert.deepEqual(parseDyeReturn('?dyeApplied=favourite:af-7'), { supported: true, applied: 'item', kind: 'favourite', id: 'af-7' });
+    assert.deepEqual(parseDyeReturn('?dyeApplied=other'), { supported: true, applied: 'other' });
+    assert.deepEqual(parseDyeReturn('?dyeApplied=bogus'), { supported: true, applied: 'other' });
+});
+
+test('resolveReturn: only a DYE2 that vouches for its applies may write back', () => {
+    const parked = serializeSelection(item);
+    const none = { supported: true, applied: 'none' };
+    const old = { supported: false };
+    // edited in DYE, nothing applied: keep the parked item and fold
+    assert.deepEqual(resolveReturn({ parked, ret: none, ...ctx }), { item, fold: true });
+    // older DYE2: keep the highlight, never write
+    assert.deepEqual(resolveReturn({ parked, ret: old, ...ctx }), { item, fold: false });
+    // DYE2 applied another recipe: that one is armed, fresh against the live profile
+    const b = resolveReturn({ parked, ret: { supported: true, applied: 'item', kind: 'recipe', id: '1' }, ...ctx });
+    assert.equal(b.item.id, '1');
+    assert.equal(b.item.profileFingerprint, profileFingerprint(profile));
+    assert.equal(b.fold, true);
+    // applied something with no stable id, or an item that is gone: nothing armed
+    assert.deepEqual(resolveReturn({ parked, ret: { supported: true, applied: 'other' }, ...ctx }), { item: null, fold: false });
+    assert.deepEqual(resolveReturn({ parked, ret: { supported: true, applied: 'item', kind: 'recipe', id: '9' }, ...ctx }), { item: null, fold: false });
+    // no parked item and nothing applied: nothing to do
+    assert.deepEqual(resolveReturn({ parked: null, ret: none, ...ctx }), { item: null, fold: false });
+    // a profile switched inside DYE discards the parked item
+    const switched = { ...ctx, workflow: { profile: { ...profile, title: 'Other' } } };
+    assert.deepEqual(resolveReturn({ parked, ret: none, ...switched }), { item: null, fold: false });
+});
+
+test('changedFields: only real differences, numeric strings compare equal', () => {
+    assert.deepEqual(changedFields({ dose: 18, drink: 40, grind: 21.5 }, { dose: 18, drink: '40', grind: 20 }), { grind: 21.5 });
+    assert.deepEqual(changedFields({ dose: 18 }, undefined), { dose: 18 });
+    assert.deepEqual(changedFields({}, { dose: 1 }), {});
 });
