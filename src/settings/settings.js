@@ -6427,11 +6427,6 @@ export function renderExtensionsSettings() {
                                 <div class="flex flex-col gap-6">
                                     <div class="grid grid-cols-2 gap-6">
                                     <div class="flex flex-col gap-2">
-                                        <label for="visualizer-server-url" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Visualizer server URL:">Visualizer server URL:</label>
-                                        <input type="url" id="visualizer-server-url" class="w-full max-w-[560px] p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="https://visualizer.coffee" autocomplete="url" inputmode="url" aria-describedby="visualizer-server-help visualizer-status">
-                                        <p id="visualizer-server-help" class="text-[var(--text-primary)] text-[20px] opacity-70 leading-[1.4] max-w-[62ch]" data-i18n-key="HTTP is supported for local or LAN servers, but sends credentials and shots without encryption. A path prefix is supported; trailing slashes are removed.">HTTP is supported for local or LAN servers, but sends credentials and shots without encryption. A path prefix is supported; trailing slashes are removed.</p>
-                                    </div>
-                                    <div class="flex flex-col gap-2">
                                         <label for="visualizer-username" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Username:">Username:</label>
                                         <input type="text" id="visualizer-username" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer username">
                                     </div>
@@ -6444,7 +6439,7 @@ export function renderExtensionsSettings() {
                                         <summary class="cursor-pointer text-[var(--text-primary)] text-[24px]" data-i18n-key="Advanced">Advanced</summary>
                                     <div class="flex flex-col gap-2 mt-4">
                                         <label for="visualizer-server" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Server:">Server:</label>
-                                        <input type="url" id="visualizer-server" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="${VISUALIZER_DEFAULT_SERVER}">
+                                        <input type="url" id="visualizer-server" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="${DEFAULT_VISUALIZER_SERVER_URL}">
                                         <p id="visualizer-server-status" class="text-[var(--text-primary)] text-[20px]"></p>
                                     </div>
                                     </details>
@@ -6472,7 +6467,6 @@ export function renderExtensionsSettings() {
                                         Save Credentials
                                     </button>
                                 </div>
-                                <p id="visualizer-status" class="col-span-4 text-[20px] text-[var(--text-primary)] opacity-80" role="status" aria-live="polite"></p>
                             </div>
                         </div>
                     </div>
@@ -6939,7 +6933,7 @@ function visualizerErrorText(error, action = 'Visualizer request') {
 // What the plugin has stored, as last loaded: the server the credentials belong
 // to, and whether it can take a different one at all. The form is judged against
 // this -- never against what is merely typed.
-let visualizerSaved = { url: VISUALIZER_DEFAULT_SERVER, username: '', passwordIsSet: false, supported: false };
+let visualizerSaved = { url: DEFAULT_VISUALIZER_SERVER_URL, username: '', passwordIsSet: false, supported: false };
 let visualizerLoadSeq = 0; // a load that outlives its page must not paint a later one
 
 const VISUALIZER_PASSWORD_PLACEHOLDER = 'Enter your Visualizer password';
@@ -6977,12 +6971,11 @@ function applyVisualizerServerForm() {
 // Function to set up event listeners for the Visualizer settings
 function setupVisualizerEventListeners() {
     const saveButton = document.getElementById('save-visualizer-credentials');
-    const serverUrlInput = document.getElementById('visualizer-server-url');
+    const serverUrlInput = document.getElementById('visualizer-server');
     const usernameInput = document.getElementById('visualizer-username');
     const passwordInput = document.getElementById('visualizer-password');
     const autoUploadCheckbox = document.getElementById('visualizer-auto-upload');
     const minDurationInput = document.getElementById('visualizer-min-duration');
-    const statusDiv = document.getElementById('visualizer-status');
     const formContainer = document.getElementById('visualizer-form-container');
     const enabledToggle = document.getElementById('visualizer-enabled');
     let saveGeneration = 0;
@@ -7000,12 +6993,11 @@ function setupVisualizerEventListeners() {
         input?.addEventListener('change', invalidateSave);
     }
 
-    if (serverUrlInput) serverUrlInput.disabled = true;
-
     const setStatus = (message, error = false) => {
-        if (!statusDiv || !formIsCurrent()) return;
-        statusDiv.textContent = message || '';
-        statusDiv.classList.toggle('text-red-500', error);
+        const target = document.getElementById('visualizer-server-status');
+        if (!target || !formIsCurrent()) return;
+        target.textContent = message || '';
+        target.classList.toggle('text-red-500', error);
     };
 
     const setTransportNotice = serverUrl => {
@@ -7036,10 +7028,19 @@ function setupVisualizerEventListeners() {
     // Load existing settings when the form loads
     loadVisualizerSettings();
 
-    const serverInput = document.getElementById('visualizer-server');
-    if (serverInput) {
-        serverInput.addEventListener('input', applyVisualizerServerForm);
-        serverInput.addEventListener('change', applyVisualizerServerForm);
+    if (serverUrlInput) {
+        serverUrlInput.addEventListener('input', () => {
+            invalidateSave();
+            applyVisualizerServerForm();
+            try {
+                const current = normalizeVisualizerServerUrl(serverUrlInput.value);
+                if (!visualizerServerUrlsEqual(current, visualizerServerUrl)) clearCredentialsForServerChange();
+                setTransportNotice(current);
+            } catch (error) {
+                setStatus(error.message, true);
+            }
+        });
+        serverUrlInput.addEventListener('change', applyVisualizerServerForm);
     }
 
     // Initially hide the form if the Visualizer integration is off
@@ -7089,18 +7090,6 @@ function setupVisualizerEventListeners() {
     // Credentials and uploaded-shot mappings belong to one server. Clear the
     // visible credentials as soon as the normalized URL changes, so a later
     // save cannot accidentally send the old server's password to the new one.
-    serverUrlInput?.addEventListener('input', () => {
-        invalidateSave();
-        try {
-            const current = normalizeVisualizerServerUrl(serverUrlInput.value);
-            if (!visualizerServerUrlsEqual(current, visualizerServerUrl)) clearCredentialsForServerChange();
-            else setStatus('');
-            setTransportNotice(current);
-        } catch {
-            setStatus(getTranslation('Enter a valid HTTP or HTTPS Visualizer server URL.'), true);
-        }
-    });
-
     // Add click handler for the save button
     saveButton.addEventListener('click', async () => {
         const generation = ++saveGeneration;
@@ -7168,11 +7157,13 @@ function setupVisualizerEventListeners() {
                 // Import verifyVisualizerCredentials from api.js
                 const { verifyVisualizerCredentials } = await import('../modules/api.js');
 
-                const isValid = await verifyVisualizerCredentials(username, password);
+                const verification = await verifyVisualizerCredentials(username, password, serverUrl);
                 if (!stillCurrent()) return;
 
-                if (!isValid) {
-                    ui.showToast('Visualizer log-in failed, check credentials', 900, 'error');
+                if (!verification.valid) {
+                    const message = verification.error || getTranslation('Visualizer log-in failed, check credentials');
+                    setStatus(message, true);
+                    ui.showToast(message, 1500, 'error');
                     finish();
                     return; // Stop here if credentials are bad
                 }
@@ -7249,7 +7240,7 @@ async function loadVisualizerSettings() {
         visualizerServerSettingSupported = !!visualizerPlugin?.settings?.ServerUrl;
 
         const usernameInput = document.getElementById('visualizer-username');
-        const serverUrlInput = document.getElementById('visualizer-server-url');
+        const serverUrlInput = document.getElementById('visualizer-server');
         const passwordInput = document.getElementById('visualizer-password');
         const autoUploadCheckbox = document.getElementById('visualizer-auto-upload');
         const minDurationInput = document.getElementById('visualizer-min-duration');
@@ -7269,7 +7260,7 @@ async function loadVisualizerSettings() {
             console.warn('Stored Visualizer server URL is invalid; using the hosted default:', error);
         }
         if (serverUrlInput) {
-            serverUrlInput.value = serverUrl;
+            serverUrlInput.value = serverUrl === DEFAULT_VISUALIZER_SERVER_URL ? '' : serverUrl;
             serverUrlInput.setAttribute('data-normalized-value', serverUrl);
             serverUrlInput.disabled = !visualizerServerSettingSupported;
             if (!visualizerServerSettingSupported) {
@@ -7296,20 +7287,20 @@ async function loadVisualizerSettings() {
         // An older Decaid has no server setting and talks to the hosted server.
         const savedUrl = visualizerServerSettingSupported ? normalizeServerUrl(savedSettings?.[VISUALIZER_SERVER_SETTING]) : null;
         visualizerSaved = {
-            url: savedUrl?.ok ? savedUrl.url : VISUALIZER_DEFAULT_SERVER,
+            url: savedUrl?.ok ? savedUrl.url : DEFAULT_VISUALIZER_SERVER_URL,
             username: savedSettings?.Username || '',
             passwordIsSet: visualizerPasswordIsSet,
             supported: visualizerServerSettingSupported,
         };
         const serverInput = document.getElementById('visualizer-server');
         if (serverInput) {
-            serverInput.value = visualizerSaved.url === VISUALIZER_DEFAULT_SERVER ? '' : visualizerSaved.url;
+            serverInput.value = visualizerSaved.url === DEFAULT_VISUALIZER_SERVER_URL ? '' : visualizerSaved.url;
             serverInput.disabled = !visualizerServerSettingSupported;
             serverInput.title = visualizerServerSettingSupported ? '' : 'Update Decaid to use a custom Visualizer server';
         }
         // Hosted users never see the field; a custom server is shown open.
         const advanced = document.getElementById('visualizer-advanced');
-        if (advanced) advanced.open = visualizerSaved.url !== VISUALIZER_DEFAULT_SERVER;
+        if (advanced) advanced.open = visualizerSaved.url !== DEFAULT_VISUALIZER_SERVER_URL;
         usernameInput.dataset.server = 'saved';
         applyVisualizerServerForm();
 
@@ -7339,7 +7330,7 @@ async function loadVisualizerSettings() {
         if (formContainer) {
             formContainer.style.display = isEnabled ? 'block' : 'none';
         }
-        const statusDiv = document.getElementById('visualizer-status');
+        const statusDiv = document.getElementById('visualizer-server-status');
         if (statusDiv) {
             statusDiv.textContent = isInsecureVisualizerServerUrl(serverUrl)
                 ? getTranslation('Warning: HTTP sends Visualizer credentials and shot data without encryption.')
@@ -7349,7 +7340,7 @@ async function loadVisualizerSettings() {
         }
     } catch (error) {
         console.error('Failed to load Visualizer settings:', error);
-        const statusDiv = document.getElementById('visualizer-status');
+        const statusDiv = document.getElementById('visualizer-server-status');
         if (statusDiv) statusDiv.textContent = visualizerErrorText(error, getTranslation('Could not load Visualizer settings'));
         ui.showToast(visualizerErrorText(error, getTranslation('Could not load Visualizer settings')), 3000, 'error');
     }
