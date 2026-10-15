@@ -23,6 +23,7 @@ import { logger } from './logger.js';
 import { fitTextToBox } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
+import { SELECTION_KEY, profileFingerprint, profileDrifted, serializeSelection, restoreSelection } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
 const RECIPES_KEY = 'recipes';
@@ -441,6 +442,12 @@ export function openPluginOverlay(page) {
 
     // Cross-origin (dev): iframe would be blocked → full-page navigation instead.
     if (!isSameOrigin(pluginUrl)) {
+        // The reload on return would drop the selection and auto-save target.
+        try {
+            const parked = serializeSelection(activeItem);
+            if (parked) sessionStorage.setItem(SELECTION_KEY, parked);
+            else sessionStorage.removeItem(SELECTION_KEY);
+        } catch (e) { /* private mode: selection simply does not survive */ }
         window.location.href = `${pluginUrl}?return=${encodeURIComponent(window.location.href)}`;
         return;
     }
@@ -893,7 +900,13 @@ function wireOnce() {
     // a transient failure isn't visible as a rejection here — a fetch fired right as
     // the browser wakes the network stack back up from bfcache can intermittently
     // fail and get read as "no favourites". Retry once shortly after to cover that.
-    window.addEventListener('pageshow', () => { repoll(); setTimeout(repoll, 500); });
+    // bfcache restore also means this page never reloaded, so a selection parked
+    // for the trip is stale: it would re-arm over whatever is chosen next.
+    window.addEventListener('pageshow', (e) => {
+        if (e.persisted) forgetParkedSelection();
+        repoll();
+        setTimeout(repoll, 500);
+    });
 }
 
 // Reveal the DYE2 UI: shift the profile nav right to make room, show the toggle +
@@ -918,6 +931,7 @@ export async function enableDye2Ui() {
 // profile nav back to its original position (byte-identical to stock Streamline).
 export function disableDye2Ui() {
     clearActiveItem();
+    forgetParkedSelection(); // a trip made while DYE2 was on must not re-arm later
     const profileNav = document.getElementById('profile-fav-nav');
     const toggle = document.getElementById('dye-strip-toggle');
     const dyeBtn = document.getElementById('dye-open-btn');
@@ -1030,6 +1044,10 @@ async function withAutoSaveSuppressed(fn) {
     try { return await fn(); } finally { autoSaveSuppressed = false; }
 }
 
+function forgetParkedSelection() {
+    try { sessionStorage.removeItem(SELECTION_KEY); } catch (e) { /* private mode */ }
+}
+
 function clearActiveItem() {
     activeItem = null;
     clearTimeout(autoSaveTimer);
@@ -1092,36 +1110,9 @@ export function favouriteAutoSaveFields(dataToSend, workflow) {
     return patch;
 }
 
-// Decaid's workflow.profile carries no `id` (confirmed on 0.8.6+2801: a PUT's
-// profile.id is dropped, and the next GET has none either), so the id check
-// below never actually fires and the profile-drift guard silently never
-// fired either -- see decentespresso/streamline-js#90. This fingerprints the
-// fields a real profile switch changes and a recipe's own brew-temp auto-save
-// does not: `updateTemperatureValue()` PUTs the same profile back with only
-// `steps[*].temperature` edited, so temperature is stripped before hashing --
-// otherwise every brew-temp tweak would look like switching to a new profile
-// and immediately clear the item auto-save is running for.
-export function profileFingerprint(profile) {
-    if (!profile) return null;
-    const steps = Array.isArray(profile.steps)
-        ? profile.steps.map(({ temperature, ...rest }) => rest)
-        : profile.steps;
-    return JSON.stringify({
-        title: profile.title,
-        target_weight: profile.target_weight,
-        target_volume: profile.target_volume,
-        tank_temperature: profile.tank_temperature,
-        steps,
-    });
-}
-
 function handleWorkflowUpdatedForAutoSave(workflow, dataToSend) {
     if (autoSaveSuppressed || !activeItem || !isDye2Enabled()) return;
-    const profileId = workflow?.profile?.id;
-    const fingerprint = profileFingerprint(workflow?.profile);
-    const idDrifted = activeItem.profileId && profileId && profileId !== activeItem.profileId;
-    const fingerprintDrifted = activeItem.profileFingerprint && fingerprint && fingerprint !== activeItem.profileFingerprint;
-    if (idDrifted || fingerprintDrifted) {
+    if (profileDrifted(activeItem, workflow)) {
         clearActiveItem();
         return;
     }
@@ -1154,6 +1145,28 @@ async function saveItemFields(kind, id, fields) {
     logger.info(`dyeStrip: auto-saved to ${kind} ${id}: ${Object.keys(fields).join(', ')}`);
 }
 
+// Re-arm the selection parked by openPluginOverlay before a full-page trip to
+// DYE2. Read once and cleared: whatever the barista did there, the next reload
+// starts clean. Runs after the strip data is loaded, so a recipe deleted in DYE
+// is dropped rather than highlighted.
+async function restoreParkedSelection() {
+    let raw = null;
+    try {
+        raw = sessionStorage.getItem(SELECTION_KEY);
+        sessionStorage.removeItem(SELECTION_KEY);
+    } catch (e) { /* private mode */ }
+    if (!raw) return;
+    // The strip is already tappable: a selection made during the GET below wins.
+    const before = { item: activeItem, id: activeItemId };
+    const workflow = (await getWorkflow()) || {};
+    if (activeItem !== before.item || activeItemId !== before.id) return;
+    const item = restoreSelection(raw, { recipes: recipeCache, favs: favCache, workflow });
+    if (!item) return;
+    activeItem = item;
+    activeItemId = item.id;
+    if (currentMode !== 'P') renderStrip(currentMode);
+}
+
 let workflowListenerRegistered = false;
 
 export async function initDyeStrip() {
@@ -1169,6 +1182,7 @@ export async function initDyeStrip() {
 
     if (isDye2Enabled()) {
         await enableDye2Ui();
+        await restoreParkedSelection().catch(e => logger.warn('dyeStrip: could not restore selection', e));
         // Flag on but the plugin missing/unloaded: nothing can restate the
         // context, so what is in it is stale.
         checkDye2PluginRequirement()

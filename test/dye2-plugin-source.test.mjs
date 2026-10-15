@@ -644,10 +644,8 @@ function lift(module, patterns) {
     const profileA = { title: 'Profile A', target_weight: 36, steps: [{ pump: 'flow', flow: 2, temperature: 93 }] };
     const profileB = { title: 'Profile B', target_weight: 18, steps: [{ pump: 'pressure', pressure: 9, temperature: 93 }] };
 
-    const profileFingerprint = new Function(
-        `${lift('dyeStrip.js', [/export function profileFingerprint\(profile\) \{[\s\S]*?\r?\n\}/])}
-        return profileFingerprint;`
-    )();
+    // Moved to the DOM-free dye-selection.js, which node can import directly.
+    const { profileFingerprint, profileDrifted } = await import('../src/modules/dye-selection.js');
 
     test('profileFingerprint(profile): unaffected by a temperature-only change, changed by a different profile', () => {
         assert.equal(profileFingerprint(null), null);
@@ -659,14 +657,13 @@ function lift(module, patterns) {
 
     const body = lift('dyeStrip.js', [
         /let activeItem = null;[\s\S]*?autoSavePending = \{\};\n\}/,
-        /export function profileFingerprint\(profile\) \{[\s\S]*?\r?\n\}/,
         /function handleWorkflowUpdatedForAutoSave\(workflow, dataToSend\) \{[\s\S]*?\r?\n\}/,
     ]);
 
     const build = ({ patch = () => ({ dose: 1 }) } = {}) => {
         const saveCalls = [];
         const fn = new Function(
-            'AUTOSAVE_TARGETS', 'AUTOSAVE_DEBOUNCE_MS', 'isDye2Enabled', 'setTimeout', 'clearTimeout', 'saveItemFields', 'logger',
+            'AUTOSAVE_TARGETS', 'AUTOSAVE_DEBOUNCE_MS', 'isDye2Enabled', 'setTimeout', 'clearTimeout', 'saveItemFields', 'logger', 'profileDrifted',
             `${body}\nreturn { handleWorkflowUpdatedForAutoSave, setActiveItem: v => { activeItem = v; }, getActiveItem: () => activeItem };`
         );
         const handler = fn(
@@ -677,6 +674,7 @@ function lift(module, patterns) {
             () => {},
             async (kind, id, fields) => { saveCalls.push({ kind, id, fields }); },
             { error() {}, info() {} },
+            profileDrifted,
         );
         return { ...handler, saveCalls };
     };
