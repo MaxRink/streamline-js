@@ -6968,6 +6968,15 @@ function applyVisualizerServerForm() {
     return plan;
 }
 
+function updateVisualizerSaved({ url, username = '', passwordIsSet = false }) {
+    visualizerSaved = {
+        url,
+        username,
+        passwordIsSet,
+        supported: visualizerServerSettingSupported,
+    };
+}
+
 // Function to set up event listeners for the Visualizer settings
 function setupVisualizerEventListeners() {
     const saveButton = document.getElementById('save-visualizer-credentials');
@@ -7130,6 +7139,7 @@ function setupVisualizerEventListeners() {
                 await setPluginSettings('visualizer.reaplugin', { ServerUrl: serverUrl });
                 if (!stillCurrent()) return;
                 visualizerServerUrl = serverUrl;
+                updateVisualizerSaved({ url: serverUrl });
                 clearCredentialsForServerChange();
                 ui.showToast(getTranslation('Server saved. Enter credentials for this server.'), 3500, 'info');
             } catch (error) {
@@ -7211,6 +7221,15 @@ function setupVisualizerEventListeners() {
             await setPluginSettings(pluginId, settingsPayload);
             if (!stillCurrent()) return;
             visualizerServerUrl = serverUrl;
+            updateVisualizerSaved({
+                url: serverUrl,
+                username,
+                passwordIsSet: password
+                    ? true
+                    : visualizerPasswordIsSet,
+            });
+            passwordInput.value = '';
+            visualizerPasswordIsSet = visualizerSaved.passwordIsSet;
             setStatus(`${getTranslation('Active Visualizer server')}: ${serverUrl}`);
             ui.showToast('Visualizer settings saved successfully', 3000, 'success');
         } catch (error) {
