@@ -156,6 +156,7 @@ function buildSaverButton(plugin, surface) {
 // The skin draws its own close button and closes on a backdrop tap, because key
 // events go to the frame once it is touched and a tablet has no Escape key.
 const OVERLAY_READY_MS = 3000;
+const OVERLAY_FIT_GRACE_MS = 300; // a `fit` page that is ready but sends no size gets the default window after this
 const NUMPAD_COOLDOWN_MS = 3000; // after a cancel, long enough to tap the overlay's close button
 let overlayOpen = false;
 
@@ -183,6 +184,22 @@ function openOverlay(plugin, action, pageUrl, onClose) {
     closeButton.style.cssText = 'position:absolute;top:8px;right:8px;width:44px;height:44px;border-radius:22px;border:0;font-size:28px;line-height:1;cursor:pointer;background:rgba(0,0,0,.55);color:#fff;z-index:1;';
     dialog.appendChild(closeButton);
 
+    // `fit`: the dialog is transparent, with the frame and close button hidden, until the
+    // page reports its size; a page that is ready but sends none gets the default window.
+    let revealed = !action.fit;
+    let graceTimer = null;
+    if (action.fit) {
+        dialog.style.background = 'transparent';
+        frame.style.visibility = 'hidden';
+        closeButton.style.visibility = 'hidden';
+    }
+    const reveal = () => {
+        revealed = true;
+        clearTimeout(graceTimer);
+        frame.style.visibility = '';
+        closeButton.style.visibility = '';
+    };
+
     let timer = null;
     const frameOrigin = new URL(src, window.location.href).origin;
     let lastNumpadCancelAt = 0;
@@ -190,6 +207,7 @@ function openOverlay(plugin, action, pageUrl, onClose) {
     // onClose (re-dim) must not run then, or the page opens at saver brightness.
     const finish = (event, fallback = false) => {
         clearTimeout(timer);
+        clearTimeout(graceTimer);
         window.removeEventListener('message', onMessage);
         dialog.removeEventListener('close', finish);
         if (dialog.open) dialog.close();
@@ -203,7 +221,15 @@ function openOverlay(plugin, action, pageUrl, onClose) {
     const onMessage = event => {
         if (event.source !== frame.contentWindow) return;
         const type = event.data?.type;
-        if (type === 'streamline:ready') clearTimeout(timer);
+        if (type === 'streamline:ready') {
+            clearTimeout(timer);
+            if (!revealed && !graceTimer) {
+                graceTimer = setTimeout(() => {
+                    dialog.style.background = 'var(--bg,#fff)'; // no size came: today's default window
+                    reveal();
+                }, OVERLAY_FIT_GRACE_MS);
+            }
+        }
         else if (type === 'streamline:close') finish();
         else if (type === 'streamline:size') {
             // The page says how big its content is: the dialog fits it, so a small form is
@@ -218,6 +244,7 @@ function openOverlay(plugin, action, pageUrl, onClose) {
             // An iframe whose colour scheme differs from the page around it is painted opaque.
             frame.style.colorScheme = 'normal';
             frame.style.background = 'transparent';
+            reveal();
         }
         else if (type === 'streamline:numpad') {
             // Only the page the overlay opened (not one the frame navigated to), only
