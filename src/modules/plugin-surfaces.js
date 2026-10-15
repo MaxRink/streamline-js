@@ -10,6 +10,11 @@ export const SKIN_VERSION = 1;
 export const MAX_SURFACES = 16;     // per plugin, all kinds together (slots allow one per kind per tile)
 export const MAX_MODES_PER_PLUGIN_TILE = 3; // tile-modes one plugin may add to one tile
 
+// `menu-item` adds an entry to one of the skin's long-press menus. The list is fixed
+// and each menu has its own small context (see docs/plugin-surfaces.md).
+export const MENUS = ['shot-history', 'favourite'];
+export const MAX_MENU_ITEMS_PER_PLUGIN = 3; // per menu
+
 export const TILES = ['dose', 'drink', 'grind', 'temperature'];
 // The fields `set` may write. Each maximum is the one the tile itself enforces when
 // the user types a value (ui.js makeEditable handlers; brew temperature also caps
@@ -275,6 +280,13 @@ export function parseNumpadInput(raw) {
         value: fitNumpadValue({ min, max, decimals }, start === null ? min : start) };
 }
 
+// A menu item's call carries the menu's context as its body, so it has no field or value.
+function parseMenuCall(action) {
+    const { endpoint } = action;
+    if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
+    return { type: 'call', endpoint };
+}
+
 function parseCall(action, { withValue = false } = {}) {
     const { endpoint, field } = action;
     if (typeof endpoint !== 'string' || !ID_RE.test(endpoint) || RESERVED_ENDPOINTS.includes(endpoint)) return null;
@@ -301,6 +313,7 @@ export function callableEndpoint(plugin, endpoint) {
 function parseAction(raw, kind) {
     if (!raw || typeof raw !== 'object') return null;
     if (raw.type === 'open') return parseOpen(raw);
+    if (raw.type === 'call' && kind === 'menu-item') return parseMenuCall(raw);
     if (raw.type === 'call' && kind === 'ratio-action') return parseCall(raw, { withValue: true });
     if (raw.type === 'set' && (kind === 'tile-hint' || kind === 'tile-line')) return parseSet(raw);
     if (raw.type === 'step' && (kind === 'tile-hint' || kind === 'tile-line')) return parseStep(raw);
@@ -551,6 +564,13 @@ function parseSurface(raw) {
         return { id, kind, ...(title && { title }), action };
     }
 
+    // Without an `open` or `call` it would be a dead menu entry: dropped.
+    if (kind === 'menu-item') {
+        const label = cleanText(raw.label, CAPS.text);
+        if (!label || !MENUS.includes(raw.menu) || (action?.type !== 'open' && action?.type !== 'call')) return null;
+        return { id, kind, menu: raw.menu, label, action };
+    }
+
     if (kind === 'tile-mode') return parseMode(raw, id, action);
     if (kind === 'shot-strip') return parseStrip(raw, id);
 
@@ -610,6 +630,7 @@ export function parseSkinAnswer(raw) {
     const seen = new Set();
     const slots = new Set(); // one header button, and one hint and line per tile
     const modeCount = {};    // tile -> tile-modes taken so far (up to MAX_MODES_PER_PLUGIN_TILE)
+    const menuCount = {};    // menu -> menu-items taken so far (up to MAX_MENU_ITEMS_PER_PLUGIN)
     for (const item of raw.surfaces) {
         if (out.surfaces.length >= MAX_SURFACES) break;
         const surface = parseSurface(item);
@@ -617,6 +638,9 @@ export function parseSkinAnswer(raw) {
         if (surface.kind === 'tile-mode') {
             if ((modeCount[surface.tile] || 0) >= MAX_MODES_PER_PLUGIN_TILE) continue;
             modeCount[surface.tile] = (modeCount[surface.tile] || 0) + 1;
+        } else if (surface.kind === 'menu-item') {
+            if ((menuCount[surface.menu] || 0) >= MAX_MENU_ITEMS_PER_PLUGIN) continue;
+            menuCount[surface.menu] = (menuCount[surface.menu] || 0) + 1;
         } else {
             const slot = surface.tile ? `${surface.kind}:${surface.tile}` : surface.kind;
             if (slots.has(slot)) continue;

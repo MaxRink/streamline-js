@@ -12,6 +12,7 @@ import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
     nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
 import { setShotStrip } from './plugin-shot-strip.js';
+import { setMenuEntries, setMenuRunner } from './plugin-menu-items.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
@@ -92,6 +93,39 @@ async function readSurfaces(plugin) {
     }
 }
 
+// A menu item's context rides on the plugin page's URL as plain query parameters
+// (shotId, slot, profileId); only scalar values, so a page reads them with URLSearchParams.
+function withContext(url, context) {
+    if (!url || !context || typeof context !== 'object') return url;
+    const out = new URL(url, window.location.href);
+    for (const [key, value] of Object.entries(context)) {
+        if (value == null || typeof value === 'object') continue;
+        out.searchParams.set(key, String(value));
+    }
+    return out.toString();
+}
+
+// What a long-press menu item does: `open` shows the plugin's page (overlay or page)
+// with the menu's context in the URL; `call` posts the context to an endpoint the
+// plugin declares. Nothing else can run from a menu.
+function runMenuItem({ plugin, surface }, context) {
+    const { action } = surface;
+    if (action?.type === 'open') {
+        const url = withContext(pluginUiUrl(plugin, API_BASE_URL, window.location.href, { view: action.view, returnPage: null }), context);
+        if (!url) return;
+        if (action.presentation === 'overlay') openOverlay(plugin, action, url, null, context);
+        else window.location.assign(url);
+    } else if (action?.type === 'call' && callableEndpoint(plugin, action.endpoint)) {
+        callPluginEndpoint(plugin.id, action.endpoint, context)
+            .then(() => refreshPluginSurfaces())
+            .catch(error => {
+                logger.warn(`Plugin menu call failed (${plugin.id}/${action.endpoint}):`, error?.message);
+                showToast('The plugin could not do that', 2400, 'error');
+            });
+    }
+}
+setMenuRunner(runMenuItem);
+
 function buildButton(plugin, surface, { bind = true } = {}) {
     const button = document.createElement('button');
     button.className = BUTTON_CLASS;
@@ -161,10 +195,10 @@ const OVERLAY_FIT_GRACE_MS = 300; // a `fit` page that is ready but sends no siz
 const NUMPAD_COOLDOWN_MS = 3000; // after a cancel, long enough to tap the overlay's close button
 let overlayOpen = false;
 
-function openOverlay(plugin, action, pageUrl, onClose) {
+function openOverlay(plugin, action, pageUrl, onClose, context) {
     if (overlayOpen) return;
     const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-    const src = pluginUiUrl(plugin, API_BASE_URL, null, { view: action.view, embedTheme: theme });
+    const src = withContext(pluginUiUrl(plugin, API_BASE_URL, null, { view: action.view, embedTheme: theme }), context);
     if (!src) return;
     overlayOpen = true;
 
@@ -765,6 +799,7 @@ function render(rawEntries) {
         }
         if (mainHidden) continue;
         if (surface.kind === 'tile-mode') continue; // drawn per tile below
+        if (surface.kind === 'menu-item') continue; // listed in plugin-menu-items.js, drawn by the menus
         if (surface.kind === 'ratio-action') {
             if (!ratioUndo) placeRatioAction(plugin, surface); // first plugin wins
             continue;
@@ -815,6 +850,7 @@ export async function refreshPluginSurfaces() {
             if (endpoint) live.set(plugin.id, endpoint);
         }
         syncLive(live);
+        setMenuEntries(entries.filter(e => e.surface.kind === 'menu-item'));
         // Skip the DOM work when nothing changed: a rebuild resizes the header
         // controls, which re-runs the strip fit.
         const key = JSON.stringify(entries.map(e => [e.plugin.id, e.surface]));

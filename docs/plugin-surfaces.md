@@ -159,6 +159,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `kind` | Where | Fields |
 |---|---|---|
 | `header-button` | header controls | `label` (required, 24), `text` (40), `image` (https) |
+| `menu-item` | the skin's long-press menus | `menu` (`shot-history` or `favourite`), `label` (40), `action` (`open` or `call`, required); see Menu items |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
 | `shot-strip` | the info row (Water, Steam, Tank, Clock, Weight) | `cells` (1–9), `show` (`shot` default, or `always`); see Shot strip |
 | `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
@@ -263,6 +264,35 @@ A `screensaver-button` is drawn at the top centre of the screensaver, for a plug
 - It never wakes the machine and sends no machine command. A tap on it is not a tap on the saver, so the saver stays up. The saver is left only by waking the machine, which the plugin button does not do; the user taps the saver elsewhere, as before.
 - Pressing it brings the panel back to the user's brightness (display only) so the page can be read. With `overlay`, closing the dialog dims the panel again if the machine is still asleep. With `page`, the skin is left; on return the first snapshot raises the saver and dims again, and boot sends no wake.
 - It sits at the top right of the saver and is shown on every saver, the image saver and the black screen.
+
+## Menu items
+
+A `menu-item` adds an entry to one of the skin's long-press menus, below a divider and after the built-in entries:
+
+```json
+{ "id": "rate", "kind": "menu-item", "menu": "shot-history", "label": "Rate this shot",
+  "action": { "type": "open", "view": "rate", "presentation": "overlay", "fit": true } }
+{ "id": "note", "kind": "menu-item", "menu": "favourite", "label": "Note for this favourite",
+  "action": { "type": "call", "endpoint": "favourite-note" } }
+```
+
+| `menu` | Opens from | Context the item gets |
+|---|---|---|
+| `shot-history` | long-press on the shot history panel | `shotId` |
+| `favourite` | long-press on a top favourite button | `slot` (1-based), and `profileId` when the slot has a profile |
+
+- **`open`** works as everywhere else (`page` or `overlay`, `fit`, `closeOnShot`). The context is added to the page's
+  URL as query parameters (`?shotId=...`, `?slot=2&profileId=...`).
+- **`call`** POSTs the context as a JSON object (`{"shotId":"..."}`) to the plugin's own http endpoint; the endpoint
+  must be declared in the manifest, and `skin` and Decaid's own plugin routes are refused. The skin re-reads `skin`
+  afterwards. A failed call shows a short error toast.
+- **Labels** are at most 40 characters, written with `textContent`, and shown with the plugin's name after them
+  (`Rate this shot · Derek`, name cut at 14 characters), so an entry cannot pose as a built-in one.
+- **Limits:** at most 3 per plugin per menu, 6 per menu across all plugins (the first ones win), and the shared 16 surfaces
+  per plugin. An unknown `menu`, an empty label or a missing `open`/`call` drops the surface. With no plugin, or the
+  plugin off, every menu is exactly as before.
+- The menu is built from the last `skin` answer, so an entry appears after the next read (load, focus, the minute poll or a
+  `live` push).
 
 ## Ratio action
 

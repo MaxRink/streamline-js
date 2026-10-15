@@ -666,3 +666,56 @@ test('shot-strip: col and span parse as grid integers and place the cells', () =
         { cell: 'step', col: 9, span: 1.5 }] });
     assert.deepEqual(s.cells.map(c => `${c.cell}:${c.col}+${c.span}`), ['weight:1+4', 'pressure:6+1', 'flow:7+2', 'step:9+1']); // flow's col 12 is off the grid: it fills free columns
 });
+
+// ── menu-item: entries in the skin's long-press menus ───────────────────────
+{
+    const { pluginMenuEntries, setMenuEntries, setMenuRunner, menuItemLabel } = await import('../src/modules/plugin-menu-items.js');
+    const answer = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
+    const open = { type: 'open', view: 'rate', presentation: 'overlay' };
+
+    test('menu-item: needs a known menu, a label and an open or call action', () => {
+        const [ok] = answer([{ id: 'a', kind: 'menu-item', menu: 'shot-history', label: 'Rate this shot', action: open }]);
+        assert.deepEqual(ok, { id: 'a', kind: 'menu-item', menu: 'shot-history', label: 'Rate this shot',
+            action: { type: 'open', view: 'rate', presentation: 'overlay' } });
+        assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'nope', label: 'x', action: open }]).length, 0);
+        assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'favourite', label: '', action: open }]).length, 0);
+        assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'favourite', label: 'x' }]).length, 0);
+        // set / step are for tiles, not menus
+        assert.equal(answer([{ id: 'a', kind: 'menu-item', menu: 'favourite', label: 'x',
+            action: { type: 'set', field: 'targetDoseWeight', value: 18 } }]).length, 0);
+    });
+
+    test('menu-item call: an endpoint only, and not one Decaid serves itself', () => {
+        const call = endpoint => answer([{ id: 'a', kind: 'menu-item', menu: 'favourite', label: 'Note', action: { type: 'call', endpoint } }]);
+        assert.deepEqual(call('note')[0].action, { type: 'call', endpoint: 'note' });
+        assert.equal(call('settings').length, 0);
+        assert.equal(call('skin').length, 0);
+        assert.equal(call('../x').length, 0);
+    });
+
+    test('menu-item: at most three per plugin per menu, other menus unaffected', () => {
+        const item = (id, menu) => ({ id, kind: 'menu-item', menu, label: id, action: open });
+        const out = answer([item('a', 'favourite'), item('b', 'favourite'), item('c', 'favourite'), item('d', 'favourite'), item('e', 'shot-history')]);
+        assert.deepEqual(out.map(s => s.id), ['a', 'b', 'c', 'e']);
+    });
+
+    test('menu entries: divider, plugin name on each label, per-menu cap, empty without plugins', () => {
+        const ran = [];
+        setMenuRunner((entry, context) => ran.push([entry.surface.id, context]));
+        setMenuEntries([]);
+        assert.deepEqual(pluginMenuEntries('shot-history', { shotId: '1' }), []);
+        const entry = (id, menu, name = 'Derek') => ({ plugin: { id: 'p', name }, surface: { id, kind: 'menu-item', menu, label: `L${id}`, action: open } });
+        setMenuEntries([entry('a', 'shot-history'), entry('b', 'favourite'), ...Array.from({ length: 8 }, (_, i) => entry(`x${i}`, 'shot-history', 'A very long plugin name'))]);
+        const items = pluginMenuEntries('shot-history', { shotId: '9' });
+        assert.equal(items[0].divider, true);
+        assert.equal(items.length, 1 + 6, 'six entries at most');
+        assert.equal(items[1].label, 'La · Derek');
+        assert.equal(items[2].label, 'Lx0 · A very long pl');
+        items[1].onSelect();
+        assert.deepEqual(ran, [['a', { shotId: '9' }]]);
+        assert.deepEqual(pluginMenuEntries('favourite', { slot: 2 }).map(i => i.label).slice(1), ['Lb · Derek']);
+        assert.equal(menuItemLabel('Rate', ''), 'Rate');
+        setMenuRunner(null);
+        assert.deepEqual(pluginMenuEntries('shot-history', {}), []);
+    });
+}

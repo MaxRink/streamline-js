@@ -9,6 +9,7 @@ import { translateProfileTitle } from './profileManager.js';
 import { generateShotSummary } from './shotSummary.js';
 import { openContextMenu } from './context-menu.js';
 import { showToast, setupPressAndHold } from './ui.js';
+import { pluginMenuEntries } from './plugin-menu-items.js';
 import { isVisualizerEnabled, uploadShotToVisualizer } from './visualizer.js';
 import { ASSISTED_DIALIN_PLUGIN_ID, findAssistedDialInPlugin, buildAssistedDialInUrl } from './assisted-dialin.js';
 import { openBeanScaleCaptureModal } from './bean-scale-modal.js';
@@ -401,6 +402,9 @@ function setupHistoryLongPress() {
                 onSelect: () => uploadCurrentShotToVisualizer(),
             });
         }
+        // Entries plugins add (kind `menu-item`, menu `shot-history`) for the shot on screen.
+        const shotId = shots[currentShotIndex]?.id;
+        if (shotId) items.push(...pluginMenuEntries('shot-history', { shotId: String(shotId) }));
         openContextMenu(panel, items);
     });
 }

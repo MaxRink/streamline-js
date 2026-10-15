@@ -2,6 +2,7 @@ import { logger } from './logger.js';
 import { updateWorkflow,sendProfile, getWorkflow, getValueFromStore, setValueInStore, getProfiles, deleteProfile, updateProfileVisibility, uploadProfile, uploadProfileWithParent, updateProfile, updateProfileMetadata, getShots, getKVKeys, getKVValue, deleteKVValue, setTargetSteamDuration, setTargetSteamFlow } from './api.js';
 import { updateProfileName, updateTemperatureDisplay, updateDrinkOut, updateDrinkRatio, updateDoseInDisplay, updateGrindDisplay, updateSteamDisplay, updateHotWaterDisplay, updateFlushDisplay, showToast, setupPressAndHold} from './ui.js';
 import { openContextMenu } from './context-menu.js';
+import { pluginMenuEntries } from './plugin-menu-items.js';
 import { openDB, getSetting, setSetting } from './idb.js';
 import { loadPage } from './router.js'; // Singular and correctly formatted import
 import { getTranslation, fitTextToBox } from './i18n.js';
@@ -1109,6 +1110,10 @@ function openFavoriteContextMenu(button, index) {
                 loadPage('src/profiles/profile_selector.html');
             } },
         ];
+
+    // Entries plugins add (kind `menu-item`, menu `favourite`): the slot, 1-based as the
+    // user counts them, and the profile on it when there is one.
+    items.push(...pluginMenuEntries('favourite', { slot: index + 1, ...(profileKey && { profileId: String(profileKey) }) }));
 
     openContextMenu(button, items);
 }
