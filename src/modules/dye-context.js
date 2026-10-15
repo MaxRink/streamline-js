@@ -11,6 +11,12 @@ export const DYE_MARKER_VERSION = '0.1.20';
 const TOP = ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'grinderId', 'grinderModel', 'baristaName', 'drinkerName'];
 const EXTRAS = ['basketId', 'basketName', 'rpm', 'note'];
 
+/** Did a DYE2 that marks its writes produce this context? */
+export function hasDyeMarker(context) {
+    const marker = context?.extras?.dye;
+    return !!marker && typeof marker === 'object';
+}
+
 /**
  * The context payload that clears what DYE2 flagged, or null when nothing is
  * flagged. Values another writer set are untouched; the flags go with the values

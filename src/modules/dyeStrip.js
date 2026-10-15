@@ -25,7 +25,7 @@ import { logger } from './logger.js';
 import { fitTextToBox } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
-import { DYE_MARKER_VERSION, scopedClearContext } from './dye-context.js';
+import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker } from './dye-context.js';
 import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, armedSelectionId } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
@@ -1068,7 +1068,12 @@ export async function clearDyeWorkflowContext({ includeGrinderSetting = false } 
         const live = await getWorkflow();
         // The whole-plugin switch-off clears everything DYE2-shaped; only the
         // per-shot and boot hooks are scoped to what DYE2 flagged.
-        if (!includeGrinderSetting && await scopedClearSupported()) {
+        // The version gate only promises the installed DYE2 COULD mark its writes, so
+        // scope the clear to the marker only when this context actually carries one.
+        // Without that check a plugin build that declares the version but writes no
+        // marker would stop the clear altogether and let one shot's bean identity label
+        // every later shot. A marker that flags nothing still clears nothing.
+        if (!includeGrinderSetting && hasDyeMarker(live?.context) && await scopedClearSupported()) {
             const scoped = scopedClearContext(live?.context);
             if (!scoped) return false;
             await updateWorkflow({ context: scoped });

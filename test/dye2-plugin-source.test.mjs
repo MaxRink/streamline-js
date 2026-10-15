@@ -292,10 +292,10 @@ function lift(module, patterns) {
         /export async function clearDyeWorkflowContext\([\s\S]*?\r?\n\}/,
     ]);
 
-    const { scopedClearContext } = await import('../src/modules/dye-context.js');
+    const { scopedClearContext, hasDyeMarker } = await import('../src/modules/dye-context.js');
     const build = (context, { scoped = false } = {}) => {
         const puts = [];
-        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext',
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker',
             `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
         const api = fn(
             async () => ({ context }),
@@ -303,6 +303,7 @@ function lift(module, patterns) {
             { info() {}, warn() {} },
             async () => scoped,
             scopedClearContext,
+            hasDyeMarker,
         );
         return { ...api, puts };
     };
@@ -370,6 +371,17 @@ function lift(module, patterns) {
         const { clearDyeWorkflowContext, puts } = build({ ...dirty, extras: { ...dirty.extras, dye: { v: 1 } } }, { scoped: true });
         assert.equal(await clearDyeWorkflowContext(), false);
         assert.equal(puts.length, 0);
+    });
+
+    test('a marker-capable version that sent no marker still gets the blanket clear', async () => {
+        // The version gate says the plugin COULD mark its writes, not that it did: a
+        // build that declares the version and writes no marker must not silently stop
+        // the clear, or one shot's bean identity labels every later shot.
+        const { clearDyeWorkflowContext, puts } = build(dirty, { scoped: true });
+        assert.equal(await clearDyeWorkflowContext(), true);
+        assert.equal(puts[0].context.coffeeName, null);
+        assert.equal(puts[0].context.beanBatchId, null);
+        assert.ok(!('grinderSetting' in puts[0].context));
     });
 
     test('the settings switch-off still clears everything, marked or not', async () => {
