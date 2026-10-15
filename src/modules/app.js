@@ -2156,6 +2156,10 @@ async function initializeDe1Connection() {
 }
 
 async function initVisualizer() {
+    // Legacy browser credentials have no server binding. Purge them even
+    // while the integration is disabled so an upgrade cannot retain secrets.
+    localStorage.removeItem('visualizerUsername');
+    localStorage.removeItem('visualizerPassword');
     if (!isVisualizerEnabled()) {
         logger.info('Visualizer is disabled. Skipping initialization.');
         return;
@@ -2163,8 +2167,6 @@ async function initVisualizer() {
     // Credentials belong to the plugin's secure, server-scoped store. Do not
     // revive the legacy browser keys: they have no server binding and could be
     // sent to a newly selected self-hosted Visualizer during boot.
-    localStorage.removeItem('visualizerUsername');
-    localStorage.removeItem('visualizerPassword');
     logger.info('Visualizer is enabled; credentials are managed by the plugin.');
 }
 
