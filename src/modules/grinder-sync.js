@@ -53,3 +53,11 @@ export function sendDecision({ tileValue, lastTile, deviceValue, info }) {
     if (sameGrind(tileValue, deviceValue)) return null;
     return grinderSettingString(tileValue, info.controls.grindSetting);
 }
+
+/** The Grind tile's -/+ step a connected grinder declares (its numeric control's step), or null. */
+export function grindStepFromInfo(info) {
+    const d = info?.controls?.grindSetting;
+    const step = d?.step;
+    return Array.isArray(info?.capabilities) && info.capabilities.includes('grindSetting')
+        && d?.kind === 'numeric' && Number.isFinite(step) && step > 0 && step <= 100 ? step : null;
+}

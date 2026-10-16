@@ -3,10 +3,10 @@
 // the snapshot socket, the workflow and the tile. Device-local switches (plain
 // localStorage, not the synchronized KV): they describe this tablet's grinder.
 
-import { connectGrinderSnapshot, getGrinderInfo, setGrinderSetting, getWorkflow, onWorkflowUpdated } from './api.js';
-import { applyPluginSetAsync } from './ui.js';
+import { connectGrinderSnapshot, getGrinderInfo, setGrinderSetting, getWorkflow, onWorkflowUpdated, subscribeGrinderConnectionChanges } from './api.js';
+import { applyPluginSetAsync, setGrinderGrindStep } from './ui.js';
 import { logger } from './logger.js';
-import { deviceSetting, parseDeviceNumber, followDecision, sendDecision } from './grinder-sync.js';
+import { deviceSetting, parseDeviceNumber, followDecision, sendDecision, grindStepFromInfo } from './grinder-sync.js';
 
 const KEYS = { follow: 'grinder-follow', send: 'grinder-send' };
 export const GRINDER_SYNC_CHANGE = 'streamline:grinder-sync-change';
@@ -65,10 +65,22 @@ function sync() {
     getWorkflow().then(w => { if (lastTile === null) lastTile = tileNumber(w); }).catch(() => {});
 }
 
-/** Idempotent. Safe to call at boot; does nothing until a switch is on. */
+// The Grind tile's -/+ follows the connected grinder's declared step whatever the two
+// switches say; a grinder that goes away hands the tile back to its own rule.
+// Read once at load and again whenever a grinder connects or disconnects (Decaid's
+// devices feed says so), not on a timer.
+async function refreshGrindStep() {
+    const next = await getGrinderInfo();
+    info = next; // null once the grinder is gone, so Send stops
+    setGrinderGrindStep(grindStepFromInfo(next));
+}
+
+/** Idempotent. Safe to call at boot; the socket opens only while a switch is on. */
 export function initGrinderSync() {
     if (started) return;
     started = true;
+    refreshGrindStep();
+    subscribeGrinderConnectionChanges(refreshGrindStep);
     onWorkflowUpdated(onWorkflow);
     document.addEventListener(GRINDER_SYNC_CHANGE, sync);
     sync();

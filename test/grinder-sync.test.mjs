@@ -59,3 +59,14 @@ test('send: only a changed tile, never what the grinder already shows', () => {
     assert.equal(sendDecision({ tileValue: 20, lastTile: 18, deviceValue: null, info: { capabilities: [] } }), null);
     assert.equal(sendDecision({ tileValue: 60, lastTile: 18, deviceValue: 18, info }), '40');
 });
+
+test('grindStepFromInfo: the declared numeric step of a settable grinder, else null', async () => {
+    const { grindStepFromInfo } = await import('../src/modules/grinder-sync.js');
+    assert.equal(grindStepFromInfo(info), 0.5);
+    assert.equal(grindStepFromInfo({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'numeric', min: 1, max: 80, step: 1 } } }), 1);
+    assert.equal(grindStepFromInfo({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'numeric', min: 1, max: 80 } } }), null);
+    assert.equal(grindStepFromInfo({ capabilities: ['rpmControl'], controls: { grindSetting: numeric } }), null);
+    assert.equal(grindStepFromInfo({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'opaque' } } }), null);
+    assert.equal(grindStepFromInfo({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'numeric', min: 0, max: 9, step: 0 } } }), null);
+    assert.equal(grindStepFromInfo(null), null);
+});

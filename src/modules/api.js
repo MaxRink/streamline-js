@@ -870,7 +870,16 @@ const deviceDisconnectListeners = new Set();
 const deviceErrorListeners = new Set();
 
 export function subscribeMachineConnectionChanges(listener) {
-    const identity = data => JSON.stringify((data?.devices || []).filter(device => device.type === 'machine' && device.state === 'connected').map(device => device.id).sort());
+    return subscribeConnectionChanges('machine', listener);
+}
+
+/** Fires when the set of connected grinders changes (a connect, a disconnect, a swap). */
+export function subscribeGrinderConnectionChanges(listener) {
+    return subscribeConnectionChanges('grinder', listener);
+}
+
+function subscribeConnectionChanges(type, listener) {
+    const identity = data => JSON.stringify((data?.devices || []).filter(device => device.type === type && device.state === 'connected').map(device => device.id).sort());
     let previous = identity(lastDeviceData);
     const onData = data => {
         const next = identity(data);

@@ -191,6 +191,9 @@ function markTileInteraction() { lastTileInteractionAt = Date.now(); }
 export function msSinceTileInteraction() { return Date.now() - lastTileInteractionAt; }
 
 let grindStep = 0.1;
+// The -/+ step a connected grinder declares for its grind setting; null when none is connected.
+let grinderDeclaredStep = null;
+export function setGrinderGrindStep(step) { grinderDeclaredStep = Number.isFinite(step) && step > 0 ? step : null; }
 
 // How long the steam elapsed counter will pick up where it left off. Covers a
 // dropped/odd status frame; a genuine second steam session is always further
@@ -2724,8 +2727,9 @@ export function initUI(callbacks) {
         if (ratioYield !== null) { updateDrinkOut(ratioYield); updateDrinkRatio(); }
         syncDrinkOutPresets(fmt);
     });
-    // A plugin `stepsize` on grind overrides the built-in whole-number/0.1 rule.
-    const grindStepNow = () => drawnStepSizes.grinderSetting ? activeStepSize('grinderSetting') : grindStep;
+    // A plugin `stepsize` on grind wins, then the step the connected grinder declares, then
+    // the built-in whole-number/0.1 rule.
+    const grindStepNow = () => drawnStepSizes.grinderSetting ? activeStepSize('grinderSetting') : (grinderDeclaredStep ?? grindStep);
     setupValueAdjuster('grind-minus', 'grind-plus', 'grind-value', grindStepNow, 0, (val) => Number.isInteger(grindStepNow()) ? String(Math.round(val)) : val.toFixed(1), updateGrindValue);
     setupValueAdjuster('flush-minus', 'flush-plus', 'flush-value', 1, 0, (val) => `${val}s`, (val) => {
         updateFlushValue(val);
