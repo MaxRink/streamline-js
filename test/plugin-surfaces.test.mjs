@@ -732,3 +732,16 @@ test('shot-strip: col and span parse as grid integers and place the cells', () =
         assert.deepEqual(pluginMenuEntries('shot-history', {}), []);
     });
 }
+
+test('tile-sync: only the grind tile, a number clamped to the field, first one wins', () => {
+    const sync = (o = {}) => ok([{ id: 'g', kind: 'tile-sync', tile: 'grind', value: 200, ...o }]);
+    assert.deepEqual(sync(), [{ id: 'g', kind: 'tile-sync', tile: 'grind', value: 200 }]);
+    assert.equal(sync({ value: '56.4' })[0].value, 56.4);
+    assert.equal(sync({ value: 99999 })[0].value, 9999);
+    assert.equal(sync({ label: 'MT80' })[0].label, 'MT80');
+    assert.deepEqual(sync({ value: 'x' }), []);
+    assert.deepEqual(sync({ value: null }), []);
+    assert.deepEqual(sync({ tile: 'dose' }), []);
+    assert.equal(ok([{ id: 'a', kind: 'tile-sync', tile: 'grind', value: 1 },
+        { id: 'b', kind: 'tile-sync', tile: 'grind', value: 2 }]).length, 1);
+});

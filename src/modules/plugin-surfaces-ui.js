@@ -10,7 +10,7 @@ import { getScaleReading, getEspressoEndedAt, getPlugins, callPluginEndpoint, co
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, SYNC_TILES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
 import { setShotStrip } from './plugin-shot-strip.js';
 import { setMenuEntries, setMenuRunner } from './plugin-menu-items.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
@@ -807,6 +807,7 @@ function render(rawEntries) {
         if (mainHidden) continue;
         if (surface.kind === 'tile-mode') continue; // drawn per tile below
         if (surface.kind === 'menu-item') continue; // listed in plugin-menu-items.js, drawn by the menus
+        if (surface.kind === 'tile-sync') continue; // nothing drawn; applied by syncTiles()
         if (surface.kind === 'ratio-action') {
             if (!ratioUndo) placeRatioAction(plugin, surface); // first plugin wins
             continue;
@@ -842,6 +843,24 @@ function render(rawEntries) {
     return !mainHidden && !saverSlotMissing;
 }
 
+// `tile-sync`: a device's reading becomes the tile's value (device wins), as a tile edit
+// would: workflow plus the profile's override. Applied when the reading CHANGES, so the
+// user's own edit of the tile stands until the device moves again. First plugin wins.
+const syncedValue = new Map(); // tile -> "pluginId:value" last written
+function syncTiles(entries) {
+    const taken = new Set();
+    for (const { plugin, surface } of entries) {
+        if (surface.kind !== 'tile-sync' || taken.has(surface.tile)) continue;
+        taken.add(surface.tile);
+        const mark = `${plugin.id}:${surface.value}`;
+        if (syncedValue.get(surface.tile) === mark) continue;
+        syncedValue.set(surface.tile, mark);
+        applyPluginSetAsync(SYNC_TILES[surface.tile], surface.value).then(applied => {
+            if (!applied) syncedValue.delete(surface.tile); // try again on the next read
+        });
+    }
+}
+
 export async function refreshPluginSurfaces() {
     if (running) { refreshAgain = true; return; } // e.g. a mode call finished mid-read
     running = true;
@@ -857,6 +876,7 @@ export async function refreshPluginSurfaces() {
             if (endpoint) live.set(plugin.id, endpoint);
         }
         syncLive(live);
+        syncTiles(entries);
         // Only entries that can run: a call needs an endpoint the plugin declares, an open
         // needs its `ui` page. An entry that does nothing when tapped is worse than none.
         setMenuEntries(entries.filter(e => e.surface.kind === 'menu-item' && (e.surface.action?.type === 'call'

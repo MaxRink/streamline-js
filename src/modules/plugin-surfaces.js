@@ -30,6 +30,8 @@ export const SET_LIMITS = {
     brewTemperature: { min: 70, max: 105 },
 };
 export const SET_FIELDS = Object.keys(SET_LIMITS);
+// `tile-sync`: the tiles a plugin may keep in step with a device, and the workflow field each one is.
+export const SYNC_TILES = { grind: 'grinderSetting' };
 export const PRESENTATIONS = ['page', 'overlay'];
 // `size` on a tile hint, line or mode: how big its text is. Three fixed steps, never
 // pixels, so a plugin cannot break a tile's layout; `small` is the default and is
@@ -573,6 +575,16 @@ function parseSurface(raw) {
         const label = cleanText(raw.label, CAPS.text);
         if (!label || !MENUS.includes(raw.menu) || (action?.type !== 'open' && action?.type !== 'call')) return null;
         return { id, kind, menu: raw.menu, label, action };
+    }
+
+    // The tile follows a device's reading: the skin writes `value` as a tile edit when it
+    // changes (see plugin-surfaces-ui.js). Nothing to draw, so no action either.
+    if (kind === 'tile-sync') {
+        const field = SYNC_TILES[raw.tile];
+        const value = field ? clampSetValue(field, raw.value) : null;
+        if (value === null) return null;
+        const label = cleanText(raw.label, CAPS.label);
+        return { id, kind, tile: raw.tile, value, ...(label && { label }) };
     }
 
     if (kind === 'tile-mode') return parseMode(raw, id, action);

@@ -162,6 +162,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `menu-item` | the skin's long-press menus | `menu` (`shot-history`, `favourite` or `profile`), `label` (40), `action` (`open` or `call`, required); see Menu items |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
 | `shot-strip` | the info row (Water, Steam, Tank, Clock, Weight) | `cells` (1–9), `show` (`shot` default, or `always`); see Shot strip |
+| `tile-sync` | nothing drawn; keeps a tile in step with a device | `tile` (`grind`), `value` (a number, 0–9999), `label` (24); see Tile sync |
 | `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
 | `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active`, `size`, `keepRatio`, `keepRatioMoves` |
 | `tile-line` | under a tile's label | `tile`, `text` (required, 40), `active`, `size`, `keepRatio`, `keepRatioMoves` |
@@ -248,7 +249,7 @@ break a tile's layout.
 
 ## Limits
 
-- At most 16 surfaces per plugin, 1 `header-button`, 1 `screensaver-button`, 1 `ratio-action`, 1 `shot-strip`, 1 `tile-hint` and 1 `tile-line` per tile, and up to 3 `tile-mode` per tile (see Modes); extras are dropped in order.
+- At most 16 surfaces per plugin, 1 `header-button`, 1 `screensaver-button`, 1 `ratio-action`, 1 `shot-strip`, 1 `tile-hint`, 1 `tile-line` and 1 `tile-sync` per tile, and up to 3 `tile-mode` per tile (see Modes); extras are dropped in order.
 - If two plugins ask for the same tile slot, the first one wins.
 - Only one plugin `header-button` is drawn in total across all plugins; the first plugin in Decaid's plugin list whose `skin` read succeeds wins.
 - Only one `screensaver-button` is drawn in total across all plugins, first plugin wins, as for `header-button`.
@@ -264,6 +265,17 @@ A `screensaver-button` is drawn at the top centre of the screensaver, for a plug
 - It never wakes the machine and sends no machine command. A tap on it is not a tap on the saver, so the saver stays up. The saver is left only by waking the machine, which the plugin button does not do; the user taps the saver elsewhere, as before.
 - Pressing it brings the panel back to the user's brightness (display only) so the page can be read. With `overlay`, closing the dialog dims the panel again if the machine is still asleep. With `page`, the skin is left; on return the first snapshot raises the saver and dims again, and boot sends no wake.
 - It sits at the top right of the saver and is shown on every saver, the image saver and the black screen.
+
+## Tile sync
+
+A `tile-sync` keeps a tile in step with a device the plugin reads, such as a grinder's burr setting:
+`{ "id": "mt80", "kind": "tile-sync", "tile": "grind", "value": 200, "label": "MT80" }`.
+Only `grind` for now. Nothing is drawn. When `value` changes (and on the first read), the skin writes it as the
+user's own edit of the tile would: the workflow's `grinderSetting` and the active profile's remembered grind. The
+device wins, but only on a change, so a value the user then types stays until the device moves again. `value` is
+a number, held to the same 0–9999 limits as `set`. One plugin per tile, first wins. Send a new `skin` answer (or a
+`live` push) when the reading changes. It does not write to the device; for a motorised grinder that is the
+plugin's own job. Recipe-wins sync is not supported.
 
 ## Menu items
 
