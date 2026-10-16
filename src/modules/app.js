@@ -1551,7 +1551,7 @@ async function loadInitialData() {
             // that did this, so a loaded profile sitting in no favourite slot
             // left the id null and every dose/yield/grind/temp edit was thrown
             // away instead of being saved onto that profile.
-            profileManagerModule.syncActiveProfileFromTitle(profile.title);
+            const activeProfileKey = profileManagerModule.syncActiveProfileFromTitle(profile.title);
 
             // Set the current profile in the chart module for step change detection
             chart.setCurrentProfile(profile);
@@ -1575,8 +1575,10 @@ async function loadInitialData() {
                         
                         logger.debug(`Assigned profile record for button ${i}: `, assignedProfileRecord);
                         
-if (assignedProfileRecord && assignedProfileRecord.profile &&
-                            assignedProfileRecord.profile.title === profile.title) {
+// Key first: the title test misses a renamed/edited custom profile (#150).
+                        if ((activeProfileKey && assignedProfileKey === activeProfileKey) ||
+                            (assignedProfileRecord && assignedProfileRecord.profile &&
+                            assignedProfileRecord.profile.title === profile.title)) {
                             // This button has the active profile assigned to it
                             const activeBgClass = 'bg-[var(--mimoja-blue-v2)]';
                             const activeTextClass = 'text-[var(--button-primary-text)]';

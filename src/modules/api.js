@@ -1780,6 +1780,10 @@ async function steamHeaterFor(duration) {
         if (current > 0) await persistSharedValue(STEAM_TEMP_LAST_VALUE_KEY, current);
         return { targetTemperature: 0 };
     }
+    // Re-arm only from off. A temperature already above 0 was set by the user or
+    // another app since we last remembered one, and is not ours to put back (#143).
+    const current = (await getWorkflow().catch(() => null))?.steamSettings?.targetTemperature;
+    if (current > 0) return {};
     const remembered = await readSharedValue(STEAM_TEMP_LAST_VALUE_KEY);
     return remembered > 0 ? { targetTemperature: Math.round(remembered) } : {};
 }

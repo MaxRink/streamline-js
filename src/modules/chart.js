@@ -715,11 +715,11 @@ function expandedTempTraces() {
         // Water and Mix Target have no counterpart in the style guide's graph
         // tokens, so they keep their own literals in both themes.
         { ...expandedMixTemp, name: `${getTranslation('Water')} °C`, type: 'scatter', mode: 'lines', line: { color: '#d9822b', width: 3 }, hoverinfo: 'skip', xaxis: 'x2', yaxis: 'y2', legend: 'legend2' },
-        { ...chartData.targetTemperature, name: getTranslation('Group Target °C'), line: { color: chartData.targetTemperature.line.color, dash: 'dot', width: 2 }, hoverinfo: 'skip', xaxis: 'x2', yaxis: 'y2', legend: 'legend2' }
+        { ...chartData.targetTemperature, name: `${getTranslation('Coffee')} ${getTranslation('Target')} °C`, line: { color: chartData.targetTemperature.line.color, dash: 'dot', width: 2 }, hoverinfo: 'skip', xaxis: 'x2', yaxis: 'y2', legend: 'legend2' }
     ];
     if (expandedTargetMixTemp.y.length) {
         traces.push({
-            ...expandedTargetMixTemp, name: getTranslation('Mix Target °C'), type: 'scatter', mode: 'lines',
+            ...expandedTargetMixTemp, name: `${getTranslation('Water')} ${getTranslation('Target')} °C`, type: 'scatter', mode: 'lines',
             line: { color: '#e8b480', dash: 'dash', width: 2 }, hoverinfo: 'skip',
             xaxis: 'x2', yaxis: 'y2', legend: 'legend2'
         });

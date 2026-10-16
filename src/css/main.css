@@ -393,6 +393,24 @@ body {
     transform: translateX(0);
 }
 
+/* Long-press on Android WebView starts text selection on labels and values
+   (issue #151). Off everywhere except editable fields and opt-in content. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+[contenteditable=""],
+[contenteditable="true"],
+.selectable,
+.selectable * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .no-select,
 .settings-nav-btn,
 .settings-subnav-btn {

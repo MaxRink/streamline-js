@@ -293,9 +293,9 @@ function lift(module, patterns) {
     ]);
 
     const { scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } = await import('../src/modules/dye-context.js');
-    const build = (context, { scoped = false, inUse = true } = {}) => {
+    const build = (context, { scoped = false, inUse = true, selection = null } = {}) => {
         const puts = [];
-        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker', 'isDye2Enabled', 'dye2PluginLoaded', 'skinBeanClearContext', 'mergeClearContext',
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker', 'isDye2Enabled', 'dye2PluginLoaded', 'skinBeanClearContext', 'mergeClearContext', 'getKVValue', 'DYE2_KV_NAMESPACE',
             `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
         const api = fn(
             async () => ({ context }),
@@ -308,6 +308,8 @@ function lift(module, patterns) {
             async () => inUse,
             skinBeanClearContext,
             mergeClearContext,
+            async () => selection,
+            'dye2.reaplugin',
         );
         return { ...api, puts };
     };
@@ -318,6 +320,18 @@ function lift(module, patterns) {
         grinderId: 'g1', baristaName: 'Mark', drinkerName: 'John',
         extras: { note: 'Well balanced', rpm: 0, basketId: 'k1', basketName: 'ims 18g' },
     };
+
+    test('a selected recipe keeps its batch, grinder and basket; only per-shot fields clear (#149)', async () => {
+        const { clearDyeWorkflowContext, puts } = build(dirty, { selection: { kind: 'recipe', id: 'r1' } });
+        assert.equal(await clearDyeWorkflowContext(), true);
+        assert.deepEqual(puts[0].context, { baristaName: null, drinkerName: null, extras: { note: null } });
+    });
+
+    test('a selected favourite is cleared as before', async () => {
+        const { clearDyeWorkflowContext, puts } = build(dirty, { selection: { kind: 'favourite', id: 'f1' } });
+        await clearDyeWorkflowContext();
+        assert.equal(puts[0].context.beanBatchId, null);
+    });
 
     test('clears every plugin-owned field and nothing the dashboard owns', async () => {
         const { clearDyeWorkflowContext, puts } = build(dirty);

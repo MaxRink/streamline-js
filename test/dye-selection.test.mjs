@@ -20,6 +20,10 @@ test('brew-temperature edits are not drift, a profile switch is', () => {
     assert.equal(profileDrifted(null, { profile }), false);
 });
 
+test('a yield change folded into target_weight/target_volume is not drift (#147)', () => {
+    assert.equal(profileDrifted(item, { profile: { ...profile, target_weight: 42, target_volume: 50 } }), false);
+});
+
 test('serialize keeps only the four fields and refuses junk', () => {
     assert.deepEqual(JSON.parse(serializeSelection({ ...item, extra: 1 })), item);
     assert.equal(serializeSelection(null), null);

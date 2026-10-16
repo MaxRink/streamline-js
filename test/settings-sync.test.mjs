@@ -226,6 +226,12 @@ const TRACKING = [
         assert.deepEqual(workflowWrites, [{ steamSettings: { duration: 30, targetTemperature: 150 } }]);
     });
 
+    test('a temperature set outside Streamline while steam is on is not overridden (#143)', async () => {
+        const { api, workflowWrites } = build(150, 140);
+        await api.setTargetSteamDuration(30);
+        assert.deepEqual(workflowWrites, [{ steamSettings: { duration: 30 } }]);
+    });
+
     test('with nothing remembered the machine keeps whatever temperature it has', async () => {
         const { api, workflowWrites } = build(null, 150);
         await api.setTargetSteamDuration(30);

@@ -1,5 +1,5 @@
 import { logger } from './logger.js';
-import { updateWorkflow,sendProfile, getWorkflow, getValueFromStore, setValueInStore, getProfiles, deleteProfile, updateProfileVisibility, uploadProfile, uploadProfileWithParent, updateProfile, updateProfileMetadata, getShots, getKVKeys, getKVValue, deleteKVValue, setTargetSteamDuration, setTargetSteamFlow } from './api.js';
+import { updateWorkflow,sendProfile, getWorkflow, getValueFromStore, setValueInStore, getProfiles, deleteProfile, updateProfileVisibility, uploadProfile, uploadProfileWithParent, updateProfile, updateProfileMetadata, getShots, getKVKeys, getKVValue, DYE2_KV_NAMESPACE, deleteKVValue, setTargetSteamDuration, setTargetSteamFlow } from './api.js';
 import { updateProfileName, updateTemperatureDisplay, updateDrinkOut, updateDrinkRatio, updateDoseInDisplay, updateGrindDisplay, updateSteamDisplay, updateHotWaterDisplay, updateFlushDisplay, showToast, setupPressAndHold} from './ui.js';
 import { openContextMenu } from './context-menu.js';
 import { pluginMenuEntries } from './plugin-menu-items.js';
@@ -10,6 +10,7 @@ import { resolveProfileKeyByTitle } from './active-profile.js';
 import { loadProfileOverrides, saveProfileOverride, clearProfileOverride, applyOverridesToRecords } from './profile-overrides.js';
 import { applyFlowCalibrationForProfile } from './flow-calibration.js';
 import { profileAtBrewTemp } from './brew-temp.js';
+import { profileFingerprint } from './dye-selection.js';
 
 /**
  * Rename a profile by ID
@@ -487,7 +488,15 @@ export function setActiveProfile(profileId) {
 // again. Called on every loadInitialData, which is also the path a profile
 // switch made elsewhere goes through.
 export function syncActiveProfileFromTitle(title) {
-    const key = resolveProfileKeyByTitle(availableProfiles, title, translateProfileTitle);
+    let key = resolveProfileKeyByTitle(availableProfiles, title, translateProfileTitle);
+    // Several records can share a title (an edited copy of a favourite). Keep the one
+    // already active, or the one a favourite slot holds, so the slot's highlight
+    // survives the rebind (#150).
+    if (key) {
+        const sameTitle = k => !!k && availableProfiles[k]?.profile?.title === availableProfiles[key]?.profile?.title;
+        if (sameTitle(activeProfileId)) key = activeProfileId;
+        else key = Object.values(favoriteAssignments || {}).find(sameTitle) ?? key;
+    }
     if (key) {
         activeProfileId = key;
         applyFlowCalibrationForProfile(key);
@@ -684,6 +693,19 @@ export async function saveContextToActiveProfile(fields) {
 // Push a stored profile onto the machine using its own dose/yield defaults.
 // Used by the wake-lock "load profile on wake" setting, so it targets an
 // arbitrary profileId rather than activeProfileId.
+// DYE2 has a recipe selected and the workflow already holds `profile`: re-sending the
+// profile's saved dose/yield/grind/temperature (wake, tapping the loaded profile's
+// button) would overwrite the recipe being dialled in, and DYE2 would record it (#153).
+async function recipeHoldsDial(profile) {
+    try {
+        if (localStorage.getItem('streamline.dye2Enabled') !== 'true') return false;
+        const sel = await getKVValue(DYE2_KV_NAMESPACE, 'selection');
+        if (sel?.kind !== 'recipe' || sel.id == null) return false;
+        const live = (await getWorkflow())?.profile;
+        return !!live && profileFingerprint(live) === profileFingerprint(profile);
+    } catch (e) { return false; }
+}
+
 export async function loadProfileForWake(profileId) {
     let profile = availableProfiles[profileId]?.profile;
 
@@ -711,6 +733,11 @@ export async function loadProfileForWake(profileId) {
     if (!profile) {
         logger.warn(`Wake profile ${profileId} not found — skipping.`);
         return false;
+    }
+    if (await recipeHoldsDial(profile)) {
+        setActiveProfile(profileId);
+        logger.info(`Wake profile ${profileId} already loaded under a selected recipe; dial left alone.`);
+        return true;
     }
     // Waking onto a profile is a profile switch, so it owes the same saved
     // overrides as the three interactive paths. Dose and grind are not profile
@@ -954,10 +981,13 @@ async function handleProfileClick(index) {
         // Skip the sendProfile call since updateWorkflow can handle sending the profile
         logger.info(`Skipping sendProfile call, using updateWorkflow directly (callId: ${callId})`);
 
-        const workflowResponse = await updateWorkflow({
-            profile: profileToSend,
-            context: { targetDoseWeight, targetYield: displayYield, ...grindContext }
-        });
+        const held = await recipeHoldsDial(profile);
+        const workflowResponse = held
+            ? await getWorkflow()
+            : await updateWorkflow({
+                profile: profileToSend,
+                context: { targetDoseWeight, targetYield: displayYield, ...grindContext }
+            });
         // Paint the tiles from the workflow Rea echoed back rather than from the
         // numbers we meant to send, so what the user reads is what the machine
         // will actually brew with -- no guessing whether a value stuck.
@@ -979,7 +1009,7 @@ async function handleProfileClick(index) {
                 if (grindEl) grindEl.textContent = '0';
             }
 
-            await applySavedSteamSettings(meta);
+            if (!held) await applySavedSteamSettings(meta);
 
             activeProfileId = profileKey;
 

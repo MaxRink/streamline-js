@@ -16,7 +16,9 @@ export const SELECTION_KEY = 'streamline.dyeSelection';
 // does not: `updateTemperatureValue()` PUTs the same profile back with only
 // `steps[*].temperature` edited, so temperature is stripped before hashing --
 // otherwise every brew-temp tweak would look like switching to a new profile
-// and immediately clear the item auto-save is running for.
+// and immediately clear the item auto-save is running for. The same goes for
+// target_weight / target_volume: the dashboard folds the yield into them, so a
+// yield change is dial-in, not a new profile (#147).
 export function profileFingerprint(profile) {
     if (!profile) return null;
     const steps = Array.isArray(profile.steps)
@@ -24,8 +26,6 @@ export function profileFingerprint(profile) {
         : profile.steps;
     return JSON.stringify({
         title: profile.title,
-        target_weight: profile.target_weight,
-        target_volume: profile.target_volume,
         tank_temperature: profile.tank_temperature,
         steps,
     });

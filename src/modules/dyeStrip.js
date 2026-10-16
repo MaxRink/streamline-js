@@ -215,6 +215,25 @@ async function postSelection(kind, id) {
     return false;
 }
 
+// Arm through postSelection, but never hand a DYE2 that records dial-in itself to the
+// legacy auto-save: it would keep the item armed before and record this apply into
+// it while the skin saved later changes into the new one (#148). Treat the arm as
+// pending, retry in the background until it lands or a newer apply supersedes it, and
+// release DYE2's selection if it never does.
+async function armSelection(kind, id, seq) {
+    if (await postSelection(kind, id)) return true;
+    if (!dye2RecordsDialIn) return false;
+    (async () => {
+        for (const wait of [2000, 5000, 10000, 20000, 30000]) {
+            await new Promise(r => setTimeout(r, wait));
+            if (seq !== applySeq || !isDye2Enabled()) return;
+            if (await postSelection(kind, id)) return;
+        }
+        if (seq === applySeq && isDye2Enabled()) await postSelection('', null);
+    })().catch(e => logger.warn('dyeStrip: selection retry failed', e));
+    return true;
+}
+
 // Fetch the live workflow, merge the item onto it, PUT, then refresh the left
 // controls — the same GET→mutate→PUT shape DYE2's dashboard.ts uses so no other
 // workflow field is clobbered.
@@ -237,7 +256,7 @@ export async function applyFavourite(fav) {
     // needs the drift anchors: profileId from fav.workflow?.profile (items saved by this
     // version) or snapshot.profileId (legacy), with profileFingerprint backing it up
     // for Decaid, whose workflow.profile carries no id at all.
-    dye2Armed = await postSelection('favourite', fav.id);
+    dye2Armed = await armSelection('favourite', fav.id, seq);
     if (seq !== applySeq) return;
     if (dye2Armed) {
         activeItem = null;
@@ -269,7 +288,7 @@ export async function applyRecipe(recipe) {
     // Arm this recipe for the dial-in that follows — see applyFavourite for why it
     // happens after the PUT, is always posted, and why only the legacy path needs the
     // drift anchors.
-    dye2Armed = await postSelection('recipe', recipe.id);
+    dye2Armed = await armSelection('recipe', recipe.id, seq);
     if (seq !== applySeq) return;
     if (dye2Armed) {
         activeItem = null;
@@ -989,6 +1008,7 @@ export async function enableDye2Ui() {
 // Restore the stock header: hide the toggle + DYE button + strip and move the
 // profile nav back to its original position (byte-identical to stock Streamline).
 export function disableDye2Ui() {
+    applySeq++; // drop any arm still retrying in the background
     clearActiveItem();
     // DYE2 keeps recording against what it has armed whatever the header shows, so a
     // switched-off strip must release it, or later dial-in edits land on that recipe.
@@ -1085,6 +1105,24 @@ export async function clearDyeWorkflowContext({ includeGrinderSetting = false } 
         // marker would stop the clear altogether and let one shot's bean identity label
         // every later shot. A marker that flags nothing still clears nothing.
         const skinBean = includeGrinderSetting ? null : skinBeanClearContext(live?.context);
+        // While DYE2 has a recipe selected the barista is still dialling it in: its
+        // batch, grinder, Basket and RPM describe the next shot too (#149). Only what a
+        // recipe does not set -- barista, drinker, note -- is per shot.
+        if (!includeGrinderSetting && isDye2Enabled() && await dye2PluginLoaded()) {
+            const sel = await getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => null);
+            if (sel?.kind === 'recipe' && sel.id != null) {
+                const c = live?.context || {};
+                const perShot = {};
+                if (c.baristaName != null) perShot.baristaName = null;
+                if (c.drinkerName != null) perShot.drinkerName = null;
+                if (c.extras?.note != null) perShot.extras = { note: null };
+                const merged = mergeClearContext(Object.keys(perShot).length ? perShot : null, skinBean);
+                if (!merged) return false;
+                await updateWorkflow({ context: merged });
+                logger.info('dyeStrip: cleared the per-shot context, kept the selected recipe\'s');
+                return true;
+            }
+        }
         if (!includeGrinderSetting && hasDyeMarker(live?.context) && await scopedClearSupported()) {
             const scoped = mergeClearContext(scopedClearContext(live?.context), skinBean);
             if (!scoped) return false;
