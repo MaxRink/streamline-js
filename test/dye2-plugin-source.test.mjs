@@ -292,10 +292,10 @@ function lift(module, patterns) {
         /export async function clearDyeWorkflowContext\([\s\S]*?\r?\n\}/,
     ]);
 
-    const { scopedClearContext, hasDyeMarker } = await import('../src/modules/dye-context.js');
+    const { scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } = await import('../src/modules/dye-context.js');
     const build = (context, { scoped = false, inUse = true } = {}) => {
         const puts = [];
-        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker', 'isDye2Enabled', 'dye2PluginLoaded',
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker', 'isDye2Enabled', 'dye2PluginLoaded', 'skinBeanClearContext', 'mergeClearContext',
             `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
         const api = fn(
             async () => ({ context }),
@@ -306,6 +306,8 @@ function lift(module, patterns) {
             hasDyeMarker,
             () => inUse,
             async () => inUse,
+            skinBeanClearContext,
+            mergeClearContext,
         );
         return { ...api, puts };
     };
@@ -326,7 +328,7 @@ function lift(module, patterns) {
             'grinderModel', 'baristaName', 'drinkerName']) {
             assert.equal(sent[key], null, key);
         }
-        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null, dye: null });
+        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null, dye: null, streamlineBean: null });
         assert.ok(!('targetDoseWeight' in sent));
         assert.ok(!('targetYield' in sent));
         assert.ok(!('grinderSetting' in sent), 'the grind tile is not DYE2-owned');
@@ -337,6 +339,25 @@ function lift(module, patterns) {
         const { clearDyeWorkflowContext, puts } = build(dirty, { inUse: false });
         assert.equal(await clearDyeWorkflowContext(), false);
         assert.equal(puts.length, 0);
+    });
+
+    test('a coffee the skin picker set for one shot is still dropped when DYE2 is not in use', async () => {
+        const ctx = { targetDoseWeight: 18, beanBatchId: 'b', coffeeName: 'Lot', coffeeRoaster: 'R', grinderId: 'g1', extras: { streamlineBean: true } };
+        const { clearDyeWorkflowContext, puts } = build(ctx, { inUse: false });
+        assert.equal(await clearDyeWorkflowContext(), true);
+        assert.deepEqual(puts[0].context, { beanBatchId: null, coffeeName: null, coffeeRoaster: null, extras: { streamlineBean: null } });
+    });
+
+    test('the skin picker\'s coffee is dropped alongside a marked DYE2 clear', async () => {
+        const ctx = { beanBatchId: 'b', coffeeName: 'Lot', coffeeRoaster: 'R', grinderId: 'g1',
+            extras: { streamlineBean: true, dye: { v: 1, grinderId: true } } };
+        const { clearDyeWorkflowContext, puts } = build(ctx, { scoped: true });
+        assert.equal(await clearDyeWorkflowContext(), true);
+        const sent = puts[0].context;
+        assert.equal(sent.grinderId, null);
+        assert.equal(sent.coffeeName, null);
+        assert.equal(sent.extras.streamlineBean, null);
+        assert.deepEqual(sent.extras.dye, { grinderId: null });
     });
 
     test('the Settings switch-off still clears everything', async () => {

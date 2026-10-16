@@ -25,7 +25,7 @@ import { logger } from './logger.js';
 import { fitTextToBox } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
-import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker } from './dye-context.js';
+import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } from './dye-context.js';
 import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, armedSelectionId } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
@@ -1033,7 +1033,7 @@ const DYE_CONTEXT_FIELDS = {
     baristaName: null, drinkerName: null,
     // The marker goes with the values: left behind, its stale flags would have the
     // scoped clean-up null whatever another plugin sets under those names later.
-    extras: { basketId: null, basketName: null, rpm: null, note: null, dye: null },
+    extras: { basketId: null, basketName: null, rpm: null, note: null, dye: null, streamlineBean: null },
 };
 
 // Is there anything to clear? Without this the post-shot and boot hooks would PUT
@@ -1084,8 +1084,9 @@ export async function clearDyeWorkflowContext({ includeGrinderSetting = false } 
         // Without that check a plugin build that declares the version but writes no
         // marker would stop the clear altogether and let one shot's bean identity label
         // every later shot. A marker that flags nothing still clears nothing.
+        const skinBean = includeGrinderSetting ? null : skinBeanClearContext(live?.context);
         if (!includeGrinderSetting && hasDyeMarker(live?.context) && await scopedClearSupported()) {
-            const scoped = scopedClearContext(live?.context);
+            const scoped = mergeClearContext(scopedClearContext(live?.context), skinBean);
             if (!scoped) return false;
             await updateWorkflow({ context: scoped });
             logger.info('dyeStrip: cleared the workflow context fields DYE2 set');
@@ -1094,7 +1095,13 @@ export async function clearDyeWorkflowContext({ includeGrinderSetting = false } 
         // No marker to scope by: the all-fields clear is only for a DYE2 that is
         // actually running (option on, plugin loaded) and cannot mark its writes.
         // Otherwise the values belong to someone else (another plugin, the user).
-        if (!includeGrinderSetting && !(isDye2Enabled() && await dye2PluginLoaded())) return false;
+        if (!includeGrinderSetting && !(isDye2Enabled() && await dye2PluginLoaded())) {
+            // The coffee the skin's own picker set for one shot is still ours to drop.
+            if (!skinBean) return false;
+            await updateWorkflow({ context: skinBean });
+            logger.info('dyeStrip: cleared the coffee picked for one shot');
+            return true;
+        }
         if (!hasDyeContext(live?.context, includeGrinderSetting)) return false;
         const context = { ...DYE_CONTEXT_FIELDS };
         if (includeGrinderSetting) context.grinderSetting = null;
