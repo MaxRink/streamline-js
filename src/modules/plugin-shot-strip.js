@@ -17,8 +17,8 @@ const COLORS = {
     text: ['#121212', '#E8E8E8'], muted: ['#777777', '#707485'], red: ['#DA515E', '#DA515E'],
     amber: ['#D98E04', '#E0A030'],
 };
-const LABELS = { weight: 'Weight', pressure: 'Pressure', flow: 'Flow', puckTemp: 'Puck', waterTemp: 'Water', step: 'Step' };
-const TRACE_COLOR = { weight: 'weight', pressure: 'pressure', flow: 'flow', puckTemp: 'temp', waterTemp: 'temp', step: 'muted' };
+const LABELS = { weight: 'Weight', pressure: 'Pressure', flow: 'Flow', weightFlow: 'Weight flow', puckTemp: 'Puck', waterTemp: 'Water', step: 'Step' };
+const TRACE_COLOR = { weight: 'weight', pressure: 'pressure', flow: 'flow', weightFlow: 'weight', puckTemp: 'temp', waterTemp: 'temp', step: 'muted' };
 // The goal's text size: a plugin's `goalSize`, else the skin's own row size.
 const GOAL_PX = { small: 14, medium: 17, large: 22.5 };
 const LEVEL_KEY = { good: 'good', warn: 'warn', bad: 'bad' };
@@ -139,7 +139,7 @@ export function setShotStrip(surface) {
 
 let lastFrame = null;
 
-// One snapshot frame: { sample, weight, state }. Cheap; called at the stream's rate.
+// One snapshot frame: { sample, weight, weightFlow, state }. Cheap; called at the stream's rate.
 export function paintShotStrip(frame) {
     lastFrame = frame;
     if (!strip || !host || !frame) return;
@@ -150,7 +150,7 @@ export function paintShotStrip(frame) {
     const stepIdx = frame.sample?.profileFrame;
     const step = frame.step || null; // the running profile's step, found by the caller
     const yieldGoal = parseFloat(document.getElementById('drink-out-value')?.textContent);
-    const ctx = { sample: frame.sample, weight: frame.weight, yieldGoal, step };
+    const ctx = { sample: frame.sample, weight: frame.weight, weightFlow: frame.weightFlow, yieldGoal, step };
     for (const c of cellEls) {
         if (!c.cell.cell) continue;
         if (c.cell.cell === 'step') {

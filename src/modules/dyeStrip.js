@@ -1014,12 +1014,13 @@ export function disableDye2Ui() {
 
 // ─── Workflow context hygiene ──────────────────────────────────────────────────
 //
-// DYE2 is the only writer of bean/equipment identity on the workflow context, and
+// DYE2 is the usual writer of bean/equipment identity on the workflow context (other
+// plugins may set it too, so the clean-up is scoped; see clearDyeWorkflowContext), and
 // Decaid copies the whole workflow into every ShotRecord it persists — so
 // whatever is left sitting in the context silently labels every later shot. The
 // intent behind those fields belongs to the plugin, one shot at a time, so clear
-// them wherever nobody is expressing it: once a shot is persisted, and at boot
-// when DYE2 is not running (strip off, or the plugin gone/unloaded).
+// them once a shot is persisted, and at boot -- but only while DYE2 is running
+// (option on, plugin loaded), or for what a marked DYE2 flagged.
 //
 // Left alone on purpose: targetDoseWeight / targetYield / grinderSetting, which
 // this dashboard owns and writes itself, and `profile`, the espresso profile the
@@ -1065,6 +1066,14 @@ async function scopedClearSupported() {
     return value;
 }
 
+async function dye2PluginLoaded() {
+    try {
+        const plugins = await getPlugins();
+        const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === PLUGIN_ID) : null;
+        return !!plugin && plugin.loaded !== false;
+    } catch (e) { return false; }
+}
+
 export async function clearDyeWorkflowContext({ includeGrinderSetting = false } = {}) {
     try {
         const live = await getWorkflow();
@@ -1082,6 +1091,10 @@ export async function clearDyeWorkflowContext({ includeGrinderSetting = false } 
             logger.info('dyeStrip: cleared the workflow context fields DYE2 set');
             return true;
         }
+        // No marker to scope by: the all-fields clear is only for a DYE2 that is
+        // actually running (option on, plugin loaded) and cannot mark its writes.
+        // Otherwise the values belong to someone else (another plugin, the user).
+        if (!includeGrinderSetting && !(isDye2Enabled() && await dye2PluginLoaded())) return false;
         if (!hasDyeContext(live?.context, includeGrinderSetting)) return false;
         const context = { ...DYE_CONTEXT_FIELDS };
         if (includeGrinderSetting) context.grinderSetting = null;
@@ -1340,13 +1353,10 @@ export async function initDyeStrip() {
     if (isDye2Enabled()) {
         await enableDye2Ui();
         await restoreParkedSelection().catch(e => logger.warn('dyeStrip: could not restore selection', e));
-        // Flag on but the plugin missing/unloaded: nothing can restate the
-        // context, so what is in it is stale.
-        checkDye2PluginRequirement()
-            .then(r => { if (!r.ok) clearDyeWorkflowContext(); })
-            .catch(() => {});
+        // The boot-time clean-up runs in the post-shot hook's own gate: only a
+        // running DYE2 owns the context (see clearDyeWorkflowContext).
+        clearDyeWorkflowContext(); // not awaited — boot does not wait on a PUT
     } else {
         disableDye2Ui();
-        clearDyeWorkflowContext(); // not awaited — boot does not wait on a PUT
     }
 }

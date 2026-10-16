@@ -204,7 +204,8 @@ function openOverlay(plugin, action, pageUrl, onClose, context) {
 
     const dialog = document.createElement('dialog');
     dialog.dataset.agentId = `plugin-overlay:${plugin.id}`;
-    dialog.style.cssText = 'width:min(1100px,94vw);height:min(760px,90vh);max-width:none;max-height:none;padding:0;border:0;border-radius:16px;overflow:hidden;background:var(--bg,#fff);';
+    const full = action.size === 'full';
+    dialog.style.cssText = `width:${full ? '100vw' : 'min(1100px,94vw)'};height:${full ? '100vh' : 'min(760px,90vh)'};max-width:none;max-height:none;padding:0;border:0;border-radius:${full ? 0 : 16}px;overflow:hidden;background:var(--bg,#fff);`;
     const frame = document.createElement('iframe');
     // Scripts and forms run in the plugin's own origin; the frame cannot navigate the skin.
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
@@ -283,7 +284,7 @@ function openOverlay(plugin, action, pageUrl, onClose, context) {
             // The page says how big its content is: the dialog fits it, so a small form is
             // a small dialog over the dashboard. The page draws its own card; the dialog is
             // transparent from here on. Sizes are held to the default dialog's limits.
-            if (event.origin !== frameOrigin) return;
+            if (event.origin !== frameOrigin || full) return;
             const fitted = fitOverlaySize(event.data?.width, event.data?.height, window.innerWidth, window.innerHeight);
             if (!fitted) return;
             dialog.style.width = `${fitted.width}px`;

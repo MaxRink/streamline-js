@@ -225,6 +225,17 @@ export function setDrawnKeepRatio(ratio, moves = 'both') { keepRatio = ratio || 
 const ratioMovesYield = () => keepRatio && keepRatioMoves !== 'dose';
 const ratioMovesDose = () => keepRatio && keepRatioMoves !== 'yield';
 
+// The profile to send with a new stop-at-weight: the one the workflow holds now, so
+// the temperatures the Brew tile (or a plugin) wrote survive. The cached record is
+// only the fallback when the workflow cannot be read.
+async function profileWithTargetWeight(targetWeight) {
+    if (!Number.isFinite(targetWeight) || targetWeight <= 0) return null;
+    let base = null;
+    try { base = (await getWorkflow())?.profile; } catch (e) { /* fall back below */ }
+    if (!base) base = window.app?.getActiveProfileRecord?.()?.profile;
+    return base ? { ...base, target_weight: targetWeight } : null;
+}
+
 function updateDoseValue(type, newValue) {
     const doseInEl = document.getElementById('dose-in-value');
     const drinkOutEl = document.getElementById('drink-out-value');
@@ -266,12 +277,10 @@ function updateDoseValue(type, newValue) {
     };
     // Non-autonomous machines stop on profile.target_weight, not context.targetYield —
     // fold the yield into the sent profile so the stop matches the UI number.
-    const activeProfile = window.app?.getActiveProfileRecord?.()?.profile;
-    if (activeProfile && Number.isFinite(targetYield) && targetYield > 0) {
-        payload.profile = { ...activeProfile, target_weight: targetYield };
-    }
-
-    return updateWorkflow(payload).then(() => {
+    return profileWithTargetWeight(targetYield).then(profile => {
+        if (profile) payload.profile = profile;
+        return updateWorkflow(payload);
+    }).then(() => {
         logger.debug(`Dose ${type} value updated via workflow:`, newValue);
         if (type === 'in') {
             window.app?.saveContextToActiveProfile?.({ targetDoseWeight: parseFloat(newValue),
@@ -293,12 +302,10 @@ export function updateDoseAndDrinkOutValue(newDoseIn, newDrinkOut) {
         }
     };
     // Keep the machine stop-at-weight (profile.target_weight) in sync with the yield.
-    const activeProfile = window.app?.getActiveProfileRecord?.()?.profile;
-    if (activeProfile && Number.isFinite(newDrinkOut) && newDrinkOut > 0) {
-        payload.profile = { ...activeProfile, target_weight: newDrinkOut };
-    }
-
-    updateWorkflow(payload).then(() => {
+    profileWithTargetWeight(newDrinkOut).then(profile => {
+        if (profile) payload.profile = profile;
+        return updateWorkflow(payload);
+    }).then(() => {
         logger.debug(`Dose In and Drink Out values updated via workflow: ${newDoseIn}g : ${newDrinkOut}g`);
         // Same per-profile save the +/- buttons and the numpad do — without it a
         // ratio preset was the one way to set dose/yield that did not stick.

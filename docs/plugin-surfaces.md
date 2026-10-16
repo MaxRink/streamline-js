@@ -185,7 +185,7 @@ A `shot-strip` replaces the info row (Water, Steam, Tank, Clock, Weight) with up
 ```
 
 - **`col` and `span`:** `col` (1–9) puts a cell in a column and `span` (1–9) makes it that many columns wide; a `bar` runs across all of them. A cell with `col` and no `span` is one column wide. Without `col`, cells fill the free columns left to right, two columns each while every remaining cell can still get a column, otherwise one; a cell that does not fit is dropped. A cell that overlaps one before it is dropped, and a span past the right edge is cut. The 9-cell limit counts cells before layout. Cells are drawn by column, not by their order in the list.
-- **Built-in cells:** `weight` (goal: the Drink value), `pressure`, `flow`, `puckTemp`, `waterTemp` (goal: the profile's mix temperature; `puckTemp`'s goal is its group temperature) and `step` (frame number and name, cut to 18 characters). A goal is shown as `value / goal`. A pressure goal is used on pressure steps and a flow goal on flow steps; the other shows no goal. `label` renames a cell (12 characters).
+- **Built-in cells:** `weight` (goal: the Drink value), `pressure`, `flow`, `weightFlow` (g/s, the series the chart's weight trace draws, no goal; `-` without a scale), `puckTemp`, `waterTemp` (goal: the profile's mix temperature; `puckTemp`'s goal is its group temperature) and `step` (frame number and name, cut to 18 characters). A goal is shown as `value / goal`. A pressure goal is used on pressure steps and a flow goal on flow steps; the other shows no goal. `label` renames a cell (12 characters).
 - **Your own cell:** `{ "label", "text", "color" }`, with no `cell`: fixed text (16) from the plugin's answer. Change it by answering `skin` again; `live` pushes make that immediate.
 - **`dot`:** a status dot judged from how far the reading is from its goal, as a fraction of the goal: within `greenWithin` is good, within `amberWithin` is warn, beyond is bad (`0 < greenWithin < amberWithin <= 2`). The plugin sets the thresholds; `colors` picks tokens for `good`, `warn`, `bad` (default `ongoing`, `amber`, `red`). Fits pressure, flow and temperatures; weight is far from its goal until the shot ends, so give it a `bar`.
 - **`goalSize`:** `small` (14 px), `medium` (17) or `large` (22.5, the skin's own row size) for the goal text after the value. Without it the goal uses the skin's size. Only on cells with a goal; an unknown value is ignored.
@@ -420,6 +420,10 @@ An invalid action drops the action only; the surface still shows, inert.
     default window never shows. If the page posts `streamline:ready` but no size within 300 ms, the skin shows
     the default window with its solid background, as it does without `fit`. If `ready` never comes, the page opens
     as usual after 3 seconds. `fit` is ignored on `presentation: "page"`. Post the first size from your load handler, measured with `getBoundingClientRect()`; a hidden frame may not run `requestAnimationFrame` or `ResizeObserver` callbacks until it is shown, so use those only for later size changes. While the dialog is invisible a tap on it or Escape still closes it.
+  - **Full screen.** Add `"size": "full"` to an overlay `open` (`{ "type": "open", "view": "main",
+    "presentation": "overlay", "size": "full" }`) for a page that needs the whole screen without leaving the
+    dashboard: the dialog covers the viewport, square, with the skin's × on top. The page gets the same messages
+    as any overlay; `streamline:size` and `fit` do not apply. Ignored on `presentation: "page"`.
   - **Close when a shot starts.** Add `"closeOnShot": true` to the `open` action (overlay only) and the skin posts
     `{ type: 'streamline:espresso-start' }` to your page and closes the dialog when an espresso starts, so the page
     never covers the shot. Use it for pages that are only useful before a shot (choosing the next coffee). Without

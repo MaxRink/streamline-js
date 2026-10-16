@@ -976,6 +976,8 @@ function handleData(data) {
         steamTemperature: data.steamTemperature // Steam boiler temp — gates the steam "Heating" message
     });
     paintShotStrip({ sample: data, weight: isScaleConnected || isBengleMachine() ? latestScaleWeight : null, state,
+        // Same source as the chart's weight-flow trace (no local EMA fallback: absent shows '-').
+        weightFlow: isBengleMachine() ? (data.weightFlow ?? null) : latestScaleWeightFlow,
         // The active record follows favourite switches; the chart's profile is only set on page load.
         step: (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())?.steps?.[data.profileFrame] || null });
     ui.updateSleepButton(state);

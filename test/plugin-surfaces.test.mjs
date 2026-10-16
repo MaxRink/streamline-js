@@ -159,6 +159,11 @@ test('open: presentation is a hint, unknown values fall back to page', () => {
     assert.equal(open({ view: 'main', presentation: 'overlay', closeOnShot: true }).closeOnShot, true);
     assert.equal(open({ view: 'main', presentation: 'overlay', closeOnShot: 1 }).closeOnShot, undefined);
     assert.equal(open({ view: 'main', presentation: 'page', closeOnShot: true }).closeOnShot, undefined);
+    // size: full is an overlay-only exact string, and it replaces fit
+    assert.equal(open({ view: 'main', presentation: 'overlay', size: 'full' }).size, 'full');
+    assert.equal(open({ view: 'main', presentation: 'overlay', size: 'huge' }).size, undefined);
+    assert.equal(open({ view: 'main', presentation: 'page', size: 'full' }).size, undefined);
+    assert.equal(open({ view: 'main', presentation: 'overlay', size: 'full', fit: true }).fit, undefined);
 });
 
 test('step moves a steppable tile field by a bounded non-zero amount', () => {
@@ -621,6 +626,9 @@ test('stripReading: goals follow the step\'s control mode', () => {
     assert.deepEqual(stripReading('weight', {}), { value: null, goal: null });
     assert.equal(stripReading('waterTemp', { sample: { mixTemperature: 90, targetMixTemperature: 0 } }).goal, null);
     assert.deepEqual(stripReading('puckTemp', { sample }), { value: 92, goal: 90 });
+    assert.deepEqual(stripReading('weightFlow', { weightFlow: 1.8 }), { value: 1.8, goal: null });
+    assert.deepEqual(stripReading('weightFlow', { weightFlow: 0 }), { value: 0, goal: null });
+    assert.deepEqual(stripReading('weightFlow', {}), { value: null, goal: null });
     assert.equal(stripReading('waterTemp', { sample }).goal, 93);
 });
 

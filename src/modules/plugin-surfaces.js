@@ -122,7 +122,10 @@ function parseOpen(action) {
         type: 'open',
         view: ID_RE.test(view) ? view : '',
         presentation,
-        ...(presentation === 'overlay' && action.fit === true && { fit: true }),
+        // `size: "full"`: the whole screen less the close button. The page needs no size
+        // report there, so `fit` does not apply.
+        ...(presentation === 'overlay' && action.size === 'full' && { size: 'full' }),
+        ...(presentation === 'overlay' && action.size !== 'full' && action.fit === true && { fit: true }),
         // `closeOnShot`: the page opts in to being closed when an espresso starts, so it never
         // covers the shot. Only an overlay is covering anything.
         ...(presentation === 'overlay' && action.closeOnShot === true && { closeOnShot: true }),
@@ -402,7 +405,7 @@ function parseMode(raw, id, action) {
 // A live shot strip: a few readings drawn in the info row during an espresso (or
 // always). The skin reads the numbers; the plugin picks which cells, their colour
 // tokens and how a dot or bar judges a reading against its goal. No plugin code runs.
-export const STRIP_BUILTIN = ['weight', 'pressure', 'flow', 'puckTemp', 'waterTemp', 'step'];
+export const STRIP_BUILTIN = ['weight', 'pressure', 'flow', 'weightFlow', 'puckTemp', 'waterTemp', 'step'];
 const STRIP_WITH_GOAL = ['weight', 'pressure', 'flow', 'puckTemp', 'waterTemp'];
 export const STRIP_COLORS = ['pressure', 'flow', 'temp', 'weight', 'ongoing', 'accent', 'text', 'muted', 'red', 'amber'];
 export const STRIP_SHOW = ['shot', 'always'];
@@ -487,8 +490,8 @@ function parseStripCellBody(raw) {
 }
 
 // -> a number and its goal for one built-in cell, or nulls when the frame has none.
-// `ctx`: { sample (snapshot), weight, yieldGoal, step: { name, pump } }.
-export function stripReading(cell, { sample = {}, weight = null, yieldGoal = null, step = null } = {}) {
+// `ctx`: { sample (snapshot), weight, weightFlow (g/s), yieldGoal, step: { name, pump } }.
+export function stripReading(cell, { sample = {}, weight = null, weightFlow = null, yieldGoal = null, step = null } = {}) {
     const num = v => (Number.isFinite(v) ? v : null);
     const pos = v => (Number.isFinite(v) && v > 0 ? v : null);
     switch (cell) {
@@ -496,6 +499,7 @@ export function stripReading(cell, { sample = {}, weight = null, yieldGoal = nul
         // A pressure goal means something only on a pressure step, a flow goal on a flow step.
         case 'pressure': return { value: num(sample.pressure), goal: step?.pump === 'flow' ? null : pos(sample.targetPressure) };
         case 'flow': return { value: num(sample.flow), goal: step?.pump === 'pressure' ? null : pos(sample.targetFlow) };
+        case 'weightFlow': return { value: num(weightFlow), goal: null }; // g/s, the series the chart draws
         case 'puckTemp': return { value: num(sample.groupTemperature), goal: pos(sample.targetGroupTemperature) };
         case 'waterTemp': return { value: num(sample.mixTemperature), goal: pos(sample.targetMixTemperature) };
         default: return { value: null, goal: null };

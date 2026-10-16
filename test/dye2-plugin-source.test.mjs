@@ -293,9 +293,9 @@ function lift(module, patterns) {
     ]);
 
     const { scopedClearContext, hasDyeMarker } = await import('../src/modules/dye-context.js');
-    const build = (context, { scoped = false } = {}) => {
+    const build = (context, { scoped = false, inUse = true } = {}) => {
         const puts = [];
-        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker',
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker', 'isDye2Enabled', 'dye2PluginLoaded',
             `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
         const api = fn(
             async () => ({ context }),
@@ -304,6 +304,8 @@ function lift(module, patterns) {
             async () => scoped,
             scopedClearContext,
             hasDyeMarker,
+            () => inUse,
+            async () => inUse,
         );
         return { ...api, puts };
     };
@@ -329,6 +331,18 @@ function lift(module, patterns) {
         assert.ok(!('targetYield' in sent));
         assert.ok(!('grinderSetting' in sent), 'the grind tile is not DYE2-owned');
         assert.ok(!('profile' in puts[0]));
+    });
+
+    test('leaves another plugin\'s values alone when DYE2 is not in use', async () => {
+        const { clearDyeWorkflowContext, puts } = build(dirty, { inUse: false });
+        assert.equal(await clearDyeWorkflowContext(), false);
+        assert.equal(puts.length, 0);
+    });
+
+    test('the Settings switch-off still clears everything', async () => {
+        const { clearDyeWorkflowContext, puts } = build(dirty, { inUse: false });
+        assert.equal(await clearDyeWorkflowContext({ includeGrinderSetting: true }), true);
+        assert.equal(puts.length, 1);
     });
 
     test('coffee picker selection is cleared for the following shot without changing dose or grind', async () => {
