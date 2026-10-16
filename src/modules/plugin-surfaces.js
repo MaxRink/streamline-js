@@ -73,7 +73,7 @@ export function yieldForRatio(dose, ratio) {
     const y = Math.round(dose * ratio * 10) / 10;
     return Number.isFinite(y) && y >= 1 && y <= 2000 ? y : null;
 }
-const STEPSIZE_MAX = 10;
+export const STEPSIZE_MAX = 10;
 
 // `tile-mode` adds an option to the toggle under a left-column tile's label.
 // Steam, hot water and flush can take a mode but not a hint or a line, so they are not in TILES.
@@ -209,8 +209,11 @@ function parseStep(action) {
 
 function parseStepSize(action) {
     const { sizes } = action;
+    // `custom`: the user may also type a step of their own (long-press the pill), for a
+    // stepless grinder. Then `sizes` may be empty and a tap opens the numpad directly.
+    const custom = action.custom === true;
     if (!STEPSIZE_FIELDS.includes(action.field) || !Array.isArray(sizes)
-        || sizes.length < 1 || sizes.length > STEPSIZE_MAX_SIZES) return null;
+        || sizes.length < (custom ? 0 : 1) || sizes.length > STEPSIZE_MAX_SIZES) return null;
     const out = [];
     for (const item of sizes) {
         const n = toNumber(item);
@@ -219,7 +222,7 @@ function parseStepSize(action) {
         if (r <= 0) return null;
         out.push(r);
     }
-    return { type: 'stepsize', field: action.field, sizes: out };
+    return { type: 'stepsize', field: action.field, sizes: out, ...(custom && { custom: true }) };
 }
 
 // The size after `current` in `sizes`, wrapping; the first when `current` is not in it.
@@ -231,7 +234,9 @@ export function nextStepSize(sizes, current) {
 
 // The size to use for a stored value: the stored one when the plugin still offers
 // it, otherwise the first offered size.
-export function resolveStepSize(sizes, stored) {
+export function resolveStepSize(sizes, stored, custom = false) {
+    // A typed step is kept as is (to hundredths, up to the same cap as an offered size).
+    if (custom && Number.isFinite(stored) && stored > 0 && stored <= STEPSIZE_MAX && round2(stored) === stored) return stored;
     if (!Array.isArray(sizes) || sizes.length === 0) return 1;
     return sizes.includes(stored) ? stored : sizes[0];
 }

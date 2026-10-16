@@ -745,3 +745,22 @@ test('tile-sync: only the grind tile, a number clamped to the field, first one w
     assert.equal(ok([{ id: 'a', kind: 'tile-sync', tile: 'grind', value: 1 },
         { id: 'b', kind: 'tile-sync', tile: 'grind', value: 2 }]).length, 1);
 });
+
+test('stepsize custom: a typed step is kept, sizes may be empty only with custom', () => {
+    assert.deepEqual(ok([stepsize({ custom: true })])[0].action,
+        { type: 'stepsize', field: 'targetDoseWeight', sizes: [1, 0.5, 0.1], custom: true });
+    assert.equal(ok([stepsize({ custom: 'yes' })])[0].action.custom, undefined);
+    assert.deepEqual(ok([stepsize({ field: 'grinderSetting', sizes: [], custom: true })])[0].action,
+        { type: 'stepsize', field: 'grinderSetting', sizes: [], custom: true });
+    assert.equal(ok([stepsize({ sizes: [] })])[0].action, undefined); // without custom an empty list is dropped
+    // resolve: a typed step wins only on a custom surface, within (0, 10] and hundredths
+    assert.equal(resolveStepSize([1, 5], 2.5, true), 2.5);
+    assert.equal(resolveStepSize([1, 5], 2.5, false), 1);
+    assert.equal(resolveStepSize([1, 5], 12, true), 1);
+    assert.equal(resolveStepSize([1, 5], 0, true), 1);
+    assert.equal(resolveStepSize([1, 5], 0.123, true), 1);
+    assert.equal(resolveStepSize([], null, true), 1);
+    assert.equal(resolveStepSize([], 0.25, true), 0.25);
+    // a tap from a typed step goes back to the first offered size
+    assert.equal(nextStepSize([1, 5], 2.5), 1);
+});

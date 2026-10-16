@@ -10,14 +10,14 @@ import { getScaleReading, getEspressoEndedAt, getPlugins, callPluginEndpoint, co
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
-    nextStepSize, resolveStepSize, formatStepSize, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, SYNC_TILES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, STEPSIZE_MAX, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, SYNC_TILES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
 import { setShotStrip } from './plugin-shot-strip.js';
 import { setMenuEntries, setMenuRunner } from './plugin-menu-items.js';
 import { planTileModes, createCallQueue, tileHasBuiltinOption } from './plugin-modes.js';
 import { getTempUnit } from './units.js';
 import { pluginUiUrl } from '../settings/plugin-view.js';
 import { applyPluginSetAsync, applyPluginStepAsync, isAutoSteamMode, getScreensaverButtonSlot, isScreensaverActive,
-    getStoredStepSize, storeStepSize, setDrawnStepSizes, setDrawnKeepRatio, showToast } from './ui.js';
+    getStoredStepSize, storeStepSize, setDrawnStepSizes, setupPressAndHold, setDrawnKeepRatio, showToast } from './ui.js';
 
 const READ_TIMEOUT_MS = 2000;
 const REFRESH_MS = 60000;
@@ -414,17 +414,29 @@ function bindAction(el, plugin, action, surface) {
             });
         });
     } else if (action?.type === 'stepsize') {
-        el.addEventListener('click', () => {
-            const next = nextStepSize(action.sizes, resolveStepSize(action.sizes, getStoredStepSize(action.field)));
-            storeStepSize(action.field, next);
+        const current = () => resolveStepSize(action.sizes, getStoredStepSize(action.field), action.custom);
+        const use = size => {
+            storeStepSize(action.field, size);
             document.querySelectorAll('[data-stepsize-field]').forEach(node => {
                 if (node.dataset.stepsizeField !== action.field) return;
-                node.textContent = formatStepSize(next, action.field);
+                node.textContent = formatStepSize(size, action.field);
                 if (node.parentElement && node.parentElement !== document.body && node.parentElement.tagName === 'BUTTON') {
                     node.parentElement.title = node.parentElement.dataset.customTitle || node.textContent;
                 }
             });
-        });
+        };
+        const cycle = () => use(nextStepSize(action.sizes, current()));
+        // The skin's own numpad, so a stepless grinder's user types the step they want.
+        const typeIt = async () => {
+            const size = await openPluginNumpad(plugin, `stepsize-${action.field}`, {
+                title: 'Step size', unit: action.field === 'grinderSetting' ? '' : 'g',
+                min: 0.01, max: STEPSIZE_MAX, decimals: 2, value: current(),
+            });
+            if (size !== null) use(size);
+        };
+        if (!action.custom) el.addEventListener('click', cycle);
+        // Tap cycles the offered sizes (or types, when there are none); a long press types.
+        else setupPressAndHold(el, action.sizes.length ? cycle : typeIt, typeIt);
     } else if (action?.type === 'set') {
         el.addEventListener('click', () => {
             const value = action.from === 'scale' ? scaleDoseForTap() : action.value;
@@ -449,7 +461,7 @@ function buildTileSurface(plugin, surface) {
     if (surface.action?.type === 'stepsize') {
         // Drawn from this device's stored size, so a redraw keeps it correct.
         el.dataset.stepsizeField = surface.action.field;
-        el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field)), surface.action.field);
+        el.textContent = formatStepSize(resolveStepSize(surface.action.sizes, getStoredStepSize(surface.action.field), surface.action.custom), surface.action.field);
     }
     el.style.cssText = 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     const title = surface.title || el.textContent;
@@ -766,6 +778,7 @@ function render(rawEntries) {
     const container = document.getElementById('header-right-controls');
     const anchor = container?.firstChild;
     const drawnSizes = {};
+    const drawnCustom = {};
     let drawnKeepRatio = null; // from the first drawn Drink surface that asks
     let drawnKeepMoves = 'both';
     const usedSlots = new Set(); // two plugins asking for the same tile slot: first wins
@@ -818,13 +831,13 @@ function render(rawEntries) {
         if (placeTileSurface(plugin, surface)) {
             usedSlots.add(slot);
             const a = surface.action;
-            if (a?.type === 'stepsize' && !drawnSizes[a.field]) drawnSizes[a.field] = a.sizes;
+            if (a?.type === 'stepsize' && !drawnSizes[a.field]) { drawnSizes[a.field] = a.sizes; drawnCustom[a.field] = a.custom === true; }
             // A plugin mode on Drink owns the yield, so the ratio is not held for it.
             if (surface.keepRatio && !drawnKeepRatio && !modeTiles.has('drink')) { drawnKeepRatio = surface.keepRatio; drawnKeepMoves = surface.keepRatioMoves || 'both'; }
         }
     }
     setShotStrip(mainHidden ? null : entries.find(e => e.surface.kind === 'shot-strip')?.surface || null);
-    setDrawnStepSizes(drawnSizes);
+    setDrawnStepSizes(drawnSizes, drawnCustom);
     setDrawnKeepRatio(drawnKeepRatio, drawnKeepMoves);
 
     if (!mainHidden) {

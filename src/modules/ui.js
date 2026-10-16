@@ -438,7 +438,8 @@ const STEP_VALUE_IDS = { targetDoseWeight: 'dose-in-value', targetYield: 'drink-
 // stepsize surface for the field is drawn; otherwise the step is 1.
 const STEPSIZE_KEY = field => `plugin-stepsize:${field}`;
 let drawnStepSizes = {}; // field -> offered sizes, set by the surface renderer
-export function setDrawnStepSizes(map) { drawnStepSizes = map || {}; }
+let drawnStepCustom = {}; // field -> true when the user may type a step of their own
+export function setDrawnStepSizes(map, custom = {}) { drawnStepSizes = map || {}; drawnStepCustom = custom || {}; }
 export function getStoredStepSize(field) {
     try {
         const n = parseFloat(localStorage.getItem(STEPSIZE_KEY(field)));
@@ -451,7 +452,7 @@ export function storeStepSize(field, size) {
 export function activeStepSize(field) {
     const sizes = drawnStepSizes[field];
     if (!sizes) return 1;
-    return resolveStepSize(sizes, getStoredStepSize(field));
+    return resolveStepSize(sizes, getStoredStepSize(field), drawnStepCustom[field] === true);
 }
 
 // A plugin `step` resolving true once the stored write has settled.

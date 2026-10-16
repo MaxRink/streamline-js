@@ -456,6 +456,10 @@ An invalid action drops the action only; the surface still shows, inert.
   hundredths; anything else drops the action. The pill changes what the tile's own `-` / `+` move by: each tap
   moves to the next size and wraps. The skin draws the pill text itself (`±0.5 g`, no `g` on grind, from the size stored on this
   device; your `text` is ignored), and the choice is kept per field in this device's local storage, not synced.
+  Add `"custom": true` for a stepless grinder: the user can then also type a step of their own. A long press on the
+  pill opens the skin's numpad (0.01 to 10, hundredths) and the typed step is kept like a chosen size; a tap cycles the
+  offered sizes again, starting from the first. With `custom` the `sizes` list may be empty, and then a tap opens the
+  numpad too (the step is 1 until the user types one). The plugin is not told which step is in use.
   The size applies only while a `stepsize` surface for that field is drawn; when the plugin goes away the
   tile's step is 1 again. The numpad and presets are unaffected. A plugin `tile-mode` on the tile intercepts
   `-` / `+` itself, so the step size has no effect while a mode is selected.
