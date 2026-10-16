@@ -461,7 +461,9 @@ let maintenanceSequence = 0;
 async function mountMaintenanceCategory(category, container) {
     const sequence = ++maintenanceSequence;
     try {
-        const module = await import('./categories/maintenance.js');
+        const module = category === 'ble_grinder'
+            ? await import('./categories/connections.js')
+            : await import('./categories/maintenance.js');
         // Guard a fast switch away: a late import must not paint over the page
         // the user is now looking at.
         if (sequence !== maintenanceSequence) return;
@@ -554,7 +556,7 @@ function updateSettingsContentArea(category) {
         if (category === 'ledstrip') {
             setTimeout(initLedPicker, 0);
         }
-        if (MAINTENANCE_CATEGORIES.has(category)) {
+        if (MAINTENANCE_CATEGORIES.has(category) || category === 'ble_grinder') {
             mountMaintenanceCategory(category, contentArea);
         }
         if (category === 'calib_sensors') {
@@ -892,6 +894,7 @@ export function renderSettingsContent(category) {
         case 'maint_cleaning':
         case 'maint_descaling':
         case 'maint_airpurge':
+        case 'ble_grinder':
             // Mounted by the extracted category module, not rendered here.
             return '';
         case 'theme':

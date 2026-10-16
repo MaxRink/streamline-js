@@ -2236,6 +2236,8 @@ async function initMainPageOnce() {
         // Plugin-declared dashboard surfaces; a no-op when no plugin answers `skin`.
         import('./plugin-surfaces-ui.js').then(m => m.initPluginSurfaces())
             .catch(error => logger.warn('Plugin surfaces failed to start:', error));
+        import('./grinder-runtime.js').then(m => m.initGrinderSync())
+            .catch(error => logger.warn('Grinder sync failed to start:', error));
         mainPageInitialized = true;
         logger.info('initMainPageOnce: finished.');
         return workflow;

@@ -28,7 +28,7 @@ const SETTINGS_TREE = Object.freeze(
 
 const CATEGORY_LOADERS = Object.freeze({
     quickadjustments: () => import('./categories/quick-adjustments.js'),
-    bluetooth: () => import('./categories/legacy-category.js'),
+    bluetooth: () => import('./categories/connections.js'),
     calibration: () => import('./categories/legacy-category.js'),
     machine: () => import('./categories/legacy-category.js'),
     maintenance: () => import('./categories/maintenance.js'),

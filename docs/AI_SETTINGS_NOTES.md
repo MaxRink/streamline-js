@@ -44,6 +44,7 @@ Current partial-extraction modules are:
 
 - `src/settings/categories/quick-adjustments.js`
 - `src/settings/categories/maintenance.js`
+- `src/settings/categories/connections.js` (the Grinder page; Machine and Scale fall through to the legacy bridge)
 
 They can render supported subcategories and delegate the rest to the legacy bridge. Use their mount/cleanup/delegation shape as the model for further extraction.
 

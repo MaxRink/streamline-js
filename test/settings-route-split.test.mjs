@@ -22,7 +22,7 @@ test('settings shell keeps quick adjustments out of the legacy module', () => {
     const app = read('src/modules/app.js');
 
     assert.match(shell, /quickadjustments:\s*\(\) => import\('\.\/categories\/quick-adjustments\.js'\)/);
-    assert.match(shell, /bluetooth:\s*\(\) => import\('\.\/categories\/legacy-category\.js'\)/);
+    assert.match(shell, /bluetooth:\s*\(\) => import\('\.\/categories\/connections\.js'\)/);
     assert.match(shell, /maintenance:\s*\(\) => import\('\.\/categories\/maintenance\.js'\)/);
     assert.match(shell, /getElementById\('settings-body'\)\?\.parentElement/);
     assert.doesNotMatch(quick, /settings\.js/);

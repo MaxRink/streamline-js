@@ -162,6 +162,59 @@ export async function getScaleDevices() {
     return Array.isArray(devices) ? devices.filter(device => device?.type === 'scale') : [];
 }
 
+// ── Connected grinder ───────────────────────────────────────────────────────
+// Runtime device, separate from the persisted /grinders catalogue. 503 means none is
+// connected, which is a normal answer here, not an error.
+
+/** Grinder devices Decaid knows about (connected or found by a scan). */
+export async function getGrinderDevices() {
+    const devices = await getDevices();
+    return Array.isArray(devices) ? devices.filter(device => device?.type === 'grinder') : [];
+}
+
+/** GET /grinder/info -> { deviceId, capabilities, observations?, controls?, surfaces? }, or null. */
+export async function getGrinderInfo() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/grinder/info`);
+        return response.ok ? await response.json() : null;
+    } catch (error) {
+        logger.debug('Grinder info unavailable:', error);
+        return null;
+    }
+}
+
+/** PUT /devices/disconnect. Throws when Decaid refuses. */
+export async function disconnectDevice(deviceId) {
+    const response = await fetch(`${API_BASE_URL}/devices/disconnect?deviceId=${encodeURIComponent(deviceId)}`, { method: 'PUT' });
+    if (!response.ok) throw new Error(`Failed to disconnect device ${deviceId}`);
+}
+
+/** PUT /grinder/setting. The grinder's own setting string; throws when it is refused. */
+export async function setGrinderSetting(setting) {
+    const response = await fetch(`${API_BASE_URL}/grinder/setting`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ setting: String(setting) }),
+    });
+    if (!response.ok) throw new Error(`Grinder refused the setting (${response.status})`);
+}
+
+/**
+ * ws/v1/grinder/snapshot. The socket stays open and silent while no grinder is
+ * connected and sends the current snapshot on every (re)connect, so `onOpen` is the
+ * moment to forget what was last seen. Returns { close }.
+ */
+export function connectGrinderSnapshot(onSnapshot, onOpen = null) {
+    const socket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/grinder/snapshot`, [], {
+        reconnectInterval: 3000,
+    });
+    socket.onopen = () => { if (onOpen) onOpen(); };
+    socket.onmessage = (event) => {
+        try { onSnapshot(JSON.parse(event.data)); } catch (error) { logger.warn('Bad grinder snapshot:', error); }
+    };
+    return { close: () => socket.close() };
+}
+
 // ── Sensors (Bengle milk probe et al.) ──────────────────────────────────────
 // GET /api/v1/sensors lists devices currently registered on the sensor bus
 // (e.g. a Bengle's onboard milk probe, auto-registered by reaprime's

@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { deviceSetting, parseDeviceNumber, followDecision, canSendGrind, grinderSettingString, sendDecision } from '../src/modules/grinder-sync.js';
+
+const numeric = { kind: 'numeric', min: 0, max: 40, step: 0.5 };
+const info = { capabilities: ['grindSetting'], controls: { grindSetting: numeric } };
+
+test('deviceSetting: setting, else observedSetting, strings only', () => {
+    assert.equal(deviceSetting({ setting: '200', observedSetting: '5' }), '200');
+    assert.equal(deviceSetting({ observedSetting: '12.5' }), '12.5');
+    assert.equal(deviceSetting({ state: 'idle' }), null);
+    assert.equal(deviceSetting({ setting: 200 }), null);
+    assert.equal(deviceSetting(null), null);
+});
+
+test('parseDeviceNumber: plain numbers only', () => {
+    assert.equal(parseDeviceNumber('200'), 200);
+    assert.equal(parseDeviceNumber(' 5.2 '), 5.2);
+    assert.equal(parseDeviceNumber('espresso/A'), null);
+    assert.equal(parseDeviceNumber('1e3'), null);
+    assert.equal(parseDeviceNumber(''), null);
+    assert.equal(parseDeviceNumber(7), null);
+});
+
+test('follow: applies on a change, never when unchanged or already on the tile', () => {
+    assert.equal(followDecision({ deviceValue: 18, lastDevice: null, tileValue: 56.4 }), 18);
+    assert.equal(followDecision({ deviceValue: 18, lastDevice: 17, tileValue: 56.4 }), 18);
+    assert.equal(followDecision({ deviceValue: 18, lastDevice: 18, tileValue: 56.4 }), null); // user's edit stands
+    assert.equal(followDecision({ deviceValue: 18, lastDevice: 17, tileValue: 18 }), null);
+    assert.equal(followDecision({ deviceValue: 18.001, lastDevice: 17, tileValue: 18 }), null);
+    assert.equal(followDecision({ deviceValue: NaN, lastDevice: 17, tileValue: 18 }), null);
+});
+
+test('canSendGrind: needs the command and a numeric range', () => {
+    assert.equal(canSendGrind(info), true);
+    assert.equal(canSendGrind({ capabilities: ['rpmControl'], controls: { grindSetting: numeric } }), false);
+    assert.equal(canSendGrind({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'opaque' } } }), false);
+    assert.equal(canSendGrind({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'enumerated', values: ['a'] } } }), false);
+    assert.equal(canSendGrind({ capabilities: ['grindSetting'] }), false);
+    assert.equal(canSendGrind({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'numeric', min: 5, max: 1 } } }), false);
+    assert.equal(canSendGrind(null), false);
+});
+
+test('grinderSettingString: clamped, precision of the step', () => {
+    assert.equal(grinderSettingString(12.5, numeric), '12.5');
+    assert.equal(grinderSettingString(12, numeric), '12');
+    assert.equal(grinderSettingString(99, numeric), '40');
+    assert.equal(grinderSettingString(-3, numeric), '0');
+    assert.equal(grinderSettingString(12.456, { kind: 'numeric', min: 0, max: 40 }), '12.46');
+    assert.equal(grinderSettingString(12.3, { kind: 'numeric', min: 0, max: 40, step: 1 }), '12');
+    assert.equal(grinderSettingString(5, { kind: 'opaque' }), null);
+    assert.equal(grinderSettingString(NaN, numeric), null);
+});
+
+test('send: only a changed tile, never what the grinder already shows', () => {
+    assert.equal(sendDecision({ tileValue: 20, lastTile: 18, deviceValue: 18, info }), '20');
+    assert.equal(sendDecision({ tileValue: 20, lastTile: 20, deviceValue: 18, info }), null); // unchanged
+    assert.equal(sendDecision({ tileValue: 20, lastTile: 18, deviceValue: 20, info }), null); // echo of a follow
+    assert.equal(sendDecision({ tileValue: 20, lastTile: 18, deviceValue: null, info: { capabilities: [] } }), null);
+    assert.equal(sendDecision({ tileValue: 60, lastTile: 18, deviceValue: 18, info }), '40');
+});
