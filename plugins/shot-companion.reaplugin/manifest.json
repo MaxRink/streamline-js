@@ -1,0 +1,64 @@
+{
+  "id": "shot-companion.reaplugin",
+  "author": "Decent",
+  "name": "Shot companion",
+  "description": "Adds to the Streamline dashboard: the current bean in the top bar, a live shot strip in the info row while an espresso runs, and last-shot pills on Grind, Dose and Drink that restore what you used last time.",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "permissions": [
+    "log",
+    "api",
+    "emit",
+    "events.workflow",
+    "events.shots"
+  ],
+  "settings": {
+    "LiveStrip": {
+      "type": "boolean",
+      "label": "Live shot strip",
+      "description": "While an espresso runs, replace the info row with weight against target, pressure and flow against the profile, the current step and today's shot number.",
+      "default": true
+    },
+    "LastShotPills": {
+      "type": "boolean",
+      "label": "Last-shot pills",
+      "description": "Show the grind, dose and yield of your last matching shot under the Grind, Dose and Drink tiles. Tap a pill to use that value again.",
+      "default": true
+    },
+    "BeanButton": {
+      "type": "boolean",
+      "label": "Current bean button",
+      "description": "Show the current coffee's name in the top bar. Tap it for the roast date, beans left and the last shot with that coffee.",
+      "default": true
+    },
+    "MatchBy": {
+      "type": "enum",
+      "label": "Last shot of",
+      "values": ["Same profile", "Same coffee", "Any shot"],
+      "default": "Same profile",
+      "description": "Which earlier shot the pills recall. Same coffee uses the coffee name on the workflow and falls back to the profile when there is none."
+    }
+  },
+  "api": [
+    {
+      "id": "skin",
+      "type": "http",
+      "data": {}
+    },
+    {
+      "id": "ui",
+      "type": "http",
+      "data": {}
+    },
+    {
+      "id": "changed",
+      "type": "websocket",
+      "data": {
+        "what": {
+          "type": "string",
+          "description": "Always \"skin\": only this plugin's skin answer changed."
+        }
+      }
+    }
+  ]
+}

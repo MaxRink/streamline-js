@@ -328,6 +328,10 @@ Brew, Steam and Flush, and the Steam one is hidden while steam is in Auto.
 All of these look like the built-in controls, and disappear when the plugin is switched off or does not
 answer. Plugin authors: see [docs/plugin-surfaces.md](docs/plugin-surfaces.md).
 
+This repository ships one such plugin, [Shot companion](plugins/shot-companion.reaplugin): the current bean in
+the top bar, a live shot strip in the info row during an espresso, and last-shot pills under Grind, Dose and
+Drink. Install it on Decaid as its README describes.
+
 ### Left column — shot settings
 
 | Row | What it sets |

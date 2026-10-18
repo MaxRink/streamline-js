@@ -21,7 +21,7 @@ Use this file for orientation. Read the smallest matching topic note, inspect th
 | Manifest, version, `dist`, tags, GitHub Actions, Pages | `.github/workflows/release.yml`, `.github/workflows/static.yml`, `skin-manifest.json`, `src/version.js` | `AI_RELEASE_NOTES.md` |
 | Behavior parity with the old skin or rewrite archaeology | Current JS first, then a narrow search in `skin.tcl`, `tcl_rewrite_guide.md`, or `rewrite_roadmap.md` | `AI_LEGACY_NOTES.md` |
 | User-facing behavior or troubleshooting docs | Current implementation and matching topic note, then `README.md` or `docs/*.md` | The owning topic note |
-| Plugin-declared dashboard surfaces (header/screensaver buttons, tile hint/line/mode, ratio-action, shot-strip; `open`/`set`/`step`/`stepsize`/`call`, stock numpad) | `src/modules/plugin-surfaces.js` (parser), `src/modules/plugin-surfaces-ui.js` (render), `src/modules/plugin-tile-modes.js` (modes), `src/modules/plugin-shot-strip.js` (live strip), `applyPluginSet` in `src/modules/ui.js` | `docs/plugin-surfaces.md` |
+| Plugin-declared dashboard surfaces (header/screensaver buttons, tile hint/line/mode, ratio-action, shot-strip; `open`/`set`/`step`/`stepsize`/`call`, stock numpad) | `src/modules/plugin-surfaces.js` (parser), `src/modules/plugin-surfaces-ui.js` (render), `src/modules/plugin-tile-modes.js` (modes), `src/modules/plugin-shot-strip.js` (live strip), `applyPluginSet` in `src/modules/ui.js`; a working Decaid plugin that uses them is `plugins/shot-companion.reaplugin` | `docs/plugin-surfaces.md` |
 | DYE2, extensions, Home Assistant, or plugin UI | The target module and settings category; inspect its API calls | `AI_API_NOTES.md`, `AI_SETTINGS_NOTES.md`, or `AI_UI_NOTES.md` as needed |
 
 ## Production Entry Points
