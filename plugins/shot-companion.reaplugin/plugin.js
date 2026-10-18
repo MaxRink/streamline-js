@@ -81,8 +81,10 @@ function createPlugin(host) {
     return Date.UTC(y, mo - 1, d, h, mi, s, ms) - offsetMin * 60000;
   }
 
+  // When the shot was pulled. `createdAt` is when it entered storage, which for a
+  // backup import is the import time, so it is only the fallback.
   function shotTime(shot) {
-    return parseTime(shot && shot.createdAt) ?? parseTime(shot && shot.timestamp);
+    return parseTime(shot && shot.timestamp) ?? parseTime(shot && shot.createdAt);
   }
 
   function localDay(ms) {
@@ -144,8 +146,11 @@ function createPlugin(host) {
     return { name, roaster: text(ctx.coffeeRoaster) || text(legacy.roaster), batchId: text(ctx.beanBatchId) };
   }
 
+  // A roast date is a calendar date. One stored as UTC midnight is read as that
+  // date, not converted, so it does not move a day west of UTC.
   function daysOffRoast(roastDate, now) {
-    const at = parseTime(roastDate) ?? parseTime(`${roastDate}T00:00:00`);
+    const day = typeof roastDate === "string" && roastDate.match(/^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.0+)?Z)?$/);
+    const at = day ? new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3])).getTime() : parseTime(roastDate);
     if (at === null || at > now) return null;
     const midnight = ms => { const d = new Date(ms); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
     return Math.round((midnight(now) - midnight(at)) / 86400000);
@@ -517,8 +522,14 @@ button{margin-top:16px;width:100%;height:52px;border:0;border-radius:12px;backgr
           onWorkflow(event.payload);
           break;
         case "shotStored":
-        case "shotUpdated":
           refresh();
+          break;
+        // Edits do not change today's count, and other plugins edit shots in bulk
+        // (shot upload marks its backlog), so only an edit of the recalled shot counts.
+        case "shotUpdated":
+          if (last && event.payload && event.payload.id === last.id) {
+            refresh({ shots: false });
+          }
           break;
         default:
           break;

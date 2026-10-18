@@ -30,8 +30,15 @@ the skin's own tile setter, as a typed value would.
 
 - It reads `GET /api/v1/workflow` on load, then follows `workflowUpdated`
   (`events.workflow`). A new profile, coffee or bean batch triggers a new lookup.
-- `shotStored` and `shotUpdated` (`events.shots`) re-read the last shot,
-  today's count and the batch (beans left changes after a shot).
+- `shotStored` (`events.shots`) re-reads the last shot, today's count and the
+  batch (beans left changes after a shot). `shotUpdated` re-reads only when the
+  edited shot is the one the pills recall, so another plugin editing many shots
+  (shot upload marking its backlog) costs nothing.
+- Shots are dated by `timestamp` (when pulled), not `createdAt` (when stored),
+  so a backup import does not count as today's shots.
+- When the skin clears a one-shot coffee after the shot (the DYE2 or skin coffee
+  picker), the workflow has no coffee and the bean button goes away until the
+  next one is picked.
 - After a change it emits `{"what":"skin"}` on its `changed` websocket, which
   the skin declares as `live`, so the dashboard follows at once. It emits only
   when its answer actually changed.

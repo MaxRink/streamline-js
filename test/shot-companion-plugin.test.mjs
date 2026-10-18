@@ -222,6 +222,42 @@ test('a stored shot updates the count and the recall', async (t) => {
     assert.equal(byId['last-result'].text, '39.6g · 30s');
 });
 
+test('an imported old shot is dated by when it was pulled, not when it was stored', async (t) => {
+    const routes = defaultRoutes();
+    const imported = { ...shot('imp', NOON - 40 * 86400000), createdAt: iso(NOON - 60000) };
+    routes['/shots?limit=1'] = () => ({ items: [imported] });
+    routes['/shots/imp'] = () => ({ measurements: [] });
+    routes['/shots?limit=100'] = () => ({ items: [imported, shot('s1', NOON - 41 * 86400000)] });
+    const { plugin } = await start(t, { routes });
+    const { byId } = await skin(plugin);
+    assert.equal(byId.strip.cells.find(c => c.label === 'Today').text, '#1');
+    assert.match(byId['last-grind'].title, /40 days ago$/);
+});
+
+test('only an edit of the recalled shot re-reads it', async (t) => {
+    const { plugin, calls } = await start(t);
+    const before = calls.length;
+    plugin.onEvent({ name: 'shotUpdated', payload: { id: 'some-other-shot', patch: { annotations: { extras: { uploaded_to_decent: true } } } } });
+    await settle();
+    assert.equal(calls.length, before, 'bulk edits by other plugins cost nothing');
+    plugin.onEvent({ name: 'shotUpdated', payload: { id: 's2', patch: { annotations: { actualYield: 41 } } } });
+    await settle();
+    assert.ok(calls.slice(before).some(u => u.includes('/shots?limit=1')));
+    assert.ok(!calls.slice(before).some(u => u.includes('/shots?limit=100')), 'an edit does not change today\'s count');
+});
+
+test('a roast date stored as UTC midnight is that calendar date in every timezone', async (t) => {
+    const routes = defaultRoutes();
+    const d = new Date(NOON - 12 * 86400000);
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    for (const roastDate of [`${ymd}T00:00:00.000Z`, ymd]) {
+        routes['/bean-batches/batch-1'] = () => ({ roastDate });
+        const { plugin } = await start(t, { routes });
+        assert.equal((await skin(plugin)).byId.bean.text, 'Square Mile · 12 days off roast', roastDate);
+        t.mock.timers.reset();
+    }
+});
+
 test('a full page of today\'s shots shows a lower bound', async (t) => {
     const routes = defaultRoutes();
     routes['/shots?limit=100'] = () => ({ items: Array.from({ length: 100 }, (_, i) => shot(`t${i}`, NOON - (i + 1) * 60000)) });
