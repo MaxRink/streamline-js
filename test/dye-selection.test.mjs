@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
-    parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp,
+    parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp, emptyRecipeSlots,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -158,4 +158,11 @@ test('selectedRecipeSteamTemp: the selected recipe steam temperature, or null', 
     assert.equal(selectedRecipeSteamTemp({ kind: 'favourite', id: '2' }, recipes), null);
     assert.equal(selectedRecipeSteamTemp(null, recipes), null);
     assert.equal(selectedRecipeSteamTemp({ kind: 'recipe', id: '2' }, null), null);
+});
+
+test('emptyRecipeSlots lists the unused slots 1..5', () => {
+    assert.deepEqual(emptyRecipeSlots([]), ['1', '2', '3', '4', '5']);
+    assert.deepEqual(emptyRecipeSlots(null), ['1', '2', '3', '4', '5']);
+    assert.deepEqual(emptyRecipeSlots([{ id: '1' }, { id: 3 }]), ['2', '4', '5']);
+    assert.deepEqual(emptyRecipeSlots([1, 2, 3, 4, 5].map(id => ({ id }))), []);
 });

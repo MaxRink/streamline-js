@@ -180,3 +180,14 @@ export function selectedRecipeSteamTemp(sel, recipes) {
     const t = Number(recipe?.dashboardVariables?.steamTempC);
     return Number.isFinite(t) && t >= 135 ? Math.round(t) : null;
 }
+
+/**
+ * Recipe slots ('1'..'5', DYE2 KV_CONTRACT) that hold no recipe at all, lowest first.
+ * The strip shows one empty cell per slot so a tap opens DYE2's editor on it.
+ */
+export function emptyRecipeSlots(recipes, count = 5) {
+    const used = new Set((Array.isArray(recipes) ? recipes : []).filter(Boolean).map(r => String(r.id)));
+    const out = [];
+    for (let i = 1; i <= count; i++) if (!used.has(String(i))) out.push(String(i));
+    return out;
+}

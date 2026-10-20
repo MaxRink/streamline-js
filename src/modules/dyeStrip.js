@@ -27,7 +27,7 @@ import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
 import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } from './dye-context.js';
-import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, armedSelectionId } from './dye-selection.js';
+import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, armedSelectionId, emptyRecipeSlots } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
 const RECIPES_KEY = 'recipes';
@@ -135,11 +135,13 @@ function makeCell(label, extraClass, onClick, onLongPress) {
 }
 
 // Long-press menu on an R / F cell: jump into DYE2's editor, or (selected cell only)
-// stop DYE2 recording dashboard changes onto the item, for a one-off change.
-function openCellMenu(btn, isActive, edit) {
-    const items = [{ label: 'Edit in DYE2', onSelect: edit }];
-    if (isActive) items.push({ label: 'Clear selection', onSelect: clearSelection });
-    openContextMenu(btn, items);
+// stop DYE2 recording dashboard changes onto its selection, for a one-off change.
+// Clear is on every cell: the highlight can lag DYE2's real selection.
+function openCellMenu(btn, edit) {
+    openContextMenu(btn, [
+        { label: 'Edit in DYE2', onSelect: edit },
+        { label: 'Clear selection', onSelect: clearSelection },
+    ]);
 }
 
 function clearSelection() {
@@ -165,7 +167,7 @@ export function renderStrip(mode) {
                 activeItemId = fav.id;
                 renderStrip('F');
                 applyFavourite(fav).catch(e => logger.error('applyFavourite failed', e));
-            }, btn => openCellMenu(btn, fav.id === activeItemId, () => editFavourite(fav)));
+            }, btn => openCellMenu(btn, () => editFavourite(fav)));
             strip.appendChild(cell);
         });
         // Trailing "VIEW ALL AUTO FAV" cell (always present, opens the DYE2 page).
@@ -179,20 +181,18 @@ export function renderStrip(mode) {
         }
     } else if (mode === 'R') {
         const recipes = visibleRecipes().slice(0, 5);
-        if (recipes.length === 0) {
-            const hint = document.createElement('span');
-            hint.className = HINT_CLASS;
-            hint.textContent = 'No recipes yet';
-            strip.appendChild(hint);
-        }
         recipes.forEach(recipe => {
             const active = recipe.id != null && recipe.id === activeItemId;
             const cell = makeCell(recipeLabel(recipe), active ? CELL_ACTIVE : CELL_IDLE, () => {
                 activeItemId = recipe.id;
                 renderStrip('R');
                 applyRecipe(recipe).catch(e => logger.error('applyRecipe failed', e));
-            }, btn => openCellMenu(btn, recipe.id === activeItemId, () => editRecipe(recipe)));
+            }, btn => openCellMenu(btn, () => editRecipe(recipe)));
             strip.appendChild(cell);
+        });
+        // Empty slots: one tap opens DYE2's editor on that slot to create a recipe.
+        emptyRecipeSlots(recipeCache).slice(0, 5 - recipes.length).forEach(slot => {
+            strip.appendChild(makeCell('+', CELL_IDLE, () => editRecipe({ id: slot })));
         });
     }
     // Fit only once attached: wrapping depends on the real box width, which an
