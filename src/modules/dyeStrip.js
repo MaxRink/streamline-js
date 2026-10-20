@@ -134,16 +134,42 @@ function makeCell(label, extraClass, onClick, onLongPress) {
     return btn;
 }
 
-// Long-press menu on an R / F cell: jump into DYE2's editor, or (selected cell only)
-// stop DYE2 recording dashboard changes onto its selection, for a one-off change.
-// Clear is on every cell: the highlight can lag DYE2's real selection.
+// Long-press menu on an R / F cell: jump into DYE2's editor, save the dial-in made since the
+// item was applied onto it, or free the button.
+//
+// Saving is explicit. DYE2 used to write every workflow change onto whatever was selected,
+// which meant the machine's state quietly became the recipe -- steam switched off, a one-off
+// dose, a stale value from another app. Applying an item now only selects it; the barista
+// decides when it becomes the recipe. Offered on the selected cell only: DYE2 records onto its
+// own selection, so on any other cell it would write to the wrong item.
 function openCellMenu(btn, edit, kind, item) {
+    const selected = item.id != null && item.id === activeItemId;
     openContextMenu(btn, [
         { label: 'Edit in DYE2', onSelect: edit },
-        { label: 'Clear selection', onSelect: clearSelection },
+        ...(selected ? [{ label: 'Save changes', onSelect: () => saveChanges(kind, item) }] : []),
         { divider: true },
         { label: getTranslation('Clear button'), danger: true, onSelect: () => clearCell(kind, item) },
     ]);
+}
+
+// Ask DYE2 to patch the selected item with the dial-in now on the machine. DYE2 owns the diff
+// (it knows what the item held when it was applied), so this just asks; it answers saved:false
+// when nothing actually moved.
+async function saveChanges(kind, item) {
+    const label = kind === 'recipe' ? recipeLabel(item) : favLabel(item);
+    try {
+        const res = await fetch(`${PLUGIN_BASE}/record`, { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json().catch(() => null);
+        if (body && body.saved) {
+            showToast(`${label} updated`, 2000, 'info');
+        } else {
+            showToast('No changes to save', 2000, 'info');
+        }
+    } catch (e) {
+        logger.error('dyeStrip: save changes failed', e);
+        showToast(`Could not save to ${label}`, 2400, 'error');
+    }
 }
 
 // Take the item off its strip button, the way the profile strip's own "Clear button" frees a

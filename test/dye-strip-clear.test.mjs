@@ -86,3 +86,32 @@ test('an item that has gone from DYE2 since the strip read it writes nothing', a
     assert.equal(state.toasts[0].msg, 'Gone is no longer in DYE2');
     assert.equal(state.selectionCleared, 0);
 });
+
+// Recording is opt-in now: DYE2 only writes dial-in onto the selected item when the barista
+// asks. The menu entry is the only way to ask, and it must be offered on the selected cell
+// only -- DYE2 records onto its own selection, so on any other cell it would hit the wrong item.
+test('Save changes is offered on the selected cell only', () => {
+    const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const menu = source.slice(source.indexOf('function openCellMenu('));
+    const body = menu.slice(0, menu.indexOf('\n}\n'));
+
+    assert.ok(body.includes("item.id === activeItemId"), 'the entry is gated on being selected');
+    assert.ok(/selected \? \[\{ label: 'Save changes'/.test(body), 'and only then listed');
+    assert.ok(!body.includes("'Clear selection'"),
+        'Clear selection is gone: with opt-in recording there is nothing to disarm');
+    assert.ok(body.includes("getTranslation('Clear button')"), 'Clear button stays');
+});
+
+test('saveChanges asks DYE2 to record and does not write the item itself', () => {
+    const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const fn = source.slice(source.indexOf('async function saveChanges('));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+
+    assert.ok(body.includes('/record'), 'it posts to DYE2 record route');
+    assert.ok(body.includes("method: 'POST'"), 'as a POST');
+    // DYE2 owns the diff -- it knows what the item held when applied. The skin must not
+    // compute or write a patch of its own, or the two would disagree.
+    assert.ok(!body.includes('saveItemFields') && !body.includes('setDye2KvArray'),
+        'the skin writes nothing itself');
+    assert.ok(body.includes('No changes to save'), 'saved:false is reported, not silent');
+});
