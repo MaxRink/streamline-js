@@ -9,7 +9,10 @@
 
 export const DYE_MARKER_VERSION = '0.1.20';
 
-const TOP = ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'grinderId', 'grinderModel', 'baristaName', 'drinkerName'];
+// grinderId/grinderModel are deliberately NOT here: a grinder is equipment, not a per-shot
+// identity like the bean, so it must survive the post-shot clean-up (its DYE2 flag is still
+// cleared, see scopedClearContext). Otherwise the next shot has no grinder.
+const TOP = ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'baristaName', 'drinkerName'];
 const EXTRAS = ['basketId', 'basketName', 'rpm', 'note'];
 
 /** Did a DYE2 that marks its writes produce this context? */

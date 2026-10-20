@@ -368,7 +368,8 @@ function lift(module, patterns) {
         const { clearDyeWorkflowContext, puts } = build(ctx, { scoped: true });
         assert.equal(await clearDyeWorkflowContext(), true);
         const sent = puts[0].context;
-        assert.equal(sent.grinderId, null);
+        // report #4: the grinder is equipment, so it survives the post-shot clear while its DYE2 flag does not
+        assert.ok(!('grinderId' in sent));
         assert.equal(sent.coffeeName, null);
         assert.equal(sent.extras.streamlineBean, null);
         assert.deepEqual(sent.extras.dye, { grinderId: null });
