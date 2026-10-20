@@ -23,7 +23,7 @@ import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation,
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
 import { stepValue, formatRatio } from './value-format.js';
-import { shiftedTemperatures } from './brew-temp.js';
+import { targetWeightProfilePatch, brewTempProfilePatch } from './brew-temp.js';
 import { resolveStepSize, yieldForRatio, doseForRatio } from './plugin-surfaces.js';
 import { clampSetValue } from './plugin-surfaces.js';
 
@@ -228,15 +228,12 @@ export function setDrawnKeepRatio(ratio, moves = 'both') { keepRatio = ratio || 
 const ratioMovesYield = () => keepRatio && keepRatioMoves !== 'dose';
 const ratioMovesDose = () => keepRatio && keepRatioMoves !== 'yield';
 
-// The profile to send with a new stop-at-weight: the one the workflow holds now, so
-// the temperatures the Brew tile (or a plugin) wrote survive. The cached record is
-// only the fallback when the workflow cannot be read.
-async function profileWithTargetWeight(targetWeight) {
-    if (!Number.isFinite(targetWeight) || targetWeight <= 0) return null;
-    let base = null;
-    try { base = (await getWorkflow())?.profile; } catch (e) { /* fall back below */ }
-    if (!base) base = window.app?.getActiveProfileRecord?.()?.profile;
-    return base ? { ...base, target_weight: targetWeight } : null;
+// The profile fragment to send with a new stop-at-weight: only target_weight. Decaid
+// deep-merges it into the workflow's profile, so the temperatures the Brew tile (or a
+// plugin) wrote survive without reading the workflow back, which could be stale while
+// an earlier write is still going out to the machine.
+function profileWithTargetWeight(targetWeight) {
+    return Promise.resolve(targetWeightProfilePatch(targetWeight));
 }
 
 function updateDoseValue(type, newValue) {
@@ -349,18 +346,12 @@ export function updateDrinkOutPresetsDisplay(doseIn, drinkOut) {
 // its shape back; otherwise from the live steps.
 export function updateTemperatureValue(newValue) {
     return getWorkflow().then(workflow => {
-        if (workflow && workflow.profile && workflow.profile.steps) {
-            const target = parseFloat(newValue);
-            const live = workflow.profile.steps;
-            const saved = window.app?.getActiveProfileRecord?.()?.profile;
-            const shapeOf = saved && Array.isArray(saved.steps) && saved.steps.length === live.length
-                && saved.title === workflow.profile.title ? saved.steps : live;
-            const temps = shiftedTemperatures(shapeOf.map(step => step.temperature), target);
-            // Numbers, not strings. No usable first step: one temperature for every step.
-            live.forEach((step, i) => { step.temperature = temps ? temps[i] : target; });
-
-            // Partial update via workflow - only send profile field
-            return updateWorkflow({ profile: workflow.profile }).then(() => {
+        const saved = window.app?.getActiveProfileRecord?.()?.profile;
+        const patch = brewTempProfilePatch(workflow?.profile, saved, newValue);
+        if (patch) {
+            // Only the steps go out: Decaid merges the rest of the profile, so a stale
+            // target_weight or title from this read cannot revert a concurrent write.
+            return updateWorkflow({ profile: patch }).then(() => {
                 logger.debug('Temperature updated via workflow:', newValue);
                 // Save it as a per-profile override, same as dose/yield/grind.
                 // The live workflow alone survives an app restart but NOT a

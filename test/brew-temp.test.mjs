@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shiftedTemperatures, profileAtBrewTemp } from '../src/modules/brew-temp.js';
+import { shiftedTemperatures, profileAtBrewTemp, targetWeightProfilePatch, brewTempProfilePatch } from '../src/modules/brew-temp.js';
 
 test('shiftedTemperatures keeps every step at its distance from the first', () => {
     assert.deepEqual(shiftedTemperatures([94, 90, 88], 92), [92, 88, 86]);
@@ -49,4 +49,28 @@ test('an old flat saved value restores the shape from the original profile', () 
     // the saved override was 92 (the old tile wrote 92 on every step); the original is 94/90/88
     const original = { steps: [{ temperature: 94 }, { temperature: 90 }, { temperature: 88 }] };
     assert.deepEqual(profileAtBrewTemp(original, 92).steps.map(s => s.temperature), [92, 88, 86]);
+});
+
+test('targetWeightProfilePatch carries only target_weight', () => {
+    assert.deepEqual(targetWeightProfilePatch(36), { target_weight: 36 });
+    assert.deepEqual(targetWeightProfilePatch('36.5'), { target_weight: 36.5 });
+    for (const bad of [0, -1, NaN, null, undefined, 'x']) assert.equal(targetWeightProfilePatch(bad), null);
+});
+
+test('brewTempProfilePatch sends steps only, from the saved shape when it is the same profile', () => {
+    const live = { title: 'P', target_weight: 99, steps: [{ name: 'a', temperature: 92 }, { name: 'b', temperature: 92 }] };
+    const saved = { title: 'P', steps: [{ temperature: 94 }, { temperature: 90 }] };
+    const patch = brewTempProfilePatch(live, saved, 96);
+    assert.deepEqual(Object.keys(patch), ['steps']);
+    assert.deepEqual(patch.steps.map(s => s.temperature), [96, 92]);
+    assert.equal(patch.steps[0].name, 'a');
+    assert.equal(live.steps[0].temperature, 92);   // input untouched
+    // different profile / step count: the live steps give the shape
+    assert.deepEqual(brewTempProfilePatch(live, { title: 'Other', steps: saved.steps }, 90).steps.map(s => s.temperature), [90, 90]);
+});
+
+test('brewTempProfilePatch gives null without steps or a usable temperature', () => {
+    assert.equal(brewTempProfilePatch(null, null, 92), null);
+    assert.equal(brewTempProfilePatch({ steps: [] }, null, 92), null);
+    assert.equal(brewTempProfilePatch({ steps: [{ temperature: 90 }] }, null, 'x'), null);
 });
