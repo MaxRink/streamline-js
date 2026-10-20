@@ -192,7 +192,7 @@ export function renderStrip(mode) {
         });
         // Empty slots: one tap opens DYE2's editor on that slot to create a recipe.
         emptyRecipeSlots(recipeCache).slice(0, 5 - recipes.length).forEach(slot => {
-            strip.appendChild(makeCell('+', CELL_IDLE, () => editRecipe({ id: slot })));
+            strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot })));
         });
     }
     // Fit only once attached: wrapping depends on the real box width, which an
