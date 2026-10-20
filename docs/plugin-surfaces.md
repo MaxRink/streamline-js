@@ -83,6 +83,12 @@ __httpRequestHandler(request) {
 `POST /api/v1/plugins/<id>/enable`. Keep `version` the same or higher, Decaid rejects a downgrade.
 `GET /api/v1/plugins/<id>/skin` shows exactly what the skin will read.
 
+**A complete plugin.** [`plugins/shot-companion.reaplugin`](../plugins/shot-companion.reaplugin) uses a
+`header-button` with a `fit` overlay page (the current bean), a `shot-strip`, `tile-hint`s with `set` (last-shot
+values), a `tile-line`, and a `live` socket fed from `events.workflow` and `events.shots`.
+`test/shot-companion-plugin.test.mjs` runs it with a fake host and checks every answer with `parseSkinAnswer`; copy
+that test when you write your own.
+
 ## Worked example: a brew temperature offset
 
 A plugin that adds `°C | %` under **Brew**: any whole percent from -20 to 20, applied to every profile step so the

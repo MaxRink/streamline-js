@@ -89,6 +89,7 @@ npm test
 | Firmware UI state | `test/firmware-cancel.test.mjs` |
 | Version/manifest | `test/version.test.mjs` |
 | DYE2 source contracts | `test/dye2-plugin-source.test.mjs` |
+| Plugin surface parser, or the in-repo example plugin | `test/plugin-surfaces.test.mjs`, `test/shot-companion-plugin.test.mjs` (runs `plugins/shot-companion.reaplugin` through `parseSkinAnswer`) |
 | Feedback privacy | `test/feedback-privacy.test.mjs` |
 
 Use repository discovery to find additional matching tests; this table is routing, not an exhaustive inventory.
