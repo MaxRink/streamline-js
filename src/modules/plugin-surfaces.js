@@ -32,6 +32,8 @@ export const SET_LIMITS = {
 export const SET_FIELDS = Object.keys(SET_LIMITS);
 // `tile-sync`: the tiles a plugin may keep in step with a device, and the workflow field each one is.
 export const SYNC_TILES = { grind: 'grinderSetting' };
+// `telemetry-label` renames a label in the main page's telemetry row.
+export const TELEMETRY_LABELS = ['puck'];
 export const PRESENTATIONS = ['page', 'overlay'];
 // `size` on a tile hint, line or mode: how big its text is. Three fixed steps, never
 // pixels, so a plugin cannot break a tile's layout; `small` is the default and is
@@ -590,6 +592,12 @@ function parseSurface(raw) {
         if (value === null) return null;
         const label = cleanText(raw.label, CAPS.label);
         return { id, kind, tile: raw.tile, value, ...(label && { label }) };
+    }
+
+    // Renames a telemetry label ("Puck" -> "Coffee"). Nothing to tap, so no action.
+    if (kind === 'telemetry-label') {
+        const text = cleanText(raw.text, CAPS.label);
+        return TELEMETRY_LABELS.includes(raw.target) && text ? { id, kind, target: raw.target, text } : null;
     }
 
     if (kind === 'tile-mode') return parseMode(raw, id, action);

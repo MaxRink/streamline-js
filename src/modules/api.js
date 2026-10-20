@@ -10,6 +10,7 @@ import { buildCalibrateBody, classifyCalState } from './loadcell-cal.js';
 import { deriveDisplayAction, isScreensaverSuppressed } from './screensaver-policy.js';
 import { splitNdjson, advanceFirmwareState, initialFirmwareState } from './firmware-progress.js';
 import { parseSse } from './derek-stream.js';
+import { selectedRecipeSteamTemp } from './dye-selection.js';
 
 export let reaHostname = localStorage.getItem('reaHostname') || window.location.hostname;
 export const REA_PORT = 8080;
@@ -1846,6 +1847,16 @@ async function steamHeaterFor(duration) {
     // another app since we last remembered one, and is not ours to put back (#143).
     const current = (await getWorkflow().catch(() => null))?.steamSettings?.targetTemperature;
     if (current > 0) return {};
+    // A selected DYE2 recipe that carries a steam temperature wins over the
+    // remembered one (same DYE2 gate as recipeHoldsDial in profileManager.js).
+    if (localStorage.getItem('streamline.dye2Enabled') === 'true') {
+        const [sel, recipes] = await Promise.all([
+            getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => null),
+            getDye2KvArray('recipes').catch(() => null),
+        ]);
+        const recipeTemp = selectedRecipeSteamTemp(sel, recipes);
+        if (recipeTemp != null) return { targetTemperature: recipeTemp };
+    }
     const remembered = await readSharedValue(STEAM_TEMP_LAST_VALUE_KEY);
     return remembered > 0 ? { targetTemperature: Math.round(remembered) } : {};
 }

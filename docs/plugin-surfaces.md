@@ -162,6 +162,7 @@ Things a real plugin also has to decide, which the skin cannot do for it:
 | `menu-item` | the skin's long-press menus | `menu` (`shot-history`, `favourite` or `profile`), `label` (40), `action` (`open` or `call`, required); see Menu items |
 | `screensaver-button` | over the screensaver | `label` (required, 24), `image` (https), `action` (`open` only, required) |
 | `shot-strip` | the info row (Water, Steam, Tank, Clock, Weight) | `cells` (1–9), `show` (`shot` default, or `always`); see Shot strip |
+| `telemetry-label` | nothing drawn; renames a label in the telemetry row | `target` (`puck`), `text` (24) |
 | `tile-sync` | nothing drawn; keeps a tile in step with a device | `tile` (`grind`), `value` (a number, 0–9999), `label` (24); see Tile sync |
 | `ratio-action` | the "(1:x)" label under Drink | `title` (80), `action` (`open` or `call` with a fixed `value`, required) |
 | `tile-hint` | under a tile's value | `tile`, `text` (required, 24), `title` (80), `active`, `size`, `keepRatio`, `keepRatioMoves` |
@@ -265,6 +266,11 @@ A `screensaver-button` is drawn at the top centre of the screensaver, for a plug
 - It never wakes the machine and sends no machine command. A tap on it is not a tap on the saver, so the saver stays up. The saver is left only by waking the machine, which the plugin button does not do; the user taps the saver elsewhere, as before.
 - Pressing it brings the panel back to the user's brightness (display only) so the page can be read. With `overlay`, closing the dialog dims the panel again if the machine is still asleep. With `page`, the skin is left; on return the first snapshot raises the saver and dims again, and boot sends no wake.
 - It sits at the top right of the saver and is shown on every saver, the image saver and the black screen.
+
+## Telemetry label
+
+A `telemetry-label` renames the "Puck" label in the main page's telemetry row:
+`{ "id": "coffee", "kind": "telemetry-label", "target": "puck", "text": "Coffee" }`. The first plugin wins; without one the translated "Puck" returns. The shot strip's `puckTemp` cell is renamed separately with its own `label`.
 
 ## Tile sync
 

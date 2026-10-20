@@ -956,7 +956,19 @@ function wireOnce() {
     // DYE2 made while Streamline was idle appear (KV_CONTRACT "Freshness").
     const repoll = () => {
         if (document.hidden || !isDye2Enabled()) return;
-        loadDyeStripData().then(() => { if (currentMode !== 'P') renderStrip(currentMode); }).catch(() => {});
+        loadDyeStripData().then(async () => {
+            // DYE2 owns the arming: a selection cleared or changed inside it while this
+            // page sat idle must not leave a stale highlight. Only when nothing is
+            // armed here, and never over a tap that landed during the GET.
+            if (dye2RecordsDialIn && !activeItem) {
+                const before = activeItemId;
+                const seq = applySeq;
+                const sel = await getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => undefined);
+                if (sel === undefined || activeItemId !== before || applySeq !== seq) return;
+                activeItemId = armedSelectionId(sel, { recipes: recipeCache, favs: favCache });
+            }
+            if (currentMode !== 'P') renderStrip(currentMode);
+        }).catch(() => {});
     };
     window.addEventListener('focus', repoll);
     // A plugin said the workflow changed (DYE2 may have written it). Leading call

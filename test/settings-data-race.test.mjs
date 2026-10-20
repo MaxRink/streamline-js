@@ -172,3 +172,31 @@ test('a staged zero is kept, not treated as absent', () => {
     // something, so a falsy check instead of a key check would drop them.
     assert.equal(mergeStagedOverFetched({ fan: 40 }, { fan: 0 }).fan, 0);
 });
+
+const stageWorkflowField = (() => {
+    const match = settingsSource.match(/export function stageWorkflowField\(pending, block, key, value\) \{[\s\S]*?\r?\n\}/);
+    assert.ok(match, 'stageWorkflowField not found in settings.js');
+    return new Function(`${match[0].replace('export ', '')}\nreturn stageWorkflowField;`)();
+})();
+
+test('staging one workflow field stages only that key, then adds others', () => {
+    const pending = {};
+    stageWorkflowField(pending, 'steamSettings', 'flow', 1.5);
+    assert.deepEqual(pending, { steamSettings: { flow: 1.5 } });
+    stageWorkflowField(pending, 'steamSettings', 'duration', 0);
+    assert.deepEqual(pending, { steamSettings: { flow: 1.5, duration: 0 } });
+});
+
+test('workflow blocks are staged separately', () => {
+    const pending = {};
+    stageWorkflowField(pending, 'steamSettings', 'flow', 1.5);
+    stageWorkflowField(pending, 'hotWaterData', 'volume', 100);
+    assert.deepEqual(pending, { steamSettings: { flow: 1.5 }, hotWaterData: { volume: 100 } });
+});
+
+test('a partially staged block keeps the fetched duration', () => {
+    const pending = {};
+    stageWorkflowField(pending, 'steamSettings', 'flow', 1.5);
+    const merged = mergeStagedOverFetched({ duration: 35, flow: 1 }, pending.steamSettings);
+    assert.deepEqual(merged, { duration: 35, flow: 1.5 });
+});

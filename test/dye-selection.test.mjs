@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
-    parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId,
+    parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -129,4 +129,33 @@ test('armedSelectionId: the cached item own id, or null when it is gone', () => 
     assert.equal(armedSelectionId(null, lists), null);
     assert.equal(armedSelectionId({ kind: 'recipe' }, lists), null);
     assert.equal(armedSelectionId({ kind: 'recipe', id: '2' }, { recipes: undefined, favs: [] }), null);
+});
+
+test('profileFingerprint: limiter {value:0}, null and absent hash the same; a real limit differs', () => {
+    const withLimiter = limiter => ({ ...profile, steps: [{ name: 'fill', temperature: 90, ...(limiter === undefined ? {} : { limiter }) }] });
+    const missing = profileFingerprint(withLimiter(undefined));
+    assert.equal(profileFingerprint(withLimiter({ value: 0, range: 0.6 })), missing);
+    assert.equal(profileFingerprint(withLimiter(null)), missing);
+    assert.notEqual(profileFingerprint(withLimiter({ value: 1.5, range: 0.6 })), missing);
+});
+
+test('profileDrifted: an item fingerprinted with a 0 limiter does not drift against a null limiter', () => {
+    const zero = { ...profile, steps: [{ name: 'fill', limiter: { value: 0, range: 0.6 } }] };
+    const none = { ...profile, steps: [{ name: 'fill', limiter: null }] };
+    assert.equal(profileDrifted({ profileFingerprint: profileFingerprint(zero) }, { profile: none }), false);
+});
+
+test('armedSelectionId: an empty selection object arms nothing', () => {
+    assert.equal(armedSelectionId({}, { recipes: [{ id: '1' }], favs: [{ id: 7 }] }), null);
+});
+
+test('selectedRecipeSteamTemp: the selected recipe steam temperature, or null', () => {
+    const recipes = [{ id: '2', dashboardVariables: { steamTempC: 140.4 } }, { id: '3', dashboardVariables: { steamTempC: 0 } }, { id: '4' }];
+    assert.equal(selectedRecipeSteamTemp({ kind: 'recipe', id: 2 }, recipes), 140);
+    assert.equal(selectedRecipeSteamTemp({ kind: 'recipe', id: '3' }, recipes), null, 'below 135 is off, not a temperature');
+    assert.equal(selectedRecipeSteamTemp({ kind: 'recipe', id: '4' }, recipes), null);
+    assert.equal(selectedRecipeSteamTemp({ kind: 'recipe', id: '9' }, recipes), null);
+    assert.equal(selectedRecipeSteamTemp({ kind: 'favourite', id: '2' }, recipes), null);
+    assert.equal(selectedRecipeSteamTemp(null, recipes), null);
+    assert.equal(selectedRecipeSteamTemp({ kind: 'recipe', id: '2' }, null), null);
 });

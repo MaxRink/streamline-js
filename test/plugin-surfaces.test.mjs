@@ -733,6 +733,14 @@ test('shot-strip: col and span parse as grid integers and place the cells', () =
     });
 }
 
+test('telemetry-label: puck only, short text, first one wins', () => {
+    const lab = (o = {}) => ok([{ id: 'l', kind: 'telemetry-label', target: 'puck', text: 'Coffee', ...o }]);
+    assert.deepEqual(lab(), [{ id: 'l', kind: 'telemetry-label', target: 'puck', text: 'Coffee' }]);
+    assert.equal(lab({ target: 'water' }).length, 0);
+    assert.equal(lab({ text: '' }).length, 0);
+    assert.equal(lab({ text: 'x'.repeat(40) })[0].text.length, 24);
+});
+
 test('tile-sync: only the grind tile, a number clamped to the field, first one wins', () => {
     const sync = (o = {}) => ok([{ id: 'g', kind: 'tile-sync', tile: 'grind', value: 200, ...o }]);
     assert.deepEqual(sync(), [{ id: 'g', kind: 'tile-sync', tile: 'grind', value: 200 }]);

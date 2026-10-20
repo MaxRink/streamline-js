@@ -26,3 +26,9 @@ test('a yield changed while asleep is not a different profile', () => {
     const mark = sleepProfileMark({ profile: a });
     assert.equal(shouldApplyWakeProfile(mark, { profile: { ...a, target_weight: 42 } }), true);
 });
+
+test('a sleep mark taken with a 0 limiter matches the live profile reporting null', () => {
+    const zero = { ...a, steps: [{ ...a.steps[0], limiter: { value: 0, range: 0.6 } }] };
+    const none = { ...a, steps: [{ ...a.steps[0], limiter: null }] };
+    assert.equal(shouldApplyWakeProfile(sleepProfileMark({ profile: zero }), { profile: none }), true);
+});

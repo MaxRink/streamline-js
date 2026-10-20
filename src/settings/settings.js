@@ -262,6 +262,13 @@ export function mergeStagedOverFetched(fetched, staged) {
     return { ...fetched, ...staged };
 }
 
+// Stage one field of a workflow block (steamSettings / hotWaterData). Only the
+// edited keys are staged, so a flush never rewrites fields the user left alone
+// with a stale snapshot from the cache.
+export function stageWorkflowField(pending, block, key, value) {
+    pending[block] = { ...(pending[block] || {}), [key]: value };
+}
+
 async function flushPendingChanges() {
     const tasks = [];
     if (Object.keys(pendingChanges.rea).length) tasks.push(setReaSettings(pendingChanges.rea));
@@ -631,8 +638,7 @@ export function updateSteamSetting(key, value) {
     if (!settingsCache.workflow) settingsCache.workflow = {};
     if (!settingsCache.workflow.steamSettings) settingsCache.workflow.steamSettings = {};
     settingsCache.workflow.steamSettings[key] = value;
-    if (!pendingChanges.workflow.steamSettings) pendingChanges.workflow.steamSettings = { ...(settingsCache.workflow.steamSettings) };
-    pendingChanges.workflow.steamSettings[key] = value;
+    stageWorkflowField(pendingChanges.workflow, 'steamSettings', key, value);
 }
 
 // Update hot water settings via workflow API
@@ -640,8 +646,7 @@ export function updateHotWaterSetting(key, value) {
     if (!settingsCache.workflow) settingsCache.workflow = {};
     if (!settingsCache.workflow.hotWaterData) settingsCache.workflow.hotWaterData = {};
     settingsCache.workflow.hotWaterData[key] = value;
-    if (!pendingChanges.workflow.hotWaterData) pendingChanges.workflow.hotWaterData = { ...(settingsCache.workflow.hotWaterData) };
-    pendingChanges.workflow.hotWaterData[key] = value;
+    stageWorkflowField(pendingChanges.workflow, 'hotWaterData', key, value);
 }
 
 
@@ -8002,8 +8007,8 @@ async function _preloadSettingsInternal() {
         // Handle Workflow result
         if (workflowResult.status === 'fulfilled') {
             const workflow = workflowResult.value;
-            // Steam and hot water stage a full copy of their block, so the
-            // staged block replaces the fetched one field by field.
+            // Steam and hot water stage only the edited keys, laid over the
+            // fetched block so untouched fields keep the machine's value.
             if (workflow && typeof workflow === 'object') {
                 if (pendingChanges.workflow.steamSettings) {
                     workflow.steamSettings = mergeStagedOverFetched(

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { decideResync } from '../src/modules/resync-policy.js';
 import { profileAtBrewTemp } from '../src/modules/brew-temp.js';
+import { selectedRecipeSteamTemp } from '../src/modules/dye-selection.js';
 
 // Persistence of the user's main-page settings: the shared KV record that
 // outranks a drifted workflow (milk stop, plus the resync rule every tile value
@@ -190,11 +191,12 @@ const TRACKING = [
 
     // `remembered` is the KV record of the last enabled temperature; `machineTemp`
     // is what the workflow currently holds.
-    const build = (remembered, machineTemp = 150) => {
+    const build = (remembered, machineTemp = 150, dye = {}) => {
         const kvWrites = [];
         const workflowWrites = [];
         const api = new Function(
             'logger', 'persistSharedValue', 'persistLastValue', 'updateWorkflow', 'getWorkflow', 'getValueFromStore', 'openDB', 'getSetting',
+            'localStorage', 'getKVValue', 'getDye2KvArray', 'DYE2_KV_NAMESPACE', 'selectedRecipeSteamTemp',
             `const isAutoSteamActive = () => false; ${body}\nreturn { setTargetSteamDuration, setTargetSteamTemp };`,
         )(
             { warn() {}, error() {} },
@@ -205,6 +207,11 @@ const TRACKING = [
             async () => remembered,
             async () => {},
             async () => remembered,
+            { getItem: () => (dye.enabled ? 'true' : null) },
+            async () => dye.selection ?? null,
+            async () => dye.recipes ?? null,
+            'dye2.reaplugin',
+            selectedRecipeSteamTemp,
         );
         return { api, kvWrites, workflowWrites };
     };
@@ -228,6 +235,30 @@ const TRACKING = [
 
     test('a temperature set outside Streamline while steam is on is not overridden (#143)', async () => {
         const { api, workflowWrites } = build(150, 140);
+        await api.setTargetSteamDuration(30);
+        assert.deepEqual(workflowWrites, [{ steamSettings: { duration: 30 } }]);
+    });
+
+    test('a selected recipe steam temperature beats the remembered one on re-arm', async () => {
+        const dye = { enabled: true, selection: { kind: 'recipe', id: '2' }, recipes: [{ id: '2', dashboardVariables: { steamTempC: 140 } }] };
+        const { api, workflowWrites } = build(150, 0, dye);
+        await api.setTargetSteamDuration(30);
+        assert.deepEqual(workflowWrites, [{ steamSettings: { duration: 30, targetTemperature: 140 } }]);
+    });
+
+    test('DYE2 disabled or nothing selected falls back to the remembered temperature', async () => {
+        const recipes = [{ id: '2', dashboardVariables: { steamTempC: 140 } }];
+        const off = build(150, 0, { enabled: false, selection: { kind: 'recipe', id: '2' }, recipes });
+        await off.api.setTargetSteamDuration(30);
+        assert.deepEqual(off.workflowWrites, [{ steamSettings: { duration: 30, targetTemperature: 150 } }]);
+        const none = build(150, 0, { enabled: true, recipes });
+        await none.api.setTargetSteamDuration(30);
+        assert.deepEqual(none.workflowWrites, [{ steamSettings: { duration: 30, targetTemperature: 150 } }]);
+    });
+
+    test('a recipe steam temperature does not override a heater already on (#143)', async () => {
+        const dye = { enabled: true, selection: { kind: 'recipe', id: '2' }, recipes: [{ id: '2', dashboardVariables: { steamTempC: 140 } }] };
+        const { api, workflowWrites } = build(150, 145, dye);
         await api.setTargetSteamDuration(30);
         assert.deepEqual(workflowWrites, [{ steamSettings: { duration: 30 } }]);
     });

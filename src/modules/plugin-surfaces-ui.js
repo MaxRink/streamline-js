@@ -9,6 +9,7 @@
 import { getScaleReading, getEspressoEndedAt, getPlugins, callPluginEndpoint, connectPluginPush, closePluginPush, API_BASE_URL, currentMachineState, restoreDisplay, dimDisplay } from './api.js';
 import { isMachineAsleep } from './screensaver-policy.js';
 import { logger } from './logger.js';
+import { getTranslation, fitTelemetry } from './i18n.js';
 import { parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants,
     nextStepSize, resolveStepSize, formatStepSize, STEPSIZE_MAX, parseNumpadInput, fitNumpadValue, SURFACE_SIZES, SYNC_TILES, scaleDoseFor, fitOverlaySize } from './plugin-surfaces.js';
 import { setShotStrip } from './plugin-shot-strip.js';
@@ -820,7 +821,7 @@ function render(rawEntries) {
         if (mainHidden) continue;
         if (surface.kind === 'tile-mode') continue; // drawn per tile below
         if (surface.kind === 'menu-item') continue; // listed in plugin-menu-items.js, drawn by the menus
-        if (surface.kind === 'tile-sync') continue; // nothing drawn; applied by syncTiles()
+        if (surface.kind === 'tile-sync' || surface.kind === 'telemetry-label') continue; // nothing drawn; applied by syncTiles() / applyTelemetryLabels()
         if (surface.kind === 'ratio-action') {
             if (!ratioUndo) placeRatioAction(plugin, surface); // first plugin wins
             continue;
@@ -874,6 +875,31 @@ function syncTiles(entries) {
     }
 }
 
+// `telemetry-label`: renames the label in the telemetry row. First plugin wins; with none,
+// the original (translated) label comes back. Runs on every read: it is idempotent.
+const TELEMETRY_SPANS = { puck: '#puck-info-container span' };
+function applyTelemetryLabels(entries) {
+    const wanted = new Map();
+    for (const { surface } of entries) {
+        if (surface.kind === 'telemetry-label' && !wanted.has(surface.target)) wanted.set(surface.target, surface.text);
+    }
+    for (const [target, selector] of Object.entries(TELEMETRY_SPANS)) {
+        const span = document.querySelector(selector);
+        if (!span) continue;
+        const text = wanted.get(target);
+        if (text) { // drop the key so the translator leaves the plugin's word alone
+            if (span.dataset.i18nKey) { span.dataset.i18nOrigKey = span.dataset.i18nKey; span.removeAttribute('data-i18n-key'); }
+            span.textContent = text;
+            fitTelemetry();
+        } else if (span.dataset.i18nOrigKey) {
+            span.setAttribute('data-i18n-key', span.dataset.i18nOrigKey);
+            delete span.dataset.i18nOrigKey;
+            span.textContent = getTranslation(span.getAttribute('data-i18n-key'));
+            fitTelemetry();
+        }
+    }
+}
+
 export async function refreshPluginSurfaces() {
     if (running) { refreshAgain = true; return; } // e.g. a mode call finished mid-read
     running = true;
@@ -890,6 +916,7 @@ export async function refreshPluginSurfaces() {
         }
         syncLive(live);
         syncTiles(entries);
+        applyTelemetryLabels(entries);
         // Only entries that can run: a call needs an endpoint the plugin declares, an open
         // needs its `ui` page. An entry that does nothing when tapped is worse than none.
         setMenuEntries(entries.filter(e => e.surface.kind === 'menu-item' && (e.surface.action?.type === 'call'
