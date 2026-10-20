@@ -24,6 +24,7 @@ import { applyWorkflowToMainPageUI } from './profileManager.js';
 import { logger } from './logger.js';
 import { fitTextToBox } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
+import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
 import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } from './dye-context.js';
 import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, armedSelectionId } from './dye-selection.js';
@@ -125,12 +126,30 @@ function makeCell(label, extraClass, onClick, onLongPress) {
     btn.className = CELL_BASE + extraClass;
     btn.textContent = label;
     if (onLongPress) {
-        btn.title = 'Long-press to edit in DYE2';
-        setupPressAndHold(btn, onClick || (() => {}), onLongPress);
+        btn.title = 'Long-press for options';
+        setupPressAndHold(btn, onClick || (() => {}), () => onLongPress(btn));
     } else if (onClick) {
         btn.addEventListener('click', onClick);
     }
     return btn;
+}
+
+// Long-press menu on an R / F cell: jump into DYE2's editor, or (selected cell only)
+// stop DYE2 recording dashboard changes onto the item, for a one-off change.
+function openCellMenu(btn, isActive, edit) {
+    const items = [{ label: 'Edit in DYE2', onSelect: edit }];
+    if (isActive) items.push({ label: 'Clear selection', onSelect: clearSelection });
+    openContextMenu(btn, items);
+}
+
+function clearSelection() {
+    applySeq++; // stop an arm still retrying in the background
+    activeItemId = null;
+    clearActiveItem();
+    forgetParkedSelection();
+    if (dye2Armed || dye2RecordsDialIn) postSelection('', null).catch(() => {});
+    dye2Armed = false;
+    if (currentMode !== 'P') renderStrip(currentMode);
 }
 
 export function renderStrip(mode) {
@@ -146,7 +165,7 @@ export function renderStrip(mode) {
                 activeItemId = fav.id;
                 renderStrip('F');
                 applyFavourite(fav).catch(e => logger.error('applyFavourite failed', e));
-            }, () => editFavourite(fav));
+            }, btn => openCellMenu(btn, fav.id === activeItemId, () => editFavourite(fav)));
             strip.appendChild(cell);
         });
         // Trailing "VIEW ALL AUTO FAV" cell (always present, opens the DYE2 page).
@@ -172,7 +191,7 @@ export function renderStrip(mode) {
                 activeItemId = recipe.id;
                 renderStrip('R');
                 applyRecipe(recipe).catch(e => logger.error('applyRecipe failed', e));
-            }, () => editRecipe(recipe));
+            }, btn => openCellMenu(btn, recipe.id === activeItemId, () => editRecipe(recipe)));
             strip.appendChild(cell);
         });
     }
