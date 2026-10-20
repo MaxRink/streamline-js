@@ -96,7 +96,10 @@ test('Save changes is offered on the selected cell only', () => {
     const body = menu.slice(0, menu.indexOf('\n}\n'));
 
     assert.ok(body.includes("item.id === activeItemId"), 'the entry is gated on being selected');
-    assert.ok(/selected \? \[\{ label: 'Save changes'/.test(body), 'and only then listed');
+    assert.ok(body.includes('dye2RecordsDialIn') && body.includes('!activeItem'),
+        'and only against a DYE2 that records, with no legacy auto-save item armed');
+    assert.ok(/selected \? \[\{ label: getTranslation\('Save changes'\)/.test(body), 'and only then listed');
+    assert.ok(body.includes("getTranslation('Edit in DYE2')"), 'labels are translated');
     assert.ok(!body.includes("'Clear selection'"),
         'Clear selection is gone: with opt-in recording there is nothing to disarm');
     assert.ok(body.includes("getTranslation('Clear button')"), 'Clear button stays');
@@ -114,4 +117,57 @@ test('saveChanges asks DYE2 to record and does not write the item itself', () =>
     assert.ok(!body.includes('saveItemFields') && !body.includes('setDye2KvArray'),
         'the skin writes nothing itself');
     assert.ok(body.includes('No changes to save'), 'saved:false is reported, not silent');
+});
+
+function buildSave({ status = 200, json = { saved: true }, updated = false } = {}) {
+    const state = { toasts: [], loads: 0, renders: [], posts: [], updates: 0 };
+    const saveBody = lift([/async function saveChanges\([\s\S]*?\r?\n\}/]);
+    const api = new Function(
+        'PLUGIN_BASE', 'fetch', 'logger', 'showToast', 'recipeLabel', 'favLabel', 'loadDyeStripData', 'renderStrip', 'currentMode', 'updateDye2Now',
+        `${saveBody}\nreturn { saveChanges };`
+    )(
+        '/p',
+        async (url, opts) => { state.posts.push({ url, opts }); return { status, ok: status >= 200 && status < 300, json: async () => json }; },
+        { info() {}, error() {}, warn() {} },
+        (msg, _d, type) => state.toasts.push({ msg, type }),
+        (r) => r.title, (f) => f.title,
+        async () => { state.loads++; },
+        (m) => state.renders.push(m),
+        'R',
+        async () => { state.updates++; return updated; },
+    );
+    return { api, state };
+}
+
+test('saveChanges reloads the caches and re-renders when DYE2 saved something', async () => {
+    const { api, state } = buildSave();
+    await api.saveChanges('recipe', { id: '1', title: 'A' });
+    assert.equal(state.posts[0].url, '/p/record');
+    assert.equal(state.loads, 1);
+    assert.deepEqual(state.renders, ['R']);
+    assert.equal(state.toasts[0].msg, 'A updated');
+});
+
+test('saveChanges with saved:false leaves the caches alone', async () => {
+    const { api, state } = buildSave({ json: { saved: false } });
+    await api.saveChanges('recipe', { id: '1', title: 'A' });
+    assert.equal(state.loads, 0);
+    assert.deepEqual(state.renders, []);
+    assert.equal(state.toasts[0].msg, 'No changes to save');
+});
+
+test('saveChanges on a DYE2 without /record asks for an update', async () => {
+    const { api, state } = buildSave({ status: 404 });
+    await api.saveChanges('favourite', { id: 'f', title: 'F' });
+    assert.equal(state.updates, 1, 'it tries to update DYE2 itself first');
+    assert.equal(state.posts.length, 1, 'no retry when nothing was updated');
+    assert.equal(state.toasts[0].msg, 'Update DYE2 to save changes');
+    assert.equal(state.loads, 0);
+});
+
+test('saveChanges retries once after DYE2 auto-updated', async () => {
+    const { api, state } = buildSave({ status: 404, updated: true });
+    await api.saveChanges('favourite', { id: 'f', title: 'F' });
+    assert.equal(state.updates, 1);
+    assert.equal(state.posts.length, 2, 'one retry, no loop');
 });

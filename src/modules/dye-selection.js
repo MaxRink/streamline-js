@@ -182,12 +182,49 @@ export function selectedRecipeSteamTemp(sel, recipes) {
 }
 
 /**
- * Recipe slots ('1'..'5', DYE2 KV_CONTRACT) that hold no recipe at all, lowest first.
- * The strip shows one empty cell per slot so a tap opens DYE2's editor on it.
+ * The R strip as fixed positional slots, like the profile strip: recipe ids are the
+ * slots '1'..'5' (DYE2 KV_CONTRACT), so a recipe sits at its own id's position and
+ * clearing one (showOnStreamlineDashboard:false) leaves a blank in place instead of
+ * shifting the others left. Visible recipes with an id outside 1..5 (legacy data)
+ * fill the remaining blanks in order. Returns [{ slot: '1'..'5', recipe: obj|null }].
  */
-export function emptyRecipeSlots(recipes, count = 5) {
-    const used = new Set((Array.isArray(recipes) ? recipes : []).filter(Boolean).map(r => String(r.id)));
-    const out = [];
-    for (let i = 1; i <= count; i++) if (!used.has(String(i))) out.push(String(i));
-    return out;
+export function recipeStripCells(recipes, count = 5) {
+    const cells = Array.from({ length: count }, (_, i) => ({ slot: String(i + 1), recipe: null }));
+    const visible = (Array.isArray(recipes) ? recipes : [])
+        .filter(r => r && typeof r === 'object' && r.showOnStreamlineDashboard !== false);
+    const strays = [];
+    for (const recipe of visible) {
+        const n = parseInt(recipe.id, 10);
+        const cell = String(recipe.id) === String(n) ? cells[n - 1] : undefined;
+        if (!cell) strays.push(recipe);
+        else if (!cell.recipe) cell.recipe = recipe;
+    }
+    for (const recipe of strays) {
+        const blank = cells.find(c => !c.recipe);
+        if (!blank) break;
+        blank.recipe = recipe;
+    }
+    return cells;
+}
+
+/** Favourites in strip order: favSlot first, then capturedAt. Hidden ones included. */
+export function sortFavs(favs) {
+    return (Array.isArray(favs) ? favs : [])
+        .filter(f => f && typeof f === 'object')
+        .sort((a, b) => {
+            const sa = a.favSlot ?? Infinity, sb = b.favSlot ?? Infinity;
+            if (sa !== sb) return sa - sb;
+            return String(a.capturedAt || '').localeCompare(String(b.capturedAt || ''));
+        });
+}
+
+/**
+ * The F strip as fixed positions: the first `max` favourites (hidden ones included)
+ * define the cells, and a favourite cleared off the strip (alwaysOnDashboard:false)
+ * stays a gap rather than letting later ones shift left or back-fill from beyond max.
+ * Returns [{ fav: visible fav | null, hidden: the hidden fav of a gap | null }].
+ */
+export function favStripCells(favs, max = 4) {
+    return sortFavs(favs).slice(0, max).map(f =>
+        f.alwaysOnDashboard === false ? { fav: null, hidden: f } : { fav: f, hidden: null });
 }

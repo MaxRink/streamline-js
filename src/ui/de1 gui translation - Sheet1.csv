@@ -1830,3 +1830,6 @@ No profile data found.,,,,,未找到曲线数据。,未找到曲线数据。,프
 Returning to selector.,,,,,返回选择页面。,返回選擇介面。,선택 화면으로 돌아갑니다.,,,,,,Vender tilbage til valg,Återgår till väljare,Returnerer til velger,,,,,,,,,,,,,,,,
 Select a firmware file.,,,,,选择固件文件。,選擇韌體檔案。,펌웨어 파일을 선택하세요.,,,,,,Vælg en firmwarefil,Välj en firmwarefil,Velg en firmwarefil,,,,,,,,,,,,,,,,
 Restart the machine once the update is done.,,,,,更新完成后请重启机器。,更新完成後請重新啟動機器。,업데이트가 완료되면 머신을 재시작해주세요.,,,,,,Genstart maskinen når opdateringen er færdig,Starta om maskinen när uppdateringen är klar,Start maskinen på nytt når oppdateringen er ferdig,,,,,,,,,,,,,,,,
+Clear button,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Save changes,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Edit in DYE2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

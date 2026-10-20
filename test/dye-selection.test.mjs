@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
-    parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp, emptyRecipeSlots,
+    parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp, recipeStripCells, favStripCells,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -167,9 +167,54 @@ test('selectedRecipeSteamTemp: the selected recipe steam temperature, or null', 
     assert.equal(selectedRecipeSteamTemp({ kind: 'recipe', id: '2' }, null), null);
 });
 
-test('emptyRecipeSlots lists the unused slots 1..5', () => {
-    assert.deepEqual(emptyRecipeSlots([]), ['1', '2', '3', '4', '5']);
-    assert.deepEqual(emptyRecipeSlots(null), ['1', '2', '3', '4', '5']);
-    assert.deepEqual(emptyRecipeSlots([{ id: '1' }, { id: 3 }]), ['2', '4', '5']);
-    assert.deepEqual(emptyRecipeSlots([1, 2, 3, 4, 5].map(id => ({ id }))), []);
+const recipeIds = cells => cells.map(c => c.recipe && String(c.recipe.id));
+
+test('recipeStripCells places each recipe at its id slot whatever the KV order', () => {
+    const cells = recipeStripCells([{ id: '3' }, { id: 1 }]);
+    assert.deepEqual(cells.map(c => c.slot), ['1', '2', '3', '4', '5']);
+    assert.deepEqual(recipeIds(cells), ['1', null, '3', null, null]);
+});
+
+test('recipeStripCells leaves a hidden recipe as a blank and moves nothing', () => {
+    const recipes = [1, 2, 3, 4, 5].map(id => ({ id: String(id), showOnStreamlineDashboard: id === 2 ? false : undefined }));
+    assert.deepEqual(recipeIds(recipeStripCells(recipes)), ['1', null, '3', '4', '5']);
+});
+
+test('recipeStripCells gives five blanks for null or garbage input', () => {
+    for (const bad of [null, undefined, 'x', {}, [null, 7, 'a']]) {
+        assert.deepEqual(recipeIds(recipeStripCells(bad)), [null, null, null, null, null]);
+    }
+});
+
+test('recipeStripCells puts an out-of-range id into the first blank, and a duplicate id once', () => {
+    assert.deepEqual(recipeIds(recipeStripCells([{ id: 'x' }, { id: '1' }, { id: '3' }])), ['1', 'x', '3', null, null]);
+    const dup = recipeStripCells([{ id: '2', title: 'first' }, { id: '2', title: 'second' }]);
+    assert.equal(dup[1].recipe.title, 'first');
+    assert.equal(dup.filter(c => c.recipe).length, 1, 'the duplicate is dropped, not placed twice');
+});
+
+test('favStripCells sorts by favSlot then capturedAt', () => {
+    const cells = favStripCells([
+        { id: 'c', capturedAt: '2' },
+        { id: 'b', capturedAt: '1' },
+        { id: 'a', favSlot: 1, capturedAt: '9' },
+    ]);
+    assert.deepEqual(cells.map(c => c.fav.id), ['a', 'b', 'c']);
+    assert.ok(cells.every(c => c.hidden === null));
+});
+
+test('favStripCells keeps a hidden favourite as a gap and shifts nothing', () => {
+    const favs = ['a', 'b', 'c', 'd', 'e'].map((id, i) => ({ id, favSlot: i, alwaysOnDashboard: id === 'b' ? false : undefined }));
+    const cells = favStripCells(favs);
+    assert.equal(cells.length, 4);
+    assert.deepEqual(cells.map(c => c.fav && c.fav.id), ['a', null, 'c', 'd']);
+    assert.equal(cells[1].hidden.id, 'b');
+});
+
+test('favStripCells does not back-fill from beyond max, and handles short or empty lists', () => {
+    const favs = [{ id: 'a', favSlot: 0, alwaysOnDashboard: false }, { id: 'b', favSlot: 1 }, { id: 'c', favSlot: 2 }, { id: 'd', favSlot: 3 }, { id: 'e', favSlot: 4 }];
+    assert.deepEqual(favStripCells(favs).map(c => c.fav && c.fav.id), [null, 'b', 'c', 'd']);
+    assert.equal(favStripCells([{ id: 'a' }, { id: 'b' }]).length, 2);
+    assert.deepEqual(favStripCells([]), []);
+    assert.deepEqual(favStripCells(null), []);
 });
