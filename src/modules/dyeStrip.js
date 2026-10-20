@@ -22,10 +22,10 @@
 import { API_BASE_URL, getWorkflow, updateWorkflow, getDye2KvArray, setDye2KvArray, getKVValue, DYE2_KV_NAMESPACE, onWorkflowUpdated, getPlugins, installPluginFromRelease, enablePlugin, checkPluginUpdates, approvePluginUpdate, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, HOT_WATER_VOLUME_LAST_VALUE_KEY, HOT_WATER_TEMP_LAST_VALUE_KEY, STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, getProfiles } from './api.js';
 import { applyWorkflowToMainPageUI } from './profileManager.js';
 import { logger } from './logger.js';
-import { fitTextToBox } from './i18n.js';
+import { fitTextToBox, getTranslation } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
-import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode } from './ui.js';
+import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode, showToast } from './ui.js';
 import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } from './dye-context.js';
 import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, armedSelectionId, emptyRecipeSlots } from './dye-selection.js';
 
@@ -137,11 +137,38 @@ function makeCell(label, extraClass, onClick, onLongPress) {
 // Long-press menu on an R / F cell: jump into DYE2's editor, or (selected cell only)
 // stop DYE2 recording dashboard changes onto its selection, for a one-off change.
 // Clear is on every cell: the highlight can lag DYE2's real selection.
-function openCellMenu(btn, edit) {
+function openCellMenu(btn, edit, kind, item) {
     openContextMenu(btn, [
         { label: 'Edit in DYE2', onSelect: edit },
         { label: 'Clear selection', onSelect: clearSelection },
+        { divider: true },
+        { label: getTranslation('Clear button'), danger: true, onSelect: () => clearCell(kind, item) },
     ]);
+}
+
+// Take the item off its strip button, the way the profile strip's own "Clear button" frees a
+// favourite slot. DYE2 owns the flag -- showOnStreamlineDashboard for a recipe,
+// alwaysOnDashboard for a favourite -- and both default to shown when absent, so clearing
+// means writing false rather than deleting anything. The item itself is untouched: it stays in
+// DYE2 and can be put back from its editor.
+async function clearCell(kind, item) {
+    const label = kind === 'recipe' ? recipeLabel(item) : favLabel(item);
+    const field = kind === 'recipe' ? 'showOnStreamlineDashboard' : 'alwaysOnDashboard';
+    try {
+        if (!(await saveItemTopLevel(kind, item.id, { [field]: false }))) {
+            showToast(`${label} is no longer in DYE2`, 2000, 'info');
+            return;
+        }
+    } catch (e) {
+        logger.error('dyeStrip: clear button failed', e);
+        showToast(`Could not clear ${label}`, 2400, 'error');
+        return;
+    }
+    // An item that is no longer on the strip must not stay armed for dial-in recording.
+    // clearSelection re-renders for us; otherwise do it here.
+    if (item.id != null && item.id === activeItemId) clearSelection();
+    else if (currentMode !== 'P') renderStrip(currentMode);
+    showToast(`${label} cleared`, 2000, 'info');
 }
 
 function clearSelection() {
@@ -167,7 +194,7 @@ export function renderStrip(mode) {
                 activeItemId = fav.id;
                 renderStrip('F');
                 applyFavourite(fav).catch(e => logger.error('applyFavourite failed', e));
-            }, btn => openCellMenu(btn, () => editFavourite(fav)));
+            }, btn => openCellMenu(btn, () => editFavourite(fav), 'favourite', fav));
             strip.appendChild(cell);
         });
         // Trailing "VIEW ALL AUTO FAV" cell (always present, opens the DYE2 page).
@@ -187,11 +214,13 @@ export function renderStrip(mode) {
                 activeItemId = recipe.id;
                 renderStrip('R');
                 applyRecipe(recipe).catch(e => logger.error('applyRecipe failed', e));
-            }, btn => openCellMenu(btn, () => editRecipe(recipe)));
+            }, btn => openCellMenu(btn, () => editRecipe(recipe), 'recipe', recipe));
             strip.appendChild(cell);
         });
         // Empty slots: one tap opens DYE2's editor on that slot to create a recipe.
-        emptyRecipeSlots(recipeCache).slice(0, 5 - recipes.length).forEach(slot => {
+        // visibleRecipes, not the whole cache: a recipe cleared off the strip frees its slot,
+        // so the blank cell returns and a tap can put something back on it.
+        emptyRecipeSlots(recipes).slice(0, 5 - recipes.length).forEach(slot => {
             strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot })));
         });
     }
@@ -1340,6 +1369,22 @@ async function saveItemFields(kind, id, fields) {
     await setDye2KvArray(target.key, next);
     if (kind === 'recipe') recipeCache = next; else favCache = next; // keep the strip's own cache in step
     logger.info(`dyeStrip: auto-saved to ${kind} ${id}: ${Object.keys(fields).join(', ')}`);
+}
+
+// saveItemFields' sibling for the item's own top-level fields: the strip-visibility flags live
+// there, not inside snapshot / dashboardVariables. Same read-modify-write, same reason.
+// Returns false when the item has gone from DYE2 since the strip read it.
+async function saveItemTopLevel(kind, id, fields) {
+    const key = kind === 'recipe' ? RECIPES_KEY : AF_KEY;
+    const list = await getDye2KvArray(key);
+    const idx = list.findIndex(r => r && String(r.id) === String(id));
+    if (idx === -1) return false;
+    const next = list.slice();
+    next[idx] = { ...next[idx], ...fields };
+    await setDye2KvArray(key, next);
+    if (kind === 'recipe') recipeCache = next; else favCache = next; // keep the strip's cache in step
+    logger.info(`dyeStrip: cleared ${kind} ${id} off the strip`);
+    return true;
 }
 
 // Strip DYE2's return param: one-shot, a reload must not replay it. A DYE2 that
