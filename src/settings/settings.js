@@ -8,6 +8,7 @@ import { getTempUnit, setTempUnit, formatTemp, fromDisplayTemp, boundToDisplay }
 import { loadPage } from '../modules/router.js'; // Singular and correctly formatted import
 import { logger } from '../modules/logger.js';
 import { isBengleMachine, setMachineModel } from '../modules/machine.js';
+import { brightnessNotices, QUEUED_NOTICE } from '../modules/brightness-notice.js';
 import { resolveSteamStopMode, applyMilkProbeGate } from '../modules/steam-mode.js';
 import { summarizeFirmwareCatalog, isFirmwareCancellationError, estimateRemainingSeconds, isUploadComplete, estimateVerifyRemainingSeconds, estimateTotalRemainingSeconds, FIRMWARE_VERIFY_SECONDS, formatDuration } from '../modules/firmware-progress.js';
 import { setScreensaverSuppressed, isMachineAsleep } from '../modules/screensaver-policy.js';
@@ -934,10 +935,6 @@ export function renderSettingsContent(category) {
             return renderTempUnitSettings();
         case 'resolution':
             return renderResolutionSettings();
-        case 'machineadvancedsettings':
-        case 'misc':
-        case 'miscellaneous':
-            return renderMiscellaneousSettings();
         case 'firmware':
         case 'firmwareupdate':
             return renderFirmwareUpdateSettings();
@@ -2200,9 +2197,38 @@ export function renderBrightnessSettings() {
                 <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[32px] w-full" data-i18n-key="Adjust screen brightness level">
                     Adjust screen brightness level
                 </p>
+                <div id="brightness-notices" class="flex flex-col gap-[16px] w-full">
+                    ${brightnessNotices({ brightness: brightnessVal, blackScreenSaver: isBlackScreenSaver(), lowBatteryActive: ds?.lowBatteryBrightnessActive === true })
+                        .map(notice => `<p class="${BRIGHTNESS_NOTICE_CLASS}" data-i18n-key="${notice}">${notice}</p>`)
+                        .join('')}
+                </div>
             </div>
         </div>
     `;
+}
+
+const BRIGHTNESS_NOTICE_CLASS = "font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] opacity-75 w-full";
+// Set when the last brightness write was queued because the display socket was down.
+let brightnessWriteQueued = false;
+
+// Re-render the notices under the slider. The panel is long-lived: display frames
+// and slider drags change which notices apply, so it cannot be a render-time snapshot.
+function refreshBrightnessNotices(brightness) {
+    const container = document.getElementById('brightness-notices');
+    if (!container) return;
+    const notices = brightnessNotices({
+        brightness,
+        blackScreenSaver: isBlackScreenSaver(),
+        lowBatteryActive: displayState()?.lowBatteryBrightnessActive === true
+    });
+    if (brightnessWriteQueued) notices.push(QUEUED_NOTICE);
+    container.replaceChildren(...notices.map(notice => {
+        const p = document.createElement('p');
+        p.className = BRIGHTNESS_NOTICE_CLASS;
+        p.setAttribute('data-i18n-key', notice);
+        p.textContent = getTranslation(notice);
+        return p;
+    }));
 }
 
 // Render Wake Lock settings
@@ -2706,173 +2732,6 @@ export function renderResolutionSettings() {
         </div>
     `;
 }
-
-export function renderMiscellaneousSettings() {
-    // The slider reflects reality: `brightness` is the level actually applied,
-    // which REA caps at 20 while lowBatteryBrightnessActive. requestedBrightness
-    // (what was asked for) is only the fallback. This must match what the
-    // ws/v1/display handler writes on later frames, or the controls jump from one
-    // to the other the moment a frame lands. Then api.js's cached frame, then 100
-    // -- the API's "OS-managed" value -- never an invented 75, which used to show
-    // whenever displayStateCache was null and got written back on first touch.
-    const ds = displayState();
-    const brightnessVal = ds?.brightness ?? ds?.requestedBrightness ?? 100;
-    return `
-        <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
-            <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
-                <p class="leading-[1.2]" data-i18n-key="Miscellaneous Settings">Miscellaneous Settings</p>
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Screen Saver">Screen Saver</p>
-                        </div>
-                        <select class="bg-[var(--button-primary-bg)] border-2 border-[var(--mimoja-blue-v2)] border-solid h-[62.88px] rounded-[2617.374px] w-[200px] text-white text-[24px] p-2">
-                            <option data-i18n-key="Enabled">Enabled</option>
-                            <option data-i18n-key="Disabled">Disabled</option>
-                        </select>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full">
-                        Enable or disable screen saver functionality
-                    </p>
-                </div>
-            </div>
-
-            <!-- Divider -->
-            <div class="h-0 relative w-full">
-                <hr class="border-t border-[var(--border-primary)] w-full" />
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Brightness">Brightness</p>
-                        </div>
-                        <input type="range" id="brightness-slider" min="0" max="100" value="${brightnessVal}" class="brightness-slider w-[200px]" onchange="handleBrightnessChange(this.value)">
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Adjust screen brightness level">
-                        Adjust screen brightness level
-                    </p>
-                </div>
-            </div>
-
-            <!-- Divider -->
-            <div class="h-0 relative w-full">
-                <hr class="border-t border-[var(--border-primary)] w-full" />
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="App Version">App Version</p>
-                        </div>
-                        <div class="bg-[var(--button-primary-bg)] h-[72px] px-[48px] rounded-[72px] text-white text-[24px] font-bold flex items-center justify-center">
-                            1.0.0
-                        </div>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Current application version">
-                        Current application version
-                    </p>
-                </div>
-            </div>
-
-            <!-- Divider -->
-            <div class="h-0 relative w-full">
-                <hr class="border-t border-[var(--border-primary)] w-full" />
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Units Settings">Units Settings</p>
-                        </div>
-                        <select class="bg-[var(--button-primary-bg)] border-2 border-[var(--mimoja-blue-v2)] border-solid h-[62.88px] rounded-[2617.374px] w-[200px] text-white text-[24px] p-2">
-                            <option data-i18n-key="Metric">Metric</option>
-                            <option data-i18n-key="Imperial">Imperial</option>
-                        </select>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Select measurement units for the application">
-                        Select measurement units for the application
-                    </p>
-                </div>
-            </div>
-
-            <!-- Divider -->
-            <div class="h-0 relative w-full">
-                <hr class="border-t border-[var(--border-primary)] w-full" />
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Display Size">Display Size</p>
-                        </div>
-                        <select class="bg-[var(--button-primary-bg)] border-2 border-[var(--mimoja-blue-v2)] border-solid h-[62.88px] rounded-[2617.374px] w-[200px] text-white text-[24px] p-2">
-                            <option data-i18n-key="Small">Small</option>
-                            <option data-i18n-key="Medium">Medium</option>
-                            <option data-i18n-key="Large">Large</option>
-                        </select>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Adjust the display size for better readability">
-                        Adjust the display size for better readability
-                    </p>
-                </div>
-            </div>
-
-            <!-- Divider -->
-            <div class="h-0 relative w-full">
-                <hr class="border-t border-[var(--border-primary)] w-full" />
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Resolution">Resolution</p>
-                        </div>
-                        <select class="bg-[var(--button-primary-bg)] border-2 border-[var(--mimoja-blue-v2)] border-solid h-[62.88px] rounded-[2617.374px] w-[200px] text-white text-[24px] p-2">
-                            <option>1920x1200</option>
-                            <option>1280x800</option>
-                            <option>1024x768</option>
-                        </select>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Set the display resolution">
-                        Set the display resolution
-                    </p>
-                </div>
-            </div>
-
-            <!-- Divider -->
-            <div class="h-0 relative w-full">
-                <hr class="border-t border-[var(--border-primary)] w-full" />
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Smart Charging">Smart Charging</p>
-                        </div>
-                        <select class="bg-[var(--button-primary-bg)] border-2 border-[var(--mimoja-blue-v2)] border-solid h-[62.88px] rounded-[2617.374px] w-[200px] text-white text-[24px] p-2">
-                            <option data-i18n-key="Enabled">Enabled</option>
-                            <option data-i18n-key="Disabled">Disabled</option>
-                        </select>
-                    </div>
-                    <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Enable smart charging for connected devices">
-                        Enable smart charging for connected devices
-                    </p>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
 
 // Helper: convert minutes-since-midnight to HH:MM string
 function minutesToTimeString(minutes) {
@@ -10009,6 +9868,10 @@ function handleDisplayState(data) {
         }
         if (brightnessNumber) brightnessNumber.value = data.brightness;
     }
+    // A frame means the socket is open, so any queued write has been flushed.
+    brightnessWriteQueued = false;
+    const frameBrightness = data.brightness ?? data.requestedBrightness;
+    if (frameBrightness !== undefined) refreshBrightnessNotices(frameBrightness);
 
     // Update wake-lock toggle if it exists. wakeLockOverride (not
     // wakeLockEnabled) is REA's record of whether THIS APP asked for the
@@ -10180,35 +10043,18 @@ window.handleBrightnessChange = async function(value) {
         }
         if (number) number.value = brightnessValue;
 
-        sendDisplayCommand({
+        const sendResult = sendDisplayCommand({
             command: 'setBrightness',
             brightness: brightnessValue
         });
         // Deliberate user choice, so remember it: REA does not persist brightness
-        // (ReaSettings has no such field), and app.js replays this on boot.
+        // (ReaSettings has no such field), and app.js replays this on boot. A queued
+        // command is still sent on reconnect, so it is remembered either way.
         rememberBrightness(brightnessValue);
+        brightnessWriteQueued = sendResult === 'queued';
+        refreshBrightnessNotices(brightnessValue);
     } catch (error) {
         console.error('Error adjusting brightness:', error);
-    }
-};
-
-window.handleBrightnessAutoToggle = async function(isEnabled) {
-    try {
-        const slider = document.getElementById('brightness-slider');
-        if (slider) {
-            slider.disabled = isEnabled;
-            slider.style.opacity = isEnabled ? '0.5' : '1';
-            slider.style.cursor = isEnabled ? 'not-allowed' : 'pointer';
-        }
-
-        if (isEnabled) {
-            logger.info('Auto brightness enabled');
-            // You can add logic here to request auto brightness from the display WebSocket
-        } else {
-            logger.info('Auto brightness disabled');
-        }
-    } catch (error) {
-        console.error('Error toggling auto brightness:', error);
     }
 };
 

@@ -64,6 +64,8 @@ let sensorSnapshotWebSocketId = null; // sensor `id` the open socket is bound to
 let displayWebSocket = null;
 let displayWebSocketReady = false;
 let pendingDisplayCommand = null;
+// setBrightness is held apart so a later wake-lock/other command cannot displace it.
+let pendingBrightnessCommand = null;
 // Latest DisplayState frame from ws/v1/display. Null until the socket delivers
 // its first snapshot.
 let lastDisplayState = null;
@@ -1071,9 +1073,7 @@ export function connectDisplayWebSocket(onData) {
         return;
     }
 
-    displayWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/display`, [], {
-        reconnectInterval: 3000,
-    });
+    displayWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/display`, [], { ...RECONNECT_POLICY.standard });
 
     displayWebSocket.onopen = () => {
         logger.info('Display WebSocket connected');
@@ -1084,10 +1084,10 @@ export function connectDisplayWebSocket(onData) {
         if (isWakeLockEnabled()) {
             enableWakeLock().catch((e) => logger.warn('Failed to re-arm wake-lock on connect:', e));
         }
-        if (pendingDisplayCommand) {
-            sendDisplayCommand(pendingDisplayCommand);
-            pendingDisplayCommand = null;
-        }
+        const queuedCommands = [pendingDisplayCommand, pendingBrightnessCommand].filter(Boolean);
+        pendingDisplayCommand = null;
+        pendingBrightnessCommand = null;
+        for (const queued of queuedCommands) sendDisplayCommand(queued);
     };
 
     displayWebSocket.onmessage = (event) => {
@@ -1123,17 +1123,21 @@ export function connectDisplayWebSocket(onData) {
  * @param {Object} command - The command payload
  * @param {string} command.command - The command type: 'setBrightness', 'requestWakeLock', or 'releaseWakeLock'
  * @param {number} [command.brightness] - Brightness value 0-100 (required for setBrightness)
+ * @returns {'sent'|'queued'} 'queued' = the socket was not ready; only the latest setBrightness and the latest other command are kept
+ *   and go out when the socket opens.
  */
 export function sendDisplayCommand(command) {
     if (!displayWebSocket || !displayWebSocketReady || displayWebSocket.readyState !== WebSocket.OPEN) {
         logger.warn('Display WebSocket not ready. Queuing command:', command);
-        pendingDisplayCommand = command;
-        return;
+        if (command?.command === 'setBrightness') pendingBrightnessCommand = command;
+        else pendingDisplayCommand = command;
+        return 'queued';
     }
 
     try {
         displayWebSocket.send(JSON.stringify(command));
         logger.info('Display command sent:', command);
+        return 'sent';
     } catch (error) {
         logger.error('Error sending display command:', error);
         throw error;
