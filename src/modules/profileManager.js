@@ -7,6 +7,7 @@ import { openDB, getSetting, setSetting } from './idb.js';
 import { loadPage } from './router.js'; // Singular and correctly formatted import
 import { getTranslation, fitTextToBox } from './i18n.js';
 import { resolveProfileKeyByTitle } from './active-profile.js';
+import { planAssignmentsLoad, mayPersistAutoPopulate } from './favorites-load.js';
 import { loadProfileOverrides, saveProfileOverride, clearProfileOverride, applyOverridesToRecords } from './profile-overrides.js';
 import { applyFlowCalibrationForProfile } from './flow-calibration.js';
 import { profileAtBrewTemp } from './brew-temp.js';
@@ -375,8 +376,11 @@ async function getFavoritesInitializedFlag() {
     return false;
 }
 
+let assignmentsReadOk = true; // false when the last loadAssignments() could not reach the Decaid store
+
 export async function loadAssignments() {
     logger.info('Loading assignments...');
+    assignmentsReadOk = true;
     try {
         // 1. Try to fetch from the primary source (REA store)
         const reaAssignments = await getValueFromStore(SETTINGS_NAMESPACE, FAVORITES_KEY);
@@ -399,7 +403,9 @@ export async function loadAssignments() {
         logger.warn('No assignments in REA store, checking IndexedDB backup...');
         const idbAssignments = await getSetting(FAVORITES_KEY);
 
-        if (isValidAssignments(idbAssignments)) {
+        // The read above succeeded and found nothing, so restoring the backup into
+        // the store is safe (first-run migration / wiped store).
+        if (planAssignmentsLoad({ readOk: true, remote: reaAssignments, backup: idbAssignments }).writeBack) {
             logger.info('Loaded assignments from IndexedDB backup.');
             favoriteAssignments = idbAssignments;
             validateButtonIndices();
@@ -418,15 +424,17 @@ export async function loadAssignments() {
 
     } catch (error) {
         // This catch block handles network failures when trying to reach the REA store.
+        assignmentsReadOk = false;
         logger.error('Failed to load from REA store. Falling back to IndexedDB.', error);
         try {
             const idbAssignments = await getSetting(FAVORITES_KEY);
-            if (isValidAssignments(idbAssignments)) {
+            if (planAssignmentsLoad({ readOk: false, remote: null, backup: idbAssignments }).source === 'backup') {
                 logger.info('Successfully loaded from IndexedDB backup during fallback.');
                 favoriteAssignments = idbAssignments;
                 validateButtonIndices();
-                await setValueInStore(SETTINGS_NAMESPACE, FAVORITES_KEY, favoriteAssignments);
-                await setSetting(FAVORITES_KEY, favoriteAssignments);
+                // Local use only. The read failed, so the store may hold another
+                // device's newer favourites; writing the backup over them would
+                // lose those. The next successful save or load reconciles.
             } else {
                  // Both stores empty — leave slots null so init() auto-populates.
                  logger.warn('IndexedDB backup is also empty. Deferring to auto-populate.');
@@ -1389,7 +1397,11 @@ async function autoPopulateFavoritesFromHistory() {
         }
     }
 
-    await saveAssignments({ markUserInitialized: false });
+    if (mayPersistAutoPopulate(assignmentsReadOk)) {
+        await saveAssignments({ markUserInitialized: false });
+    } else {
+        logger.warn('Decaid favourites read failed; auto-populated favourites kept local, not saved.');
+    }
     updateButtonUI();
 
     // Best-effort: recipe sidebar pre-fill from the most recent shot.

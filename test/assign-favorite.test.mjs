@@ -4,6 +4,7 @@
 // profile_selector.js, so getting it wrong shows "Assigned!" over an error.
 // Run: node test/assign-favorite.test.mjs
 import assert from 'node:assert';
+import { planAssignmentsLoad, mayPersistAutoPopulate } from '../src/modules/favorites-load.js';
 
 const FAV_COUNT = 5;
 
@@ -94,4 +95,24 @@ for (const bad of [-1, FAV_COUNT, 99]) {
     assert.strictEqual(showsSuccessToast(assignProfile(favs, bad, 'espresso').result), false, `index ${bad} must not assign`);
 }
 
+// loadAssignments() must never write the IndexedDB backup over the shared Decaid
+// store after a failed read: another device's newer favourites would be lost.
+{
+    const backup = { 0: 'a', 1: null, 2: null, 3: null, 4: null };
+    const remote = { 0: 'b', 1: null, 2: null, 3: null, 4: null };
+    assert.deepStrictEqual(planAssignmentsLoad({ readOk: false, remote: null, backup }),
+        { source: 'backup', assignments: backup, writeBack: false }, 'failed read -> backup for local use, no write');
+    assert.deepStrictEqual(planAssignmentsLoad({ readOk: true, remote: null, backup }),
+        { source: 'backup', assignments: backup, writeBack: true }, 'successful empty read -> restore');
+    assert.strictEqual(planAssignmentsLoad({ readOk: true, remote, backup }).source, 'remote');
+    assert.strictEqual(planAssignmentsLoad({ readOk: true, remote, backup }).writeBack, false);
+    assert.strictEqual(planAssignmentsLoad({ readOk: false, remote, backup: null }).source, 'none', 'stale remote ignored when the read failed');
+    assert.strictEqual(planAssignmentsLoad({ readOk: true, remote: null, backup: null }).writeBack, false);
+}
+
 console.log('ok — assign favourite success reporting');
+
+{
+    assert.strictEqual(mayPersistAutoPopulate(true), true);
+    assert.strictEqual(mayPersistAutoPopulate(false), false, 'failed Decaid read -> never persist auto-populated defaults');
+}

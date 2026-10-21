@@ -95,10 +95,57 @@ export async function ensureProfileOverridesLoaded() {
     return overrides;
 }
 
-/** Merge `fields` into the override for `profileId` and push it up. Returns the merged set. */
-export async function saveProfileOverride(profileId, fields) {
+/**
+ * The override to merge a tile edit onto. The copy loaded at boot can be stale
+ * when another tablet saved other fields since, so a successful fresh read wins
+ * (a missing key means the profile has no override). Only when the fresh read
+ * failed is the in-memory copy used.
+ */
+export function overrideMergeBase({ readOk, remote, local }) {
+    if (readOk) return remote && typeof remote === 'object' ? pick(remote) : {};
+    return local || {};
+}
+
+// getKVValue reports a missing key as an error whose message ends in the status.
+async function readRemoteOverride(profileId) {
+    const { getKVValue } = await kvClient();
+    if (typeof getKVValue !== 'function') return { readOk: false };
+    try {
+        return { readOk: true, remote: await getKVValue(OVERRIDES_NAMESPACE, profileId) };
+    } catch (e) {
+        if (/\b404\b/.test(String(e?.message))) return { readOk: true, remote: null };
+        return { readOk: false };
+    }
+}
+
+// Overlapping read-merge-write cycles for one profile would each merge onto the
+// same base and the later write would drop the earlier one's field, so they run
+// one after another. Callers outside profileManager's metadata queue hit this.
+const writeChains = new Map(); // profileId -> tail promise
+
+function serializePerProfile(profileId, task) {
+    const prev = writeChains.get(profileId) || Promise.resolve();
+    const run = prev.then(task);
+    const tail = run.catch(() => {});
+    writeChains.set(profileId, tail);
+    tail.then(() => { if (writeChains.get(profileId) === tail) writeChains.delete(profileId); });
+    return run;
+}
+
+/**
+ * Merge `fields` into the override for `profileId` and push it up. Re-reads the
+ * stored override first so only the changed fields are applied on top of what
+ * other devices saved. Returns the merged set.
+ */
+export function saveProfileOverride(profileId, fields) {
+    return serializePerProfile(profileId, () => saveProfileOverrideNow(profileId, fields));
+}
+
+async function saveProfileOverrideNow(profileId, fields) {
     await ensureProfileOverridesLoaded();
-    const merged = { ...(overrides[profileId] || {}), ...pick(fields) };
+    const fresh = await readRemoteOverride(profileId);
+    const base = overrideMergeBase({ ...fresh, local: overrides[profileId] });
+    const merged = { ...base, ...pick(fields) };
     overrides[profileId] = merged;
     try {
         const { setKVValue } = await kvClient();
@@ -116,10 +163,17 @@ export async function saveProfileOverride(profileId, fields) {
  * because saveProfileOverride merges: there is otherwise no way to say "this
  * profile has no flow calibration of its own" once one has been saved.
  */
-export async function removeProfileOverrideKeys(profileId, keys) {
+export function removeProfileOverrideKeys(profileId, keys) {
+    return serializePerProfile(profileId, () => removeProfileOverrideKeysNow(profileId, keys));
+}
+
+async function removeProfileOverrideKeysNow(profileId, keys) {
     await ensureProfileOverridesLoaded();
-    const existing = overrides[profileId];
-    if (!existing) return null;
+    // Same fresh re-read as saveProfileOverride: don't write back a stale boot copy.
+    const fresh = await readRemoteOverride(profileId);
+    const existing = fresh.readOk ? (overrideMergeBase({ ...fresh, local: null }) || null) : overrides[profileId];
+    if (!existing || Object.keys(existing).length === 0) { delete overrides[profileId]; return null; }
+    overrides[profileId] = existing;
     const merged = { ...existing };
     for (const key of keys) delete merged[key];
     if (Object.keys(merged).length === Object.keys(existing).length) return existing;
