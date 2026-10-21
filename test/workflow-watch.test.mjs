@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { readFileSync } from 'node:fs';
+import { profileFingerprint } from '../src/modules/dye-selection.js';
 
-import { workflowTileValues, changedTileValues, tilesToPaint, FORCED_KEYS } from '../src/modules/workflow-watch.js';
+import { workflowTileValues, changedTileValues, tilesToPaint, profileChanged, FORCED_KEYS } from '../src/modules/workflow-watch.js';
 
 // The dashboard learns about a workflow changed elsewhere (Decaid's UI, another
 // skin, a DYE2 page) only by re-reading GET /workflow -- there is no workflow
@@ -24,6 +25,7 @@ const workflow = ({ steam = {}, ...over } = {}) => ({
 test('every main-page tile value is read off the workflow', () => {
     assert.deepEqual(workflowTileValues(workflow()), {
         profileTitle: 'Londonium',
+        profileSig: profileFingerprint({ title: 'Londonium', steps: [{ temperature: 89 }] }),
         grind: '21',
         dose: 18,
         yield: 36,
@@ -113,7 +115,7 @@ test('a profile switch shows up as a title change', () => {
         let sinceEdit = msSinceEdit;
         const refresh = new Function(
             'isSubPage', 'ui', 'getWorkflow', 'logger', 'loadInitialData',
-            'workflowTileValues', 'tilesToPaint',
+            'workflowTileValues', 'tilesToPaint', 'profileChanged',
             'WORKFLOW_REFRESH_MIN_GAP_MS', 'tileEditPending', 'WORKFLOW_TILE_PAINTERS',
             'refreshWorkflowTilesSoon', 'seed', 'calls', 'state',
             `let lastWorkflowTiles = seed;
@@ -131,6 +133,7 @@ test('a profile switch shows up as a title change', () => {
             async () => { calls.reloads++; },
             workflowTileValues,
             tilesToPaint,
+            profileChanged,
             250,
             () => sinceEdit < 1100,
             new Proxy({}, { get: (_t, key) => (value) => calls.painted.push([key, value]) }),
@@ -286,4 +289,31 @@ test('tilesToPaint: unknown previous state with force still returns the four key
     const next = { profileTitle: 'A', dose: 18, yield: 36, grind: '5', brewTemp: 93, flush: 5 };
     assert.deepEqual(tilesToPaint(null, next, { force: true }), { dose: 18, yield: 36, grind: '5', brewTemp: 93, flush: 5 });
     assert.deepEqual(tilesToPaint(null, next), {});
+});
+
+test('profile change detection: same title, different steps is a profile change', () => {
+    const wf = steps => ({ profile: { title: 'A', steps } });
+    const before = workflowTileValues(wf([{ name: 'fill', pump: 'flow' }]));
+    const after = workflowTileValues(wf([{ name: 'fill', pump: 'flow' }, { name: 'pour', pump: 'pressure' }]));
+    const changed = changedTileValues(before, after);
+    assert.ok('profileSig' in changed);
+    assert.ok(!('profileTitle' in changed));
+    assert.equal(profileChanged(changed), true);
+});
+
+test('profile change detection: same fingerprint is unchanged, brew temp alone is not a profile change', () => {
+    const wf = temperature => ({ profile: { title: 'A', steps: [{ name: 'fill', temperature }] } });
+    const changed = changedTileValues(workflowTileValues(wf(90)), workflowTileValues(wf(93)));
+    assert.deepEqual(Object.keys(changed), ['brewTemp']);
+    assert.equal(profileChanged(changed), false);
+    assert.equal(profileChanged({}), false);
+});
+
+test('profile change detection: null and garbage are safe', () => {
+    assert.equal(profileChanged(null), false);
+    assert.equal(profileChanged(undefined), false);
+    for (const bad of [null, {}, { profile: null }, { profile: 'x' }, { profile: 5 }, { profile: { steps: 'nope' } }]) {
+        assert.doesNotThrow(() => workflowTileValues(bad));
+    }
+    assert.deepEqual(changedTileValues(workflowTileValues({ profile: { title: 'A' } }), workflowTileValues(null)), {});
 });

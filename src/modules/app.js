@@ -21,7 +21,7 @@ import { setMachineModel, isBengleMachine, setRefillKitPresent, isRefillKitPrese
 import { classifyStopReason, canonicalStopReason, STOP_TARGET_WEIGHT, STOP_TARGET_VOLUME, STOP_PROFILE_ENDED } from './stop-reason.js';
 import { resolveMilkProbePresence, MILK_PROBE_ABSENT_AFTER_MS, selectMilkProbeSensorId } from './steam-mode.js';
 import { readTimeToReadyFrame, heatingSecondsLeft } from './heating-countdown.js';
-import { workflowTileValues, tilesToPaint } from './workflow-watch.js';
+import { workflowTileValues, tilesToPaint, profileChanged } from './workflow-watch.js';
 import { isCupWarmerOn, readCupWarmerTarget, resolvePrewarm, getCupWarmerState, setCupWarmerState, patchCupWarmerState, invalidateCupWarmerState, onCupWarmerStateChange, CUP_WARMER_TARGET_KEY } from './cup-warmer.js';
 import { openDB, setSetting } from './idb.js';
 import { openContextMenu } from './context-menu.js';
@@ -1892,8 +1892,8 @@ async function refreshWorkflowTiles() {
     if (keys.length === 0) return;
 
     logger.info(`Workflow changed elsewhere: ${keys.join(', ')}`);
-    if ('profileTitle' in changed) {
-        // A profile switch moves more than the tiles: the chart's step tracking,
+    if (profileChanged(changed)) {
+        // A profile switch or step edit moves more than the tiles: the chart's step tracking,
         // the active-profile record and the favourite highlight all follow it.
         // loadInitialData is the path that does all of that -- dyeStrip's
         // refreshAfterApply picks it for the same reason -- and it re-seeds the
@@ -1949,6 +1949,9 @@ async function isShotBlockedByNoScale() {
 // page both render from the ONE shared snapshot in ./cup-warmer.js (the old
 // boot-seeded local boolean was one of three diverging copies — audit I1 /
 // bench checklist 2b). initCupWarmerToggle runs from loadInitialData on boot
+        // The profile selector / editor write from a sub-page, where the refresh is
+        // skipped; remember it so the return to the dashboard re-reads.
+        if (isSubPage()) pendingForcedRefresh = true;
 // AND on every machine (re)connect/wake, so a reconnect invalidates the
 // snapshot and re-seeds it fresh; the subscription below repaints the button
 // whenever anyone (this button, the Settings page, its ~5 s poll) updates the
