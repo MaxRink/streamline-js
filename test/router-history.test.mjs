@@ -20,3 +20,19 @@ test('leaving a visible main page dispatches the hidden lifecycle event', () => 
     assert.match(source, /mainPage\.style\.display = 'none';\s*if \(mainPageWasVisible\) \{\s*hidMainPage = true;\s*document\.dispatchEvent\(new Event\('streamline:mainpagehidden'\)\);/);
     assert.match(source, /if \(hidMainPage\) document\.dispatchEvent\(new Event\('streamline:mainpagevisible'\)\);/);
 });
+
+test('the previous page is recorded before a page inits, so the editor can return to it', () => {
+    // markCurrentPage has to run ahead of the per-page init block below it --
+    // profile_editor.js reads getPreviousPageUrl() inside its init.
+    const markIdx = source.indexOf('markCurrentPage(pageUrl);');
+    const initIdx = source.indexOf("pageUrl.includes('profile_editor.html')");
+    assert.ok(markIdx > 0 && initIdx > markIdx, 'markCurrentPage must precede the page init');
+    assert.match(source, /markCurrentPage\(null\);/);
+    // Re-entering the same page must not make it its own previous page.
+    assert.match(source, /if \(pageUrl === currentPageUrl\) return;/);
+
+    const editor = readFileSync('src/modules/profile_editor.js', 'utf8');
+    assert.match(editor, /_returnUrl = getPreviousPageUrl\(\) \|\| 'index\.html';/);
+    // Save and Cancel both go back where the user came from.
+    assert.equal((editor.match(/loadPage\(_returnUrl\)/g) || []).length, 2);
+});

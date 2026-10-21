@@ -1,5 +1,20 @@
 const pageCache = new Map();
 let cleanupCurrentPage = null;
+// Where the user currently is and where they came from, so a subpage can send
+// them back instead of to a fixed destination (the profile editor's save and
+// cancel). null is the main page.
+let currentPageUrl = null;
+let previousPageUrl = null;
+
+export function getPreviousPageUrl() {
+    return previousPageUrl;
+}
+
+function markCurrentPage(pageUrl) {
+    if (pageUrl === currentPageUrl) return;
+    previousPageUrl = currentPageUrl;
+    currentPageUrl = pageUrl;
+}
 
 function getCleanUrl(pageUrl) {
     const filename = pageUrl.split('/').pop().replace('.html', '');
@@ -104,6 +119,7 @@ async function showMainPage({ history = 'push' } = {}) {
     // Force rescale — keyboard use on the previous page may have left a stale transform
     window.dispatchEvent(new Event('resize'));
 
+    markCurrentPage(null);
     updateHistory(history, { pageUrl: null }, 'Streamline', '?page=index');
 
     // The profile selector shares the `plotly-chart` id and leaves its last
@@ -186,6 +202,9 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
         import('./i18n.js').then(m => m.translatePage()).catch(() => {});
 
         const cleanUrl = getCleanUrl(pageUrl);
+        // Before the page's own init runs below -- the profile editor reads
+        // getPreviousPageUrl() there to decide where Save/Cancel return to.
+        markCurrentPage(pageUrl);
         updateHistory(history, { pageUrl }, cleanUrl.split('/').pop() || 'Streamline', cleanUrl);
 
         await new Promise(resolve => requestAnimationFrame(resolve));

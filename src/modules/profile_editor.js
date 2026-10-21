@@ -1,4 +1,4 @@
-import { loadPage } from './router.js';
+import { loadPage, getPreviousPageUrl } from './router.js';
 import { showToast, flashPlusMinusButton, flashIconButton } from './ui.js';
 import { openModal, resetNumpadModal } from './numpad-modal.js';
 import { openNotesModal } from './notes-modal.js';
@@ -2894,11 +2894,12 @@ function executionChanged(orig, edited) {
 
 // Shared tail of a successful save (including the no-op "nothing changed"
 // case, which reports success without writing anything): hint the selector to
-// pre-select this profile, toast, and navigate back.
+// pre-select this profile, toast, and navigate back to wherever the editor was
+// opened from.
 function finishSaveSuccess(id) {
     sessionStorage.setItem('lastEditedProfileKey', id);
     showToast(getTranslation('Saved profile'), 2000, 'success');
-    setTimeout(() => { loadPage('src/profiles/profile_selector.html'); }, 1000);
+    setTimeout(() => { loadPage(_returnUrl); }, 1000);
 }
 
 // Save routing for a profile opened from a local-only draft (see
@@ -3405,7 +3406,7 @@ async function cancelEditor() {
             }
         } catch (_) {}
     }
-    loadPage('index.html');
+    loadPage(_returnUrl);
 }
 
 
@@ -3563,7 +3564,16 @@ async function openVersionHistory() {
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
+// The page the editor was opened from -- the main page's header/context menu,
+// the profile selector, or a favorite's context menu. Save and Cancel both
+// return here instead of to a fixed page. Resolved once at init: by the time
+// either fires, the router's "previous page" is the editor's own origin only
+// if nothing else navigated, and nothing can without leaving the editor.
+let _returnUrl = 'index.html';
+
 export async function initializeProfileEditor() {
+    _returnUrl = getPreviousPageUrl() || 'index.html';
+
     console.log('[ProfileEditor] initializeProfileEditor called');
     console.log('[ProfileEditor] window.__pendingEditProfile=', window.__pendingEditProfile);
     console.log('[ProfileEditor] typeof window.__pendingEditProfile=', typeof window.__pendingEditProfile);
