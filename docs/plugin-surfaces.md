@@ -89,6 +89,9 @@ values), a `tile-line`, and a `live` socket fed from `events.workflow` and `even
 `test/shot-companion-plugin.test.mjs` runs it with a fake host and checks every answer with `parseSkinAnswer`; copy
 that test when you write your own.
 
+**Another example to learn from.** [pagratios/bean-journal](https://github.com/pagratios/bean-journal) is a separate
+Decaid plugin for Streamline (coffees, shots and dial-in on the tablet) that you can read alongside the bundled one.
+
 ## Worked example: a brew temperature offset
 
 A plugin that adds `°C | %` under **Brew**: any whole percent from -20 to 20, applied to every profile step so the
