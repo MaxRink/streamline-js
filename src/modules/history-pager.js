@@ -6,7 +6,12 @@ function mergeShots(existing, pages) {
             ? { ...current, ...shot, ...(current.measurements && !shot.measurements ? { measurements: current.measurements } : {}) }
             : shot);
     }
-    return [...byId.values()].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    // Parse each timestamp once instead of twice per comparison. `|| 0` keeps
+    // the comparator's NaN behaviour (an unparseable timestamp compares equal).
+    return [...byId.values()]
+        .map(shot => [timeOf(shot), shot])
+        .sort((a, b) => (b[0] - a[0]) || 0)
+        .map(pair => pair[1]);
 }
 
 const timeOf = shot => new Date(shot?.timestamp).getTime();
@@ -98,8 +103,8 @@ export function createHistoryPager({ pageSize, fetchServerPage, fetchSummaryPage
             cached = { ...cached, exhausted: true };
         }
 
-        shots = mergeShots(shots, [summaryPage, cachedPage, serverPage?.items ?? []]);
-        shots = mergeShots(shots, [[...updatedShots.values()]]);
+        // Later pages override earlier ones, so local updates win over every source.
+        shots = mergeShots(shots, [summaryPage, cachedPage, serverPage?.items ?? [], [...updatedShots.values()]]);
         if (summaryPage.length) oldest.summaries = timeOf(summaryPage[summaryPage.length - 1]);
         if (cachedPage.length) oldest.cached = timeOf(cachedPage[cachedPage.length - 1]);
 

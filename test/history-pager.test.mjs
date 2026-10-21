@@ -226,3 +226,39 @@ test('shouldReloadForLatestShot reloads only for a different id while idle', () 
     assert.equal(shouldReloadForLatestShot('', 'a', false), false);
     assert.equal(shouldReloadForLatestShot('b', null, false), false);
 });
+
+test('merging sorts mixed sources newest first, lets later sources and updates win, and parses each timestamp once', async () => {
+    const summaries = [at('a', 50), at('c', 40), at('b', 10)];
+    const cachedPage = [{ ...at('b', 10), source: 'cache', measurements: [1] }, { ...at('c', 40), source: 'cache' }, at('d', 60)];
+    const pager = createHistoryPager({
+        pageSize: 10,
+        fetchServerPage: async () => { throw new Error('offline'); },
+        fetchSummaryPage: async () => summaries,
+        fetchCachedPage: async () => cachedPage
+    });
+
+    let page = await pager.initial();
+    assert.deepEqual(page.shots.map(shot => shot.id), ['d', 'a', 'c', 'b']);
+    assert.equal(page.shots.find(shot => shot.id === 'c').source, 'cache');
+    assert.deepEqual(page.shots.find(shot => shot.id === 'b').measurements, [1]);
+    pager.update({ ...at('a', 50), title: 'edited' });
+
+    const RealDate = globalThis.Date;
+    let constructed = 0;
+    globalThis.Date = class extends RealDate {
+        constructor(...args) {
+            super(...args);
+            constructed++;
+        }
+    };
+    try {
+        page = await pager.more();
+    } finally {
+        globalThis.Date = RealDate;
+    }
+
+    assert.deepEqual(page.shots.map(shot => shot.id), ['d', 'a', 'c', 'b']);
+    assert.equal(page.shots.find(shot => shot.id === 'a').title, 'edited');
+    // One Date per shot for the sort key; the old comparator built two per comparison.
+    assert.equal(constructed, 4);
+});
