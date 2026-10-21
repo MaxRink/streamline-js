@@ -1,3 +1,5 @@
+import { projectTraceDelta } from './chart-live-policy.js';
+
 const charts = new WeakMap();
 const DPR = 1.25;
 
@@ -128,7 +130,7 @@ function annotationFor(trace, layout) {
     return coordinateMatches.length === 1 ? coordinateMatches[0] : null;
 }
 
-function seriesOptions(traces, layout) {
+function seriesOptions(traces, layout, projections) {
     return traces.map((trace, index) => {
         const axisIndex = trace.xaxis === 'x2' || trace.yaxis === 'y2' ? 1 : 0;
         const hoverable = trace.hoverinfo !== 'skip';
@@ -139,7 +141,7 @@ function seriesOptions(traces, layout) {
             type: 'line',
             xAxisIndex: axisIndex,
             yAxisIndex: axisIndex,
-            data: trace.x.map((x, pointIndex) => [x, trace.y[pointIndex]]),
+            data: projections[index].data,
             showSymbol: false,
             symbol: 'none',
             // Opt-in per trace (profile preview curves) — live shot/history
@@ -241,7 +243,7 @@ function axesOptions(layout, traces) {
     return { xAxis: xAxes, yAxis: yAxes };
 }
 
-function chartOption(traces, layout, size, selected) {
+function chartOption(traces, layout, size, selected, projections) {
     const font = layout.font || {};
     return {
         animation: false,
@@ -250,7 +252,7 @@ function chartOption(traces, layout, size, selected) {
         grid: gridOptions(layout, size),
         legend: legendOptions(layout, traces, size, selected),
         ...axesOptions(layout, traces),
-        series: seriesOptions(traces, layout)
+        series: seriesOptions(traces, layout, projections)
     };
 }
 
@@ -274,18 +276,34 @@ function liveXAxisOptions(layout) {
     }));
 }
 
-function liveSeriesOptions(traces, layout, includeMarkers) {
-    const series = traces.map((trace, index) => ({
+function projectSeries(traces, previous) {
+    return traces.map((trace, index) => {
+        const { points, reset, ...projection } = projectTraceDelta(trace, previous?.[index]);
+        const data = reset ? points : previous[index].data;
+        if (!reset) for (const point of points) data.push(point);
+        return { ...projection, data, points, reset };
+    });
+}
+
+function liveSeriesOptions(projections, layout, includeMarkers) {
+    const series = projections.map((projection, index) => ({
             id: `trace-${index}`,
-            data: trace.x.map((x, pointIndex) => [x, trace.y[pointIndex]])
+            data: projection.data
         }));
     return includeMarkers ? series.concat(markerSeriesOptions(layout, true)) : series;
 }
 
 export function renderChart(echarts, element, traces, layout, mode = 'full') {
-    const size = sizeOf(element);
     let state = charts.get(element);
-    element.style.background = layout.paper_bgcolor || layout.plot_bgcolor || 'transparent';
+    // Live frames reuse the last measured size: clientWidth/clientHeight force
+    // layout every frame. A 1x1 state was measured while hidden, so re-measure.
+    const reuseSize = mode === 'live' && state && (state.size.width > 1 && state.size.height > 1);
+    const size = reuseSize ? state.size : sizeOf(element);
+    const background = layout.paper_bgcolor || layout.plot_bgcolor || 'transparent';
+    if (!state || state.background !== background) {
+        element.style.background = background;
+        if (state) state.background = background;
+    }
     if (!state) {
         element.replaceChildren();
         state = {
@@ -294,7 +312,8 @@ export function renderChart(echarts, element, traces, layout, mode = 'full') {
                 devicePixelRatio: Math.min(window.devicePixelRatio || 1, DPR),
                 ...size
             }),
-            size
+            size,
+            background
         };
         state.hoverLabel = attachHoverLabel(state.chart, element);
         charts.set(element, state);
@@ -305,23 +324,40 @@ export function renderChart(echarts, element, traces, layout, mode = 'full') {
     }
     const signature = liveLayoutSignature(layout);
     const live = mode === 'live' && state.traceCount === traces.length;
+    // Full renders (including theme/finalize/clear), trace-count changes and
+    // instance disposal discard the old cache. Source replacement also resets
+    // individual projections, even if a hidden chart skipped the clear render.
+    const projections = projectSeries(traces, live ? state.projections : undefined);
+    // Keep the full cache in sync before painting. If any operation throws
+    // (including a partial append), the next paint must replace series data
+    // from this cache rather than lose or duplicate a tail.
+    const append = live && state.liveLayoutSignature === signature &&
+        !state.needsSeriesUpdate && !projections.some(projection => projection.reset) &&
+        typeof state.chart.appendData === 'function';
+    state.projections = projections;
+    state.needsSeriesUpdate = true;
     if (live) {
         const layoutChanged = state.liveLayoutSignature !== signature;
         const axes = layoutChanged ? axesOptions(layout, traces) : null;
         state.chart.setOption({
             ...(axes || { xAxis: liveXAxisOptions(layout) }),
-            series: liveSeriesOptions(traces, layout, layoutChanged)
+            ...(!append ? { series: liveSeriesOptions(projections, layout, layoutChanged) } : {})
         }, { notMerge: false, lazyUpdate: true, silent: true });
+        // appendData does not expand coordinate extents: update explicit x
+        // bounds first. Y bounds change only on the layout-signature path.
+        if (append) projections.forEach((projection, seriesIndex) => {
+            if (projection.points.length) state.chart.appendData({ seriesIndex, data: projection.points });
+        });
     } else {
         const selected = Object.assign({}, ...(state.chart.getOption?.()?.legend || []).map(legend => legend.selected || {}));
-        state.chart.setOption(chartOption(traces, layout, size, selected), {
+        state.chart.setOption(chartOption(traces, layout, size, selected, projections), {
             notMerge: false,
             replaceMerge: ['series', 'grid', 'xAxis', 'yAxis', 'legend'],
             lazyUpdate: false,
             silent: true
         });
     }
-    charts.set(element, { ...state, traceCount: traces.length, liveLayoutSignature: signature });
+    charts.set(element, { ...state, needsSeriesUpdate: false, traceCount: traces.length, liveLayoutSignature: signature });
 }
 
 export function resizeChart(element) {

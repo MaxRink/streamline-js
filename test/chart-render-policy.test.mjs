@@ -18,7 +18,8 @@ test('the chart bundle is modular ECharts without Plotly assets', () => {
 test('main chart rendering uses the ECharts renderer without sampling', () => {
     const chart = read('src/modules/chart.js');
     const renderer = read('src/modules/echarts-renderer.js');
-    assert.match(chart, /const CHART_REDRAW_INTERVAL_MS = 100/);
+    assert.match(chart, /chartRedrawInterval = observeChartFrame\(performance\.now\(\)\)/);
+    assert.match(chart, /chartRedrawInterval - \(performance\.now\(\) - lastRedrawAt\)/);
     assert.match(chart, /renderChart\(echarts, element, traces, layout, mode\)/);
     assert.match(renderer, /renderer: 'canvas'/);
     assert.match(renderer, /animation: false/);
@@ -47,7 +48,7 @@ test('expanded mode uses one two-grid instance and preserves visibility autoscal
 
 test('hidden renders coalesce and teardown invalidates queued work before disposal', () => {
     const chart = read('src/modules/chart.js');
-    assert.match(chart, /if \(!element \|\| element\.offsetParent === null \|\| expandedOpen\) \{\s*mainRenderDirty = true/);
+    assert.match(chart, /if \(expandedOpen\) \{\s*mainRenderDirty = true;\s*return;\s*\}\s*const element = getChartElement\(\);\s*if \(!element \|\| element\.offsetParent === null\) \{\s*mainRenderDirty = true/);
     assert.match(chart, /if \(mainRenderDirty && latestMainRender && !expandedOpen\)/);
     assert.match(chart, /renderGenerations\.set\(element, generation\);[\s\S]*await enqueue\?\.dispose\(\);[\s\S]*destroyChart\(element\)/);
     assert.match(chart, /!element\.isConnected \|\| renderGenerations\.get\(element\) !== generation/g);

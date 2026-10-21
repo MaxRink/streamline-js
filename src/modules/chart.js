@@ -4,6 +4,7 @@ import { hasMachineGFlow, createScaleFlowResolver, createPourPhaseTracker } from
 import { EXP_TOP_FLOOR, computeExpandedTopYMax, computeExpandedTempRange, separateLabelPositions, pickVisible } from './chart-autoscale.js';
 import { createLatestTaskRunner } from './latest-task-runner.js';
 import { loadECharts } from './echarts-loader.js';
+import { createChartCadence, DEFAULT_CHART_INTERVAL_MS } from './chart-live-policy.js';
 import { destroyChart, getSeriesVisibility, hasChart, onLegendChange, renderChart, resizeChart, selectSeries, setYAxisRange } from './echarts-renderer.js';
 
 // Maps internal trace key → i18n key used for the chart label.
@@ -25,7 +26,6 @@ const STEP_MARKER_COLORS = {
     light: '#7c7c7c'
 };
 
-const CHART_REDRAW_INTERVAL_MS = 100;
 const LIVE_X_DATA_FRACTION = 0.93;
 const renderQueues = new WeakMap();
 const renderGenerations = new WeakMap();
@@ -69,8 +69,12 @@ async function disposeECharts(element) {
 
 function renderMain(traces, layout, mode = 'full') {
     latestMainRender = { traces, layout, mode };
+    if (expandedOpen) {
+        mainRenderDirty = true;
+        return;
+    }
     const element = getChartElement();
-    if (!element || element.offsetParent === null || expandedOpen) {
+    if (!element || element.offsetParent === null) {
         mainRenderDirty = true;
         return;
     }
@@ -484,6 +488,8 @@ let pendingTime = 0;
 let redrawTimer = 0;
 let redrawFrame = 0;
 let lastRedrawAt = 0;
+let observeChartFrame = createChartCadence();
+let chartRedrawInterval = DEFAULT_CHART_INTERVAL_MS;
 let liveRenderDirty = false;
 
 function dtickForTime(time) {
@@ -552,7 +558,7 @@ function scheduleChartFlush() {
             redrawFrame = 0;
             flushChart();
         });
-    }, Math.max(0, CHART_REDRAW_INTERVAL_MS - (performance.now() - lastRedrawAt)));
+    }, Math.max(0, chartRedrawInterval - (performance.now() - lastRedrawAt)));
 }
 
 function flushDeferredChart() {
@@ -880,6 +886,7 @@ export function updateChart(shotStartTime, data, weight, weightFlow = null, filt
             return;
         }
     }
+    chartRedrawInterval = observeChartFrame(performance.now());
     const pressureY = data.pressure;
     const flowY = data.flow;
     const targetPressureY = data.targetPressure;
@@ -964,6 +971,8 @@ function resetChartState() {
     // on the freshly cleared chart.
     cancelChartFlush();
     lastRedrawAt = 0;
+    observeChartFrame = createChartCadence();
+    chartRedrawInterval = DEFAULT_CHART_INTERVAL_MS;
     liveRenderDirty = false;
     isLiveShot = false;
     resetExpandedData();

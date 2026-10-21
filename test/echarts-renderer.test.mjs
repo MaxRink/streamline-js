@@ -209,3 +209,67 @@ test('legend visibility survives renderer updates', () => {
     assert.deepEqual(current.legend[0].selected, { Pressure: false, Flow: true });
     destroyChart(element);
 });
+
+test('live renders reuse the measured size and only rewrite a changed background', () => {
+    const chart = { setOption() {}, getOption: () => undefined, resize() {}, on() {}, dispose() {} };
+    const reads = { width: 0, height: 0 };
+    const sizes = { width: 800, height: 400 };
+    const backgrounds = [];
+    let background = '';
+    const style = { get background() { return background; }, set background(value) { background = value; backgrounds.push(value); } };
+    const element = {
+        get clientWidth() { reads.width++; return sizes.width; },
+        get clientHeight() { reads.height++; return sizes.height; },
+        style,
+        ownerDocument: { createElement: () => null },
+        append() {},
+        replaceChildren() {}
+    };
+    const traces = [{ name: 'Pressure', x: [0], y: [0], line: { color: '#17c29a', width: 3 } }];
+    const layout = { paper_bgcolor: '#0d0e14', margin: { l: 50, r: 50, t: 20, b: 40 }, xaxis: { range: [0, 1] }, yaxis: { range: [0, 10] } };
+    const echarts = { init: () => chart };
+    globalThis.window = { devicePixelRatio: 1 };
+
+    renderChart(echarts, element, traces, layout, 'full');
+    assert.equal(reads.width > 0, true);
+    reads.width = reads.height = 0;
+    renderChart(echarts, element, traces, layout, 'live');
+    renderChart(echarts, element, traces, layout, 'live');
+    assert.deepEqual(reads, { width: 0, height: 0 });
+    renderChart(echarts, element, traces, layout, 'full');
+    assert.equal(reads.width > 0, true);
+    assert.deepEqual(backgrounds, ['#0d0e14']);
+
+    renderChart(echarts, element, traces, { ...layout, paper_bgcolor: '#ffffff' }, 'live');
+    assert.deepEqual(backgrounds, ['#0d0e14', '#ffffff']);
+    renderChart(echarts, element, traces, { ...layout, paper_bgcolor: '#ffffff' }, 'live');
+    assert.deepEqual(backgrounds, ['#0d0e14', '#ffffff']);
+    destroyChart(element);
+});
+
+test('a live render re-measures a chart that was first sized while hidden', () => {
+    const resizes = [];
+    const chart = { setOption() {}, getOption: () => undefined, resize: size => resizes.push(size), on() {}, dispose() {} };
+    const sizes = { width: 0, height: 0 };
+    const element = {
+        get clientWidth() { return sizes.width; },
+        get clientHeight() { return sizes.height; },
+        style: {},
+        ownerDocument: { createElement: () => null },
+        append() {},
+        replaceChildren() {}
+    };
+    const traces = [{ name: 'Pressure', x: [0], y: [0], line: { color: '#17c29a', width: 3 } }];
+    const layout = { margin: { l: 50, r: 50, t: 20, b: 40 }, xaxis: { range: [0, 1] }, yaxis: { range: [0, 10] } };
+    const echarts = { init: () => chart };
+    globalThis.window = { devicePixelRatio: 1 };
+
+    renderChart(echarts, element, traces, layout, 'full'); // measured 1x1 while hidden
+    sizes.width = 960;
+    sizes.height = 390;
+    renderChart(echarts, element, traces, layout, 'live');
+    assert.equal(resizes.length, 1);
+    assert.equal(resizes[0].width, 960);
+    assert.equal(resizes[0].height, 390);
+    destroyChart(element);
+});

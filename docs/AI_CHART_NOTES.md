@@ -22,6 +22,7 @@ Supporting files:
 - `src/modules/echarts-loader.js`: lazy, promise-cached bundle import.
 - `scripts/echarts-streamline-entry.js`: registered ECharts charts/components/renderers.
 - `src/modules/echarts-streamline.min.js`: generated tree-shaken bundle.
+- `src/modules/chart-live-policy.js`: live paint interval floor is 100 ms (the historical gate) until a faster floor is tablet-verified.
 - `src/modules/router.js`: subpage chart cleanup and main-page repaint timing.
 
 Do not “correct” the `plotly-chart` element ID or trace shape as an isolated cleanup. They are compatibility surfaces used across pages and tests.
@@ -38,6 +39,7 @@ Rules:
 
 - Keep each trace's `x` and `y` arrays exactly aligned.
 - Keep stable trace ordering and IDs during a live shot.
+- Live `x`/`y` arrays are append-only; reset them only by reassigning new arrays (the live projection detects resets by identity or shrinkage).
 - Do not allocate a new chart instance for every update.
 - Preserve legend selection across full renders.
 - Update markers/axes when the layout signature changes.
