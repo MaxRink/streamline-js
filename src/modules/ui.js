@@ -5,7 +5,7 @@ import { openDB, getSetting } from './idb.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, formatScreensaverClockDate, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
 import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine } from './screensaver-policy.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
-import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync, steamSyncRetryDelay } from './steam-mode.js';
+import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, steamSlotField as resolveSteamSlotField, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync, steamSyncRetryDelay } from './steam-mode.js';
 import { API_DEBOUNCE_MS } from './workflow-watch.js';
 import { shouldUseNumpad } from './numpad-policy.js';
 import { openContextMenu } from './context-menu.js';
@@ -1491,13 +1491,51 @@ function syncDrinkOutPresets() {
 
 // Numpad entry (app.js initMobileValueInputs) bypasses the inline editors that
 // resync presets themselves, so it calls this after writing the value.
+// What the tile's big/small duration slot currently HOLDS, which is not always
+// a steam duration: with the milk stop armed on a Bengle it shows the milk
+// target in both halves of the Milk|Flow pair (see updateSteamDisplay). Both
+// editors for that slot -- the tablet numpad wired in app.js and the desktop
+// inline editor below -- ask at interaction time, so a tap no longer offers
+// "STEAM DURATION" over a value in °C.
+export function steamSlotField() {
+    return resolveSteamSlotField(isBengleMachine() && milkProbePresent, milkStopArmed);
+}
+
+// Milk-stop writes are clamped to 30-80 °C everywhere (tile +/-, the settings
+// page, preset edits): 80 is the API ceiling, rest_v1.yml SteamSettings
+// .stopAtTemperature documents range 0..80.
+export function clampMilkStop(celsius) {
+    return Math.max(30, Math.min(80, Math.round(celsius)));
+}
+
+// Numpad presentation for a milk-stop entry. Shared by the preset editor and
+// the tile-slot editor so the two can't drift on unit or range.
+export function milkStopNumpadConfig() {
+    return {
+        title: 'MILK STOP',
+        unit: getTempUnit() === 'F' ? '°F' : '°c',
+        defaultValue: '60',
+        min: boundToDisplay(30),
+        max: boundToDisplay(80),
+    };
+}
+
+/** Commit a milk auto-stop target (°C) typed into the tile slot or a numpad. */
+export function applyMilkStopTarget(celsius) {
+    if (!isFinite(celsius)) return;
+    currentMilkStop = clampMilkStop(celsius);
+    updateSteamDisplay({ stopAtTemperature: currentMilkStop });
+    pushSteamSetting('duration', setStopAtTemperature(currentMilkStop));
+    syncSteamPresets();
+}
+
 export function syncPresetsAfterManualEntry(type) {
     if (type === 'temperature') {
         const shown = document.getElementById('temp-value')?.textContent.trim();
         syncPresetHighlight(document.getElementById('temp-presets'), t => t === shown);
     } else if (type === 'dose-in' || type === 'drink-out') {
         syncDrinkOutPresets();
-    } else if (type === 'steam-duration' || type === 'steam-flow') {
+    } else if (type === 'steam-duration' || type === 'steam-flow' || type === 'milk-stop') {
         syncSteamPresets();
     }
 }
@@ -2408,17 +2446,12 @@ export function initUI(callbacks) {
                 const currentValueC = fromDisplayTemp(parseFloat(valueEl.textContent));
                 const presetValue = milkStopPresets[index];
                 const defaultValue = DEFAULT_MILK_STOP_PRESETS[index];
-                // Milk-stop writes are clamped to 30–80 °C everywhere (tile
-                // +/- and the settings page) — preset edits follow the same rule.
-                // 80 is the API ceiling: rest_v1.yml SteamSettings.stopAtTemperature
-                // documents range 0..80.
-                const clampMilkStop = (num) => Math.max(30, Math.min(80, Math.round(num)));
                 openContextMenu(button, [
                     { label: getTranslation('Apply {value}').replace('{value}', formatTemp(presetValue, 0)), onSelect: clickCallback },
                     { label: getTranslation('Enter value'), onSelect: () => {
                         openNumpadModal(makeNumpadMockInput(boundToDisplay(presetValue)), {
                             fieldType: 'milk-stop',
-                            config: { title: 'MILK STOP', unit: getTempUnit() === 'F' ? '°F' : '°c', defaultValue: '60', min: boundToDisplay(30), max: boundToDisplay(80) },
+                            config: milkStopNumpadConfig(),
                             onConfirm: (newVal) => {
                                 const num = fromDisplayTemp(parseFloat(newVal));
                                 if (isNaN(num)) return;
@@ -2692,6 +2725,12 @@ export function initUI(callbacks) {
     const steamDurationValueEl = document.getElementById('steam-duration-value');
     if (steamDurationValueEl) {
         makeEditable(steamDurationValueEl, (newValue) => {
+            // The slot holds the milk target whenever the stop is armed, and the
+            // inline input was seeded from it in the display unit.
+            if (steamSlotField() === 'milk-stop') {
+                applyMilkStopTarget(fromDisplayTemp(newValue));
+                return;
+            }
             let value = newValue;
             if (value > 255) {
                 alert('Steam time is limited to 255s.');

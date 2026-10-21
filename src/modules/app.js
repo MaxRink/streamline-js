@@ -98,7 +98,13 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
             if ((type === 'steam-duration' || type === 'steam-flow') && ui.isAutoSteamMode()) return;
             e.preventDefault();
             e.stopPropagation();
-            
+
+            // The steam tile's duration slot holds the milk auto-stop target
+            // while that stop is armed on a Bengle, so resolve the field here
+            // rather than at wire time -- otherwise a tap on "60°c" opened the
+            // STEAM DURATION pad and wrote seconds.
+            const field = type === 'steam-duration' ? ui.steamSlotField() : type;
+
             const currentValue = el.textContent.replace(/[^0-9.]/g, '') || '0';
             
             const mockInput = {
@@ -111,7 +117,8 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                         // unit (the numpad was seeded from el.textContent) — convert to
                         // Celsius before writing/displaying so the writer always gets Celsius.
                         const tempC = fromDisplayTemp(parseFloat(newVal));
-                        el.textContent = type === 'temperature' ? formatTemp(tempC, 0) :
+                        el.textContent = field === 'milk-stop' ? formatTemp(tempC, 0) :
+                                        type === 'temperature' ? formatTemp(tempC, 0) :
                                         type === 'grind' ? newVal :
                                         type === 'steam-duration' ? window.app.ui.formatSteamDuration((newVal === '' || isNaN(parseFloat(newVal))) ? 0 : parseFloat(newVal)) :
                                         type === 'steam-flow' ? newVal :
@@ -120,7 +127,9 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                                         type === 'hot-water-temp' ? formatTemp(tempC, 0) :
                                         `${newVal}g`;
 
-                        if (type === 'dose-in') {
+                        if (field === 'milk-stop') {
+                            window.app.ui.applyMilkStopTarget(tempC);
+                        } else if (type === 'dose-in') {
                             window.app.ui.updateDoseValue('in', newVal);
                             window.app.ui.updateDrinkRatio();
                         } else if (type === 'drink-out') {
@@ -170,7 +179,7 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                         } else if (type === 'grind') {
                             window.app.ui.updateGrindValue(newVal);
                         }
-                        ui.syncPresetsAfterManualEntry(type);
+                        ui.syncPresetsAfterManualEntry(field);
                     }
                 }
             };
@@ -178,7 +187,8 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
             openModal(mockInput, {
                 previousValues: [],
                 onConfirm: (val) => {},
-                fieldType: type
+                fieldType: field,
+                ...(field === 'milk-stop' ? { config: ui.milkStopNumpadConfig() } : {}),
             });
         });
     });

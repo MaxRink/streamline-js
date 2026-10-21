@@ -3026,40 +3026,6 @@ export function renderSteamSettings() {
                 ` : ''}
             </div>
 
-            <!-- Steam Duration (Time mode) -->
-            ${stopMode === 'time' ? `
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex items-baseline gap-[14px] font-['Inter:Bold',sans-serif] font-bold leading-[0] not-italic relative text-[var(--text-primary)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Duration (seconds)">Duration (seconds)</p>
-                            <span class="text-[20px] font-normal opacity-60 text-[var(--text-primary)]">10 – 120 s</span>
-                        </div>
-                        <div class="flex gap-[20px] h-[72px] items-center">
-                            <button aria-label="Decrease steam duration" class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
-                                    onclick="window.flashPlusMinusButton(this); window.adjustSteamDuration(-5);">
-                                <svg aria-hidden="true" width="36" height="36" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M10.416 25H39.5827" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </button>
-                            <div class="flex items-center justify-center" style="width: 130px;">
-                                <input type="text" inputmode="numeric" pattern="[0-9]*" id="steamDurationInput" class="text-center text-[var(--text-primary)] text-[24px] font-bold bg-transparent border-none w-full"
-                                       value="${duration}" step="5" min="10" max="120"
-                                       onchange="window.updateSteamSetting('duration', parseInt(this.value))">
-                                <span class="ml-1 text-[var(--text-primary)] text-[24px] font-bold" aria-hidden="true">s</span>
-                            </div>
-                            <button aria-label="Increase steam duration" class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
-                                    onclick="window.flashPlusMinusButton(this); window.adjustSteamDuration(5);">
-                                <svg aria-hidden="true" width="36" height="36" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M24.9993 10.4165V39.5832M10.416 24.9998H39.5827" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            ` : ''}
-
             <!-- Stop at Milk Temperature (Milk Temp mode — Bengle) -->
             ${stopMode === 'temperature' && bengle ? `
             <div class="content-stretch flex flex-col items-start relative w-full">
@@ -3097,6 +3063,46 @@ export function renderSteamSettings() {
                 </div>
             </div>
             ` : ''}
+            <!-- Steam Duration: the Time stop itself, and the backstop under a
+                 Milk Temp stop -- the machine stops on whichever comes first, so a
+                 probe that never reaches target still has a cap. Only an Off stop
+                 has no duration at all. -->
+            ${stopMode === 'time' || stopMode === 'temperature' ? `
+            <div class="content-stretch flex flex-col items-start relative w-full">
+                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
+                    <div class="content-stretch flex items-center justify-between relative w-full">
+                        <div class="flex items-baseline gap-[14px] font-['Inter:Bold',sans-serif] font-bold leading-[0] not-italic relative text-[var(--text-primary)] text-[30px]">
+                            <p class="leading-[1.2]" data-i18n-key="${stopMode === 'temperature' ? 'Max duration (seconds)' : 'Duration (seconds)'}">${getTranslation(stopMode === 'temperature' ? 'Max duration (seconds)' : 'Duration (seconds)')}</p>
+                            <span class="text-[20px] font-normal opacity-60 text-[var(--text-primary)]">10 – 120 s</span>
+                        </div>
+                        <div class="flex gap-[20px] h-[72px] items-center">
+                            <button aria-label="Decrease steam duration" class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
+                                    onclick="window.flashPlusMinusButton(this); window.adjustSteamDuration(-5);">
+                                <svg aria-hidden="true" width="36" height="36" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M10.416 25H39.5827" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                            <div class="flex items-center justify-center" style="width: 130px;">
+                                <input type="text" inputmode="numeric" pattern="[0-9]*" id="steamDurationInput" class="text-center text-[var(--text-primary)] text-[24px] font-bold bg-transparent border-none w-full"
+                                       value="${duration}" step="5" min="10" max="120"
+                                       onchange="window.updateSteamSetting('duration', parseInt(this.value))">
+                                <span class="ml-1 text-[var(--text-primary)] text-[24px] font-bold" aria-hidden="true">s</span>
+                            </div>
+                            <button aria-label="Increase steam duration" class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
+                                    onclick="window.flashPlusMinusButton(this); window.adjustSteamDuration(5);">
+                                <svg aria-hidden="true" width="36" height="36" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M24.9993 10.4165V39.5832M10.416 24.9998H39.5827" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                ${stopMode === 'temperature' ? `
+                <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] opacity-60 text-[24px] w-full pt-[12px]" data-i18n-key="Steam also stops after this long if the milk never reaches the target.">${getTranslation('Steam also stops after this long if the milk never reaches the target.')}</p>
+                ` : ''}
+            </div>
+            ` : ''}
+
 
             <!-- Steam Purge Mode -->
             ${settingsCache.de1 ? `

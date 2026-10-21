@@ -236,6 +236,19 @@ export function resolveSteamTileMode(currentMode, milkAvailable, milkStopArmed, 
     return currentMode;
 }
 
+/**
+ * Which field the steam tile's duration slot currently HOLDS, so an editor
+ * opened on it edits what the user is looking at. The slot is not always a
+ * steam duration: with milk available (Bengle + probe) and the stop armed it
+ * shows the milk target in BOTH halves of the Milk|Flow pair.
+ * @param {boolean} milkAvailable  Bengle with the milk probe present
+ * @param {boolean} milkStopArmed  workflow stopAtTemperature > 0
+ * @returns {'milk-stop'|'steam-duration'}  a numpad field type
+ */
+export function steamSlotField(milkAvailable, milkStopArmed) {
+    return milkAvailable && milkStopArmed ? 'milk-stop' : 'steam-duration';
+}
+
 // ── Steam push sync state ────────────────────────────────────────────────────
 // A steam write goes through Rea's workflow queue, which can wedge and 503 the
 // request 30s later (decaid#634). The tile has already painted the new number
