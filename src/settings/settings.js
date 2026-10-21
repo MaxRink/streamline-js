@@ -1,5 +1,6 @@
 import { isEcoSteamEnabled, setEcoSteamEnabled } from '../modules/eco-steam.js';
 import {  getReaSettings, getDe1Settings, getDe1AdvancedSettings, setReaSettings, setDe1Settings, setDe1AdvancedSettings, resetDe1Settings, setMachineState, connectScaleDevice, connectDeviceWebSocket, sendDeviceCommand, awaitDeviceConnectResult, dimDisplay, restoreDisplay, isBlackScreenSaver, setBlackScreenSaver as apiSetBlackScreenSaver, rememberBrightness, getLastDisplayState, currentMachineState, signalHeartbeat, MachineState, getDeviceWebSocket, initDeviceWebSocketWithCallback, saveScaleDeviceId, getScaleDeviceId, connectDisplayWebSocket, sendDisplayCommand, connectUpdateWebSocket, sendUpdateCommand, enableWakeLock, disableWakeLock, isWakeLockEnabled, isWakeProfileEnabled, getWakeProfileId, getPresenceSettings, setPresenceSettings, getPresenceSchedules, createPresenceSchedule, updatePresenceSchedule, deletePresenceSchedule, getAppInfo, getMachineInfo, getWorkflow, updateWorkflow, getAllSkins, getDefaultSkin, setDefaultSkin, updateSkins, stopWebuiServer, startWebuiServer, getWebuiServerStatus, uploadFirmware, applyFirmware, cancelFirmwareUpdate, getFirmwareCatalog, setWaterLevels, API_BASE_URL, listWifiScales, addWifiScale, removeWifiScale, forgetDevice, getLedStrip, setLedStrip, commitLedStrip, getCupWarmer, setCupWarmer, setCupWarmerPrewarm, calibrateScale, tareScale, getSensorCalibration, setSensorCalibration, getLastMachineSnapshot, ensureMachineSnapshotSocket, connectScaleWebSocket, setFirmwareFlashInFlight, persistSharedValue, MILK_STOP_LAST_VALUE_KEY, STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, STEAM_TEMP_LAST_VALUE_KEY, HOT_WATER_VOLUME_LAST_VALUE_KEY, HOT_WATER_TEMP_LAST_VALUE_KEY, approvePluginUpdate, getPlugins, getDecentAccountStatus, getPluginSettings, setPluginSettings, callPluginEndpoint, enablePlugin } from '../modules/api.js';
+import { isCustomSaverBrightness, setCustomSaverBrightnessEnabled, getSaverBrightness, setSaverBrightness, SAVER_BRIGHTNESS_DEFAULT } from '../modules/api.js';
 import * as ui from '../modules/ui.js';
 import { availableProfiles, translateProfileTitle, loadAvailableProfiles } from '../modules/profileManager.js';
 import { initScaling } from '../modules/scaling.js';
@@ -533,6 +534,8 @@ function updateSettingsContentArea(category) {
             syncBrightnessSliderFill(slider, slider.value);
             refreshBrightnessNotices(Number(slider.value));
         }
+        const saverSlider = contentArea.querySelector('#saver-brightness-slider');
+        if (saverSlider) syncBrightnessSliderFill(saverSlider, saverSlider.value);
         if (category === 'theme') {
             setTimeout(() => {
                 ui.initThemeToggle();
@@ -2055,6 +2058,8 @@ export function renderScreenSaverSettings() {
     const hasCustom = screensaverImagesCache.length > 0;
     const cycleSeconds = parseInt(localStorage.getItem('screensaverCycleSeconds'), 10) || 10;
     const blackSaver = isBlackScreenSaver();
+    const customBrightness = isCustomSaverBrightness();
+    const saverBrightness = customBrightness ? getSaverBrightness() : SAVER_BRIGHTNESS_DEFAULT;
     const showClock = localStorage.getItem('screensaverShowClock') !== 'false';
     const clockFormat = resolveScreensaverClockFormat(localStorage.getItem('screensaverClockFormat'));
     const clockPosition = resolveScreensaverClockPosition(localStorage.getItem('screensaverClockPosition'));
@@ -2117,6 +2122,10 @@ export function renderScreenSaverSettings() {
                 ${options.map(o => `<option value="${o.value}" ${current === o.value ? 'selected' : ''} data-i18n-key="${o.label}">${o.label}</option>`).join('')}
             </select>
         </div>`;
+    const modeSegment = (black, label) => `
+        <button type="button" class="flex-1 h-[96px] rounded-[10px] font-['Inter:Bold',sans-serif] font-bold text-[28px] flex items-center justify-center cursor-pointer transition-colors duration-200 ${blackSaver === black ? 'bg-[var(--button-primary-bg)] text-white' : 'bg-[var(--box-color)] border border-[var(--profile-button-outline-color)] text-[#b6c3d7]'}"
+                aria-pressed="${blackSaver === black}"
+                onclick="window.setBlackScreenSaver(${black})" data-i18n-key="${label}">${getTranslation(label)}</button>`;
     const grid = 'display:grid;grid-template-columns:1fr 1fr;column-gap:60px;row-gap:24px;align-items:center;width:100%;';
 
     return `
@@ -2125,16 +2134,38 @@ export function renderScreenSaverSettings() {
                 <p class="leading-[1.2]" data-i18n-key="Screen Saver">Screen Saver</p>
             </div>
 
+            <div class="flex items-center justify-between gap-[20px] w-full">
+                <p id="screensaver-style-label" class="font-bold text-[var(--text-primary)] text-[26px] leading-[1.2]" data-i18n-key="Screen saver style">Screen saver style</p>
+                <div class="flex gap-[16px] w-[260px]" role="group" aria-labelledby="screensaver-style-label">
+                    ${modeSegment(false, 'Images')}
+                    ${modeSegment(true, 'Black')}
+                </div>
+            </div>
+
             <div style="${grid}">
                 ${toggle('Show screen saver when the machine sleeps', 'Show screen saver when the machine sleeps', enabled && !blackSaver, 'window.setScreensaverEnabled')}
                 ${select('screensaver-clock-format', 'Clock format', SCREENSAVER_CLOCK_FORMATS, clockFormat, 'window.setScreensaverClockFormat')}
                 ${toggle('Show date and time', 'Show date and time', showClock, 'window.setScreensaverShowClock', 'screensaver-show-clock')}
                 ${select('screensaver-date-format', 'Date format', SCREENSAVER_DATE_FORMATS, dateFormat, 'window.setScreensaverDateFormat')}
-                ${brightnessSupported ? toggle('Black screen saver', 'Black screen saver', blackSaver, 'window.setBlackScreenSaver', 'black-screen-saver') : '<div></div>'}
                 ${select('screensaver-clock-position', 'Clock position', SCREENSAVER_CLOCK_POSITIONS, clockPosition, 'window.setScreensaverClockPosition')}
             </div>
 
+            ${!blackSaver ? `
             <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
+
+            ${brightnessSupported ? `
+            <div class="flex flex-col gap-[16px] w-full">
+                <div class="flex items-center justify-between gap-[20px]">
+                    <label for="saver-brightness-slider" class="font-bold text-[var(--text-primary)] text-[26px] leading-[1.2]" data-i18n-key="Screen saver brightness">Screen saver brightness</label>
+                    ${toggle('Custom', 'Custom', customBrightness, 'window.setCustomSaverBrightness', 'saver-brightness-custom')}
+                </div>
+                <div class="flex items-center gap-[30px] w-full">
+                    <input type="range" id="saver-brightness-slider" min="0" max="100" step="1" value="${saverBrightness}"
+                           class="brightness-slider flex-grow" ${customBrightness ? '' : 'disabled'}
+                           oninput="window.setSaverBrightnessLevel(this.value)">
+                    <span id="saver-brightness-value" class="text-[var(--text-primary)] text-[24px]">${saverBrightness}%</span>
+                </div>
+            </div>` : ''}
 
             <div class="w-full">
                 <div class="flex items-center justify-between gap-[16px]">
@@ -2166,6 +2197,7 @@ export function renderScreenSaverSettings() {
 
             <input type="file" id="screensaver-file-input" class="hidden" multiple accept="image/*"
                    onchange="window.addScreensaverFiles(this.files)">
+            ` : ''}
         </div>
     `;
 }
@@ -8221,6 +8253,22 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
         // applied on the next sleep -- changing it must not dim the screen being read.
         ui.showToast(getTranslation('Saved'), 2000, 'success');
         if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
+    };
+
+    window.setCustomSaverBrightness = function(enabled) {
+        setCustomSaverBrightnessEnabled(enabled);
+        if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
+    };
+
+    window.setSaverBrightnessLevel = function(value) {
+        const level = setSaverBrightness(value);
+        const slider = document.getElementById('saver-brightness-slider');
+        if (slider) {
+            slider.value = level;
+            syncBrightnessSliderFill(slider, level);
+        }
+        const readout = document.getElementById('saver-brightness-value');
+        if (readout) readout.textContent = `${level}%`;
     };
 
     window.setWaterTankUnit = function(unit) {
