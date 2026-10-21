@@ -228,3 +228,17 @@ export function favStripCells(favs, max = 4) {
     return sortFavs(favs).slice(0, max).map(f =>
         f.alwaysOnDashboard === false ? { fav: null, hidden: f } : { fav: f, hidden: null });
 }
+
+// A failed DYE2 KV read (getDye2KvArray -> null) or plugin-list read must not
+// replace what the strip already shows: a transient error would otherwise empty
+// the F/R cells and flip dial-in recording back to the legacy auto-save.
+// `null`/non-array means "read failed"; a real [] is a genuinely empty list.
+export function keepPreviousOnFailure(previous, next) {
+    return Array.isArray(next) ? next : previous;
+}
+
+// `plugins` is null when the plugin list could not be read; the previous
+// capability then stands. Otherwise it is re-derived from the fresh list.
+export function resolveRecordsDialIn(previous, plugins, derive) {
+    return plugins == null ? previous : derive(plugins);
+}

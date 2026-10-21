@@ -27,7 +27,7 @@ import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode, showToast } from './ui.js';
 import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } from './dye-context.js';
-import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, armedSelectionId, recipeStripCells, favStripCells } from './dye-selection.js';
+import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, recipeStripCells, favStripCells } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
 const RECIPES_KEY = 'recipes';
@@ -80,12 +80,14 @@ export async function loadDyeStripData() {
         getDye2KvArray(RECIPES_KEY),
         getPlugins().catch(() => null),
     ]);
-    favCache = Array.isArray(favs) ? favs : [];
-    recipeCache = Array.isArray(recipes) ? recipes : [];
-    // An unreachable bridge reads as "does not record", so the fallback auto-save
-    // stays on: writing the same values twice is recoverable, writing them nowhere
-    // is not.
-    dye2RecordsDialIn = pluginRecordsDialIn(plugins, PLUGIN_ID);
+    // A failed read (null) keeps the previous cache: a transient error must not
+    // empty the strip or flip the recording mode mid-session.
+    favCache = keepPreviousOnFailure(favCache, favs);
+    recipeCache = keepPreviousOnFailure(recipeCache, recipes);
+    // First load with an unreachable bridge reads as "does not record" (the
+    // initial false), so the fallback auto-save stays on: writing the same values
+    // twice is recoverable, writing them nowhere is not.
+    dye2RecordsDialIn = resolveRecordsDialIn(dye2RecordsDialIn, plugins, p => pluginRecordsDialIn(p, PLUGIN_ID));
     logger.info(`dyeStrip: loaded ${favCache.length} favs, ${recipeCache.length} recipes${dye2RecordsDialIn ? ' (DYE2 records dial-in)' : ''}`);
 }
 
@@ -1069,10 +1071,9 @@ function wireOnce() {
     // openPluginOverlay); returning via the browser Back button restores this page
     // from bfcache — a frozen pre-edit snapshot that fires `pageshow` (persisted),
     // not focus/visibilitychange. Mirrors profile_selector.js's plugin-return guard.
-    // getDye2KvArray coerces a fetch error to [] (its own bridge-quirk handling), so
-    // a transient failure isn't visible as a rejection here — a fetch fired right as
-    // the browser wakes the network stack back up from bfcache can intermittently
-    // fail and get read as "no favourites". Retry once shortly after to cover that.
+    // A fetch fired right as the browser wakes the network stack back up from
+    // bfcache can intermittently fail (getDye2KvArray -> null, caches kept).
+    // Retry once shortly after to cover that.
     // bfcache restore also means this page never reloaded, so a selection parked
     // for the trip is stale: it would re-arm over whatever is chosen next.
     window.addEventListener('pageshow', (e) => {
@@ -1397,6 +1398,7 @@ function handleWorkflowUpdatedForAutoSave(workflow, dataToSend) {
 async function saveItemFields(kind, id, fields) {
     const target = AUTOSAVE_TARGETS[kind];
     const list = await getDye2KvArray(target.key);
+    if (!list) return; // read failed -- never write back over data we could not see
     const idx = list.findIndex(r => r && String(r.id) === String(id));
     if (idx === -1) return; // deleted or renumbered since — nothing to save onto
     const next = list.slice();
@@ -1412,6 +1414,7 @@ async function saveItemFields(kind, id, fields) {
 async function saveItemTopLevel(kind, id, fields) {
     const key = kind === 'recipe' ? RECIPES_KEY : AF_KEY;
     const list = await getDye2KvArray(key);
+    if (!list) throw new Error('DYE2 read failed'); // never write back over data we could not see
     const idx = list.findIndex(r => r && String(r.id) === String(id));
     if (idx === -1) return false;
     const next = list.slice();

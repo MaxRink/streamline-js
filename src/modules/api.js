@@ -1355,15 +1355,17 @@ export const DYE2_KV_NAMESPACE = 'dye2.reaplugin';
 
 // Read one DYE2 collection key as an array. A never-written key makes the bridge
 // return 200 with a non-array body (a known quirk), so coerce anything that
-// isn't an array — and any transport error — to [] so the header degrades to
-// "no DYE2 data" rather than throwing.
+// isn't an array (Decaid answers a missing key with 200 `null`) to [] so the
+// header degrades to "no DYE2 data". A transport/HTTP error returns null, NOT [],
+// so callers can tell "the read failed" from "genuinely empty" and keep what
+// they already have instead of wiping it. Never throws.
 export async function getDye2KvArray(key) {
     try {
         const val = await getKVValue(DYE2_KV_NAMESPACE, key);
         return Array.isArray(val) ? val : [];
     } catch (e) {
-        logger.info(`getDye2KvArray(${key}) → [] (${e.message})`);
-        return [];
+        logger.info(`getDye2KvArray(${key}) → null (${e.message})`);
+        return null;
     }
 }
 

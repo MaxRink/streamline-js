@@ -171,3 +171,30 @@ test('saveChanges retries once after DYE2 auto-updated', async () => {
     assert.equal(state.updates, 1);
     assert.equal(state.posts.length, 2, 'one retry, no loop');
 });
+// ── A failed DYE2 read keeps what the strip already has ──────────────────────
+import { keepPreviousOnFailure, resolveRecordsDialIn } from '../src/modules/dye-selection.js';
+
+test('keepPreviousOnFailure: null (failed read) keeps previous, a real [] replaces it', () => {
+    const prev = [{ id: 1 }];
+    assert.equal(keepPreviousOnFailure(prev, null), prev);
+    assert.equal(keepPreviousOnFailure(prev, undefined), prev);
+    assert.deepEqual(keepPreviousOnFailure(prev, []), []);
+    assert.deepEqual(keepPreviousOnFailure(prev, [{ id: 2 }]), [{ id: 2 }]);
+});
+
+test('resolveRecordsDialIn: unreadable plugin list keeps the previous capability', () => {
+    const derive = (p) => p.length > 0;
+    assert.equal(resolveRecordsDialIn(true, null, derive), true);
+    assert.equal(resolveRecordsDialIn(false, null, derive), false);
+    assert.equal(resolveRecordsDialIn(true, [], derive), false);
+    assert.equal(resolveRecordsDialIn(false, [1], derive), true);
+});
+
+test('saveItemTopLevel throws instead of writing when the DYE2 read failed', async () => {
+    const writes = [];
+    const fn = new Function('RECIPES_KEY', 'AF_KEY', 'getDye2KvArray', 'setDye2KvArray', 'logger',
+        `let recipeCache = [], favCache = []; ${body}\nreturn saveItemTopLevel;`)(
+        'recipes', 'autoFavourites', async () => null, async (k, v) => writes.push([k, v]), { info() {} });
+    await assert.rejects(() => fn('recipe', '1', { x: false }));
+    assert.equal(writes.length, 0);
+});
