@@ -9,7 +9,11 @@ import {
     LOW_BATTERY_NOTICE,
     QUEUED_NOTICE,
     isSystemManagedBrightness,
-    brightnessNotices
+    brightnessNotices,
+    REQUESTED_APPLIED_TEMPLATE,
+    GO_TO_SETTING_LABEL,
+    LOW_BATTERY_SETTING_CATEGORY,
+    requestedBrightnessReadout
 } from '../src/modules/brightness-notice.js';
 
 test('100 is the only value that hands control to the system', () => {
@@ -78,4 +82,21 @@ test('every notice can show together in a stable order', () => {
         brightnessNotices({ brightness: 100, lowBatteryActive: true, blackScreenSaver: true }),
         [SYSTEM_MANAGED_NOTICE, LOW_BATTERY_NOTICE, SAVER_BLACK_NOTICE]
     );
+});
+
+test('requested-vs-applied readout appears only when the two differ', () => {
+    assert.equal(requestedBrightnessReadout({ requested: 80, applied: 20 }, REQUESTED_APPLIED_TEMPLATE), 'Requested 80% \u00b7 applied 20%');
+    assert.equal(requestedBrightnessReadout({ requested: 20, applied: 20 }), null);
+    assert.equal(requestedBrightnessReadout({ requested: 20.2, applied: 19.8 }), null);
+    for (const bad of [undefined, null, NaN, '80', Infinity]) {
+        assert.equal(requestedBrightnessReadout({ requested: bad, applied: 20 }), null);
+        assert.equal(requestedBrightnessReadout({ requested: 80, applied: bad }), null);
+    }
+    assert.equal(requestedBrightnessReadout(), null);
+    assert.equal(requestedBrightnessReadout({ requested: 80, applied: 20 }, 'Demande {requested}% / appliquee {applied}%'), 'Demande 80% / appliquee 20%');
+});
+
+test('readout template and jump label are safe static i18n keys', () => {
+    for (const text of [REQUESTED_APPLIED_TEMPLATE, GO_TO_SETTING_LABEL]) assert.doesNotMatch(text, /[<>&"']/);
+    assert.equal(LOW_BATTERY_SETTING_CATEGORY, 'usbchargermode');
 });

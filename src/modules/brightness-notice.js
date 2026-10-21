@@ -37,6 +37,32 @@ export const LOW_BATTERY_NOTICE =
  *  the queued command goes out when it reconnects. */
 export const QUEUED_NOTICE = 'Will apply when the display reconnects';
 
+/** Label of the jump link under the low-battery notice, and the settings-tree
+ *  `settingsCategory` (Machine, USB) that renders the lowBatteryBrightnessLimit toggle. */
+export const GO_TO_SETTING_LABEL = 'Go to setting';
+export const LOW_BATTERY_SETTING_CATEGORY = 'usbchargermode';
+
+/** Translation key / template for the requested-vs-applied readout. The numbers are
+ *  substituted after translation, so the key itself stays static and markup-free. */
+export const REQUESTED_APPLIED_TEMPLATE = 'Requested {requested}% \u00b7 applied {applied}%';
+
+/**
+ * Secondary readout shown when REA applies a level other than the one requested
+ * (DisplayState.requestedBrightness vs brightness). Null when there is nothing to
+ * say: either value missing or non-numeric, or both round to the same percent.
+ * `template` is the translated REQUESTED_APPLIED_TEMPLATE.
+ */
+export function requestedBrightnessReadout({ requested, applied } = {}, template = REQUESTED_APPLIED_TEMPLATE) {
+    if (typeof requested !== 'number' || typeof applied !== 'number') return null;
+    if (!Number.isFinite(requested) || !Number.isFinite(applied)) return null;
+    const requestedPct = Math.round(requested);
+    const appliedPct = Math.round(applied);
+    if (requestedPct === appliedPct) return null;
+    return template
+        .replace('{requested}', String(requestedPct))
+        .replace('{applied}', String(appliedPct));
+}
+
 export function isSystemManagedBrightness(value) {
     return Number.isFinite(value) && value >= SYSTEM_MANAGED_BRIGHTNESS;
 }

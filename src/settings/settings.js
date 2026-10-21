@@ -8,7 +8,7 @@ import { getTempUnit, setTempUnit, formatTemp, fromDisplayTemp, boundToDisplay }
 import { loadPage } from '../modules/router.js'; // Singular and correctly formatted import
 import { logger } from '../modules/logger.js';
 import { isBengleMachine, setMachineModel } from '../modules/machine.js';
-import { brightnessNotices, QUEUED_NOTICE } from '../modules/brightness-notice.js';
+import { brightnessNotices, QUEUED_NOTICE, LOW_BATTERY_NOTICE, GO_TO_SETTING_LABEL, LOW_BATTERY_SETTING_CATEGORY, REQUESTED_APPLIED_TEMPLATE, requestedBrightnessReadout } from '../modules/brightness-notice.js';
 import { resolveSteamStopMode, applyMilkProbeGate } from '../modules/steam-mode.js';
 import { summarizeFirmwareCatalog, isFirmwareCancellationError, estimateRemainingSeconds, isUploadComplete, estimateVerifyRemainingSeconds, estimateTotalRemainingSeconds, FIRMWARE_VERIFY_SECONDS, formatDuration } from '../modules/firmware-progress.js';
 import { setScreensaverSuppressed, isMachineAsleep } from '../modules/screensaver-policy.js';
@@ -529,7 +529,10 @@ function updateSettingsContentArea(category) {
         // The CSS default is a fixed 75% stop, so without this the bar sits at 75%
         // on first paint no matter what the value is.
         const slider = contentArea.querySelector('#brightness-slider');
-        if (slider) syncBrightnessSliderFill(slider, slider.value);
+        if (slider) {
+            syncBrightnessSliderFill(slider, slider.value);
+            refreshBrightnessNotices(Number(slider.value));
+        }
         if (category === 'theme') {
             setTimeout(() => {
                 ui.initThemeToggle();
@@ -2194,6 +2197,7 @@ export function renderBrightnessSettings() {
                            class="w-[140px] h-[62px] px-[20px] rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] bg-[var(--box-color)] text-[var(--text-primary)] text-[24px] text-center"
                            onchange="handleBrightnessChange(this.value)">
                 </div>
+                <p id="brightness-requested-readout" class="${BRIGHTNESS_NOTICE_CLASS}" ${requestedBrightnessReadout({ requested: ds?.requestedBrightness, applied: ds?.brightness }) ? '' : 'hidden'}>${escapeHtml(requestedBrightnessReadout({ requested: ds?.requestedBrightness, applied: ds?.brightness }, getTranslation(REQUESTED_APPLIED_TEMPLATE)) || '')}</p>
                 <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[32px] w-full" data-i18n-key="Adjust screen brightness level">
                     Adjust screen brightness level
                 </p>
@@ -2213,7 +2217,7 @@ let brightnessWriteQueued = false;
 
 // Re-render the notices under the slider. The panel is long-lived: display frames
 // and slider drags change which notices apply, so it cannot be a render-time snapshot.
-function refreshBrightnessNotices(brightness) {
+function refreshBrightnessNotices(brightness, frame = displayState()) {
     const container = document.getElementById('brightness-notices');
     if (!container) return;
     const notices = brightnessNotices({
@@ -2222,13 +2226,65 @@ function refreshBrightnessNotices(brightness) {
         lowBatteryActive: displayState()?.lowBatteryBrightnessActive === true
     });
     if (brightnessWriteQueued) notices.push(QUEUED_NOTICE);
-    container.replaceChildren(...notices.map(notice => {
+    const nodes = [];
+    for (const notice of notices) {
         const p = document.createElement('p');
         p.className = BRIGHTNESS_NOTICE_CLASS;
         p.setAttribute('data-i18n-key', notice);
         p.textContent = getTranslation(notice);
-        return p;
-    }));
+        nodes.push(p);
+        if (notice === LOW_BATTERY_NOTICE) {
+            // Separate element so the notice text stays plain and translatable.
+            // Clicks are handled by the delegated listener bound in initializeSettings.
+            const jump = document.createElement('button');
+            jump.type = 'button';
+            jump.dataset.settingsJump = LOW_BATTERY_SETTING_CATEGORY;
+            jump.className = "self-start h-[62px] px-[32px] rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] text-[var(--text-primary)] text-[24px]";
+            jump.setAttribute('data-i18n-key', GO_TO_SETTING_LABEL);
+            jump.textContent = getTranslation(GO_TO_SETTING_LABEL);
+            nodes.push(jump);
+        }
+    }
+    container.replaceChildren(...nodes);
+
+    const readout = document.getElementById('brightness-requested-readout');
+    if (readout) {
+        const text = requestedBrightnessReadout(
+            { requested: frame?.requestedBrightness, applied: frame?.brightness },
+            getTranslation(REQUESTED_APPLIED_TEMPLATE)
+        );
+        readout.textContent = text || '';
+        readout.hidden = !text;
+    }
+}
+
+// Jump from a settings notice to the control it points at, through the same
+// delegated nav clicks a user would make (main category button, then subcategory).
+function jumpToSettingCategory(settingsCategory) {
+    const mainCategory = Object.keys(settingsTree).find(key =>
+        settingsTree[key].subcategories.some(sub => sub.settingsCategory === settingsCategory));
+    if (!mainCategory) return;
+    const mainButton = document.getElementById(`${mainCategory}-btn`);
+    if (!mainButton) return;
+    mainButton.click();
+    document.querySelector(`#sub-categories-panel .settings-subnav-btn[data-category="${CSS.escape(settingsCategory)}"]`)?.click();
+}
+
+let settingsJumpBinding = null;
+function unbindSettingsJump() {
+    settingsJumpBinding?.target.removeEventListener('click', settingsJumpBinding.handler);
+    settingsJumpBinding = null;
+}
+function bindSettingsJump() {
+    unbindSettingsJump();
+    const target = document.getElementById('settings-content-area');
+    if (!target) return;
+    const handler = event => {
+        const button = event.target.closest?.('[data-settings-jump]');
+        if (button) jumpToSettingCategory(button.dataset.settingsJump);
+    };
+    target.addEventListener('click', handler);
+    settingsJumpBinding = { target, handler };
 }
 
 // Render Wake Lock settings
@@ -7975,6 +8031,7 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     initDisplayWebSocket();
 
     // Set up event listeners
+    bindSettingsJump();
     const cancelBtn = document.getElementById('cancel-settings-btn');
     if (cancelBtn) {
         cancelBtn.addEventListener('click', () => {
@@ -9793,6 +9850,7 @@ function setupSettingsSearch(activateResult) {
 }
 
 export function cleanupSettings() {
+    unbindSettingsJump();
     stopCupWarmerPoll();
     clearTimeout(_settingsNumpadTimer);
     _settingsNumpadTimer = null;
@@ -9871,7 +9929,7 @@ function handleDisplayState(data) {
     // A frame means the socket is open, so any queued write has been flushed.
     brightnessWriteQueued = false;
     const frameBrightness = data.brightness ?? data.requestedBrightness;
-    if (frameBrightness !== undefined) refreshBrightnessNotices(frameBrightness);
+    if (frameBrightness !== undefined) refreshBrightnessNotices(frameBrightness, data);
 
     // Update wake-lock toggle if it exists. wakeLockOverride (not
     // wakeLockEnabled) is REA's record of whether THIS APP asked for the
@@ -10052,7 +10110,9 @@ window.handleBrightnessChange = async function(value) {
         // command is still sent on reconnect, so it is remembered either way.
         rememberBrightness(brightnessValue);
         brightnessWriteQueued = sendResult === 'queued';
-        refreshBrightnessNotices(brightnessValue);
+        // The readout compares REA's own two fields; a local drag has no applied
+        // value yet, so hide it until the next display frame.
+        refreshBrightnessNotices(brightnessValue, null);
     } catch (error) {
         console.error('Error adjusting brightness:', error);
     }

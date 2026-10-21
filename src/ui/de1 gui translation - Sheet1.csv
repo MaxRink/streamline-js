@@ -1838,3 +1838,5 @@ At 100% the system controls screen brightness and the level actually used may di
 "With the black screen saver the screen goes dark rather than dim, and tapping it restores your brightness.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Brightness is limited to 20% while the battery is low. Turn off Dim the screen when low battery under Machine, USB in Settings to remove the limit.,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Will apply when the display reconnects,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Go to setting,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Requested {requested}% · applied {applied}%,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
