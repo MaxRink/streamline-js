@@ -209,11 +209,15 @@ export function milkTelemetryText(present, tempC) {
  * (Bengle machine + probe present) and the armed milk stop
  * (workflow stopAtTemperature > 0). Re-run whenever either input changes.
  *
- * With milk available the tile offers Milk|Flow: an armed stop pins Milk
- * ('temperature'); otherwise 'temperature' (just disarmed) and 'time' (not in
- * this pair) land on 'flow' — an un-armed stop never jumps back to Milk on its
- * own, so after a probe round-trip the mode stays on the fallback until the
- * user re-selects Milk. Without milk the tile offers Time|Flow: leaving
+ * With milk available the tile offers Milk|Flow, and the milk stop stays armed
+ * across BOTH of them (ui.js toggleSteamMode) — the tile shows the milk target
+ * either way and Flow only changes which number +/- edits. So an armed stop no
+ * longer implies Milk mode: Flow stays Flow, while 'temperature' (just
+ * disarmed) and 'time' (not in this pair) land on 'flow'. An un-armed stop
+ * never jumps back to Milk on its own, so after a probe round-trip the mode
+ * stays on the fallback until the user re-selects Milk (the probe-return
+ * restore in setMilkProbePresent pins it explicitly instead). Without milk the
+ * tile offers Time|Flow: leaving
  * 'temperature' falls back to the user's recorded non-temperature stop mode —
  * 'off' shows the flow knob (no auto-stop → duration is meaningless), anything
  * else the duration knob ('time'); non-temperature modes pass through.
@@ -225,8 +229,8 @@ export function milkTelemetryText(present, tempC) {
  */
 export function resolveSteamTileMode(currentMode, milkAvailable, milkStopArmed, fallbackMode) {
     if (milkAvailable) {
-        if (milkStopArmed) return 'temperature';
-        return (currentMode === 'temperature' || currentMode === 'time') ? 'flow' : currentMode;
+        if (currentMode === 'flow') return 'flow';
+        return milkStopArmed ? 'temperature' : 'flow';
     }
     if (currentMode === 'temperature') return fallbackMode === 'off' ? 'flow' : 'time';
     return currentMode;

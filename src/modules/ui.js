@@ -930,12 +930,15 @@ export function setMilkProbePresent(present) {
     }
     if (present && milkStopLostToProbe) {
         // Probe back → restore the Milk stop its loss displaced, exactly as a
-        // tap on the tile would: re-arm on the machine and re-record the mode.
-        // The resolver then pins 'temperature' and the shared display update
-        // below repaints the VALUE in the same breath — the tile must never
-        // sit on Milk while still showing the fallback's seconds.
+        // tap on the tile would: re-arm on the machine, re-select Milk and
+        // re-record the mode. Milk is pinned here rather than left to the
+        // resolver, which keeps an armed stop in Flow mode now; the shared
+        // display update below repaints the VALUE in the same breath — the
+        // tile must never sit on Milk while still showing the fallback's
+        // seconds.
         milkStopLostToProbe = false;
         milkStopArmed = true;
+        steamMode = 'temperature';
         setStopAtTemperature(currentMilkStop).catch(e => logger.error(e));
         recordSteamStopMode('temperature');
     }
@@ -982,13 +985,13 @@ export function updateSteamDisplay(data) {
             steamMode, isBengleMachine() && milkProbePresent, milkStopArmed, readSteamStopFallback());
     }
 
+    const milkAvailable = isBengleMachine() && milkProbePresent;
     document.querySelectorAll('[data-steam-mode]').forEach(label => {
         const selected = label.dataset.steamMode === steamMode || (label.dataset.steamMode === 'time' && steamMode === 'temperature');
         label.style.color = selected ? 'var(--mimoja-blue-v2)' : '';
         if (label.dataset.steamMode === 'time') {
-            const milk = isBengleMachine() && milkProbePresent;
-            label.textContent = milk ? 'M' : 'T';
-            label.title = getTranslation(milk ? 'Milk' : 'Time');
+            label.textContent = milkAvailable ? 'M' : 'T';
+            label.title = getTranslation(milkAvailable ? 'Milk' : 'Time');
         }
     });
     flowEl.textContent = `${currentSteamFlow.toFixed(1)}`;
@@ -1023,7 +1026,14 @@ export function updateSteamDisplay(data) {
         modeTimeEl.className = ACTIVE;
         modeFlowEl.className = INACTIVE;
     } else { // flow mode
-        durationEl.textContent = formatSteamDuration(currentSteamDuration);
+        // The small slot belongs to the OTHER half of the pair, so it follows
+        // the label: the milk target while the pair is Milk|Flow and the stop
+        // is armed (the toggle keeps it armed in Flow), the steam time
+        // otherwise -- including a Bengle whose stop was turned off in
+        // Settings, where the seconds are what actually ends the steam.
+        durationEl.textContent = milkAvailable && milkStopArmed
+            ? formatTemp(currentMilkStop, 0)
+            : formatSteamDuration(currentSteamDuration);
         flowEl.classList.remove('text-[20px]');
         flowEl.classList.add('text-[26px]', 'font-bold', 'text-[var(--text-primary)]');
         durationEl.classList.remove('text-[26px]', 'font-bold');
@@ -1574,9 +1584,10 @@ export async function setSteamFlowPresetsFromMachineModel(model) {
 
 async function toggleSteamMode() {
     if (calibratedSteamApplying) return;
+    const milkAvailable = isBengleMachine() && milkProbePresent;
     const modes = steamModeCycle({
         autoAvailable: calibratedSteamAvailable,
-        milkAvailable: isBengleMachine() && milkProbePresent,
+        milkAvailable,
     });
     const currentIndex = modes.indexOf(steamMode);
     const next = modes[(currentIndex + 1 + modes.length) % modes.length];
@@ -1593,8 +1604,16 @@ async function toggleSteamMode() {
             if (steamMode === 'auto') await calibratedSteam.leave();
             steamMode = next;
             milkStopLostToProbe = false;
-            milkStopArmed = next === 'temperature';
-            await setStopAtTemperature(milkStopArmed ? currentMilkStop : 0);
+            // With milk available the pair is Milk|Flow and the tile shows the
+            // milk target in both, so the stop stays armed across the toggle --
+            // Flow only changes which number +/- edits. Disarming it there used
+            // to drop the steam back onto the Time/Off fallback, which is why
+            // Flow mode painted the fallback's seconds under a "Milk" label.
+            const nextArmed = milkAvailable || next === 'temperature';
+            if (nextArmed !== milkStopArmed) {
+                milkStopArmed = nextArmed;
+                await setStopAtTemperature(nextArmed ? currentMilkStop : 0);
+            }
             recordSteamStopMode(milkStopArmed ? 'temperature' : (readSteamStopFallback() === 'off' ? 'off' : 'time'));
         }
     } catch (error) {

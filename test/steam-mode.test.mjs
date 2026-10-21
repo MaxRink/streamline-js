@@ -214,11 +214,13 @@ test('gate: non-temperature modes are untouched regardless of the probe', () => 
 // usable (Bengle + probe); a probe loss lands the tile on the recorded
 // Time/Off fallback, and probe return does not jump back to Milk on its own.
 
-test('tile: an armed milk stop with milk available pins Milk mode', () => {
+test('tile: an armed milk stop with milk available pins Milk mode, but leaves Flow alone', () => {
     // Boot restore: the workflow kept an armed stop and the probe reports in.
-    assert.equal(resolveSteamTileMode('flow', true, true, 'time'), 'temperature');
     assert.equal(resolveSteamTileMode('time', true, true, null), 'temperature');
     assert.equal(resolveSteamTileMode('temperature', true, true, 'off'), 'temperature');
+    // The stop stays armed while the tile sits on Flow (the Milk|Flow toggle
+    // no longer disarms it), so armed must NOT yank the tile back to Milk.
+    assert.equal(resolveSteamTileMode('flow', true, true, 'time'), 'flow');
 });
 
 test('tile: with milk available but un-armed, the pair is Milk|Flow and nothing auto-arms', () => {
