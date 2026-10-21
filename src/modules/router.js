@@ -151,6 +151,7 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
 
     const mainPage = document.getElementById('main-page');
     const subpageHost = document.getElementById('subpage-host');
+    let hidMainPage = false;
 
     try {
         const pageHtml = await fetchPage(pageUrl);
@@ -175,7 +176,10 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
 
         const mainPageWasVisible = mainPage && mainPage.style.display !== 'none';
         if (mainPage) mainPage.style.display = 'none';
-        if (mainPageWasVisible) document.dispatchEvent(new Event('streamline:mainpagehidden'));
+        if (mainPageWasVisible) {
+            hidMainPage = true;
+            document.dispatchEvent(new Event('streamline:mainpagehidden'));
+        }
         subpageHost.style.display = '';
 
         // Apply current language to freshly injected HTML before page init runs
@@ -214,5 +218,8 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
         console.error('Error loading page:', error);
         if (mainPage) mainPage.style.display = '';
         if (subpageHost) subpageHost.style.display = 'none';
+        // Paint writers are gated on this event; without it they stay frozen
+        // after a failed subpage load restores the main page.
+        if (hidMainPage) document.dispatchEvent(new Event('streamline:mainpagevisible'));
     }
 }

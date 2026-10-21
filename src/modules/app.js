@@ -783,6 +783,30 @@ function currentMilkProbeReading() {
     return latestSensorTemp;
 }
 
+// The dashboard's pure-paint writers (GHC stop button, sidebar dimming, shot
+// strip, temperatures) skip frames while a sub-page covers it; the last frame
+// is replayed on return. Fed by the router's events, so no per-frame DOM read.
+let mainPageShown = document.getElementById('main-page')?.style.display !== 'none';
+let lastMainPageFrame = null;
+
+function paintMainPageStrip({ data, state, activeStep }) {
+    paintShotStrip({ sample: data, weight: isScaleConnected || isBengleMachine() ? latestScaleWeight : null, state,
+        // Same source as the chart's weight-flow trace (no local EMA fallback: absent shows '-').
+        weightFlow: isBengleMachine() ? (data.weightFlow ?? null) : latestScaleWeightFlow,
+        step: activeStep });
+}
+
+document.addEventListener('streamline:mainpagehidden', () => { mainPageShown = false; });
+document.addEventListener('streamline:mainpagevisible', () => {
+    mainPageShown = true;
+    if (!lastMainPageFrame) return;
+    const { data, state, isActiveState } = lastMainPageFrame;
+    ui.updateGhcStopButton(isActiveState);
+    ui.updateSidebarOverlay(state);
+    paintMainPageStrip(lastMainPageFrame);
+    ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature });
+});
+
 function handleData(data) {
     if (!data?.state) {
         logger.warn('Received WebSocket message with missing state:', data);
@@ -988,8 +1012,15 @@ function handleData(data) {
     // steam -- without this, a steam pulled from the GHC leaves the tablet
     // untouched and the boiler drops as if the machine had sat idle.
     if (isActiveState) noteEcoSteamActivity();
-    ui.updateGhcStopButton(isActiveState);
-    ui.updateSidebarOverlay(state);
+    // The running profile step, resolved once. The active record follows favourite
+    // switches; the chart's profile is only set on page load.
+    const activeStep = (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())
+        ?.steps?.[data.profileFrame] || null;
+    lastMainPageFrame = { data, state, isActiveState, activeStep };
+    if (mainPageShown) {
+        ui.updateGhcStopButton(isActiveState);
+        ui.updateSidebarOverlay(state);
+    }
 
     // Update UI elements
     // Pass detailed status information to match the enhanced updateMachineStatus function
@@ -998,23 +1029,17 @@ function handleData(data) {
         state: state,
         substate: substate,
         stepName: formatStateString(substate), // Use formatted substate as step name
-        // The running profile step's own name. The active record follows favourite
-        // switches; the chart's profile is only set on page load.
-        profileStepName: (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())
-            ?.steps?.[data.profileFrame]?.name?.trim() || '',
+        // The running profile step's own name.
+        profileStepName: activeStep?.name?.trim() || '',
         timeValue: data.elapsedTime, // Use elapsed time from data if available
         isClickable: (substate === 'preinfusion' || substate === 'pouring'), // Make preinfusion/pouring steps clickable
         isHeating: isHeating, // Pass heating state to UI
         isHeatingFromTimeToReady: heatingSeconds > 0, // countdown available -> render the two-colour form
         steamTemperature: data.steamTemperature // Steam boiler temp — gates the steam "Heating" message
     });
-    paintShotStrip({ sample: data, weight: isScaleConnected || isBengleMachine() ? latestScaleWeight : null, state,
-        // Same source as the chart's weight-flow trace (no local EMA fallback: absent shows '-').
-        weightFlow: isBengleMachine() ? (data.weightFlow ?? null) : latestScaleWeightFlow,
-        // The active record follows favourite switches; the chart's profile is only set on page load.
-        step: (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())?.steps?.[data.profileFrame] || null });
+    if (mainPageShown) paintMainPageStrip(lastMainPageFrame);
     ui.updateSleepButton(state);
-    ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature });
+    if (mainPageShown) ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature });
     updateMilkProbeFromSnapshot(currentMilkProbeReading());
 
     // Update Chart and Shot Data Table

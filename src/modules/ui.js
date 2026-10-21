@@ -2837,10 +2837,12 @@ export function updateSleepButton(state) {
     if (sleepButton) {
         if (state === 'sleeping') {
             const awake = getTranslation('awake');
-            sleepButton.textContent = awake.charAt(0).toUpperCase() + awake.slice(1);
+            const label = awake.charAt(0).toUpperCase() + awake.slice(1);
+            if (sleepButton.textContent !== label) sleepButton.textContent = label;
             sleepButton.setAttribute('data-i18n-key', 'awake');
         } else {
-            sleepButton.textContent = getTranslation('Sleep');
+            const label = getTranslation('Sleep');
+            if (sleepButton.textContent !== label) sleepButton.textContent = label;
             sleepButton.setAttribute('data-i18n-key', 'Sleep');
         }
     }
@@ -3344,15 +3346,12 @@ export function updateTemperatures({ mix, group, steam }) {
     const groupTempEl = document.getElementById('data-group-temp');
     const steamTempEl = document.getElementById('data-steam-temp');
 
-    if (mixTempEl) {
-        mixTempEl.textContent = formatTemp(mix, 1);
-    }
-    if (groupTempEl) {
-        groupTempEl.textContent = formatTemp(group, 1);
-    }
-    if (steamTempEl) {
-        steamTempEl.textContent = formatTemp(steam, 0);
-    }
+    // Compare against the element, not a cache: a language or unit re-render
+    // and a re-injected page both stay correct.
+    const setIfChanged = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
+    setIfChanged(mixTempEl, formatTemp(mix, 1));
+    setIfChanged(groupTempEl, formatTemp(group, 1));
+    setIfChanged(steamTempEl, formatTemp(steam, 0));
 }
 
 // Live milk-probe temperature in the top telemetry row (right after Weight).
@@ -3827,22 +3826,32 @@ const STATE_DIM_MAP = {
     'flush':      ALL_GROUPS.filter(g => g !== 'flush'),
 };
 
+let lastSidebarState = null;
+let lastGhcActive = null;
+
 export function updateSidebarOverlay(state) {
+    if (state === lastSidebarState) return;
     const groupsToDim = STATE_DIM_MAP[state] || [];
+    let painted = false;
     for (const groupName of ALL_GROUPS) {
         const shouldDim = groupsToDim.includes(groupName);
         for (const id of SIDEBAR_GROUPS[groupName]) {
             const el = document.getElementById(id);
             if (!el) continue;
+            painted = true;
             el.style.opacity = shouldDim ? '0.25' : '';
             el.style.pointerEvents = shouldDim ? 'none' : '';
             el.style.transition = 'opacity 0.3s ease';
         }
     }
+    if (painted) lastSidebarState = state; // retry until the elements exist
 }
 
 export function updateGhcStopButton(isActive) {
     const stopBtn = document.getElementById('ghc-stop-btn');
+    if (!stopBtn) return;
+    if (isActive === lastGhcActive) return;
+    lastGhcActive = isActive;
     const actionIds = ['ghc-coffee-btn', 'ghc-water-btn', 'ghc-steam-btn', 'ghc-flush-btn'];
 
     if (isActive) {
