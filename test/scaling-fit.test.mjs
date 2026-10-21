@@ -2,13 +2,18 @@
 // touches the DOM at import time). Run: node test/scaling-fit.test.mjs
 import assert from 'node:assert';
 
-const DESIGN_W = 1920, DESIGN_H = 1200, MAX_STRETCH = 1.15;
+const DESIGN_W = 1920, DESIGN_H = 1200, MAX_STRETCH = 1.0;
+// Rigid part of the main page: 168 header + 150 profile/telemetry band +
+// #chart-wrap's 450 min-height + the 242 footer band (main.css).
+const MIN_CANVAS_H = 1010;
 
-// Screens taller than the 16:10 design ratio grow the canvas at a uniform scale
-// instead of letterboxing; shorter ones fall back to the clamped x/y squash.
+// The canvas is elastic at a uniform scale: it grows past 1200 design rows on
+// screens taller than 16:10 and shrinks below it on shorter ones, down to the
+// rigid height of the main page. Only flatter-than-1920:1010 screens fall back
+// to the clamped x/y squash.
 function fit(w, h) {
     let sx = w / DESIGN_W, sy = h / DESIGN_H, canvasH = DESIGN_H;
-    if (h / sx >= DESIGN_H) {
+    if (h / sx >= MIN_CANVAS_H) {
         sy = sx;
         canvasH = h / sx;
     } else {
@@ -29,18 +34,16 @@ for (const [w, h] of [[1920, 1200], [1280, 800], [2560, 1600]]) {
     assert.ok(Math.abs(f.gutterX) < 0.5 && Math.abs(f.gutterY) < 0.5, `${w}x${h} gutter-free`);
 }
 
-// Samsung A7 Lite 8.7" — the case the squash branch is for. Was 30px gutter each side.
-const a7 = fit(1340, 800);
-assert.ok(Math.abs(a7.gutterX) < 0.5, `1340x800 must fill: gutter ${a7.gutterX}`);
-assert.ok(a7.sx / a7.sy < MAX_STRETCH + 1e-9);
-assert.strictEqual(a7.canvasH, DESIGN_H, 'A7 must not grow the canvas');
-
-// Same panel with browser chrome eating height (1340x736 is the A7 Lite's real
-// usable area; de1app just declares it 800). Old uniform scale left 79px/side.
-const chrome = fit(1340, 736);
-assert.ok(chrome.sx / chrome.sy <= MAX_STRETCH + 1e-9, 'stretch clamped');
-assert.ok(chrome.gutterX / 2 < 2, `residual gutter too big: ${chrome.gutterX / 2}`);
-assert.ok(chrome.sy > 736 / DESIGN_H - 1e-9, 'never scales below the height fit');
+// Teclast / Samsung A7 Lite 8.7" panels: shorter than 16:10, so the canvas
+// shrinks. Squashing the canvas stretched the text (issue #162's predecessor)
+// and refusing to squash left 30px gutters each side -- neither is allowed.
+for (const [w, h] of [[1340, 800], [1340, 736], [1920, 1080]]) {
+    const f = fit(w, h);
+    assert.strictEqual(f.sx, f.sy, `${w}x${h} must stay uniform (no text stretch)`);
+    assert.ok(Math.abs(f.gutterX) < 0.5, `${w}x${h} must fill: gutter ${f.gutterX}`);
+    assert.ok(Math.abs(f.gutterY) < 0.5, `${w}x${h} must fill vertically: gutter ${f.gutterY}`);
+    assert.ok(f.canvasH < DESIGN_H && f.canvasH >= MIN_CANVAS_H, `${w}x${h} canvas ${f.canvasH} out of range`);
+}
 
 // Wildly wrong aspect (portrait phone) must still be sane — it takes the grow
 // branch, which is uniform by construction, so nothing can explode.
@@ -61,15 +64,19 @@ for (const [name, w, h] of [['iPad Pro 12.9', 1366, 1024], ['iPad Pro 11', 1194,
 // must stop exactly at the footer's top edge and never shrink below its design
 // height -- that pairing is what #chart-wrap's min-height and <main>'s
 // padding-bottom enforce in CSS.
-const HEADER = 168, TELEMETRY = 140, FOOTER = 242, CHART_DESIGN = 650;
+// The band positions its name and telemetry absolutely, so it cannot give up
+// rows without clipping them: on a shrinking canvas the chart is what gives,
+// down to its 450px floor.
+const HEADER = 168, TELEMETRY = 150, FOOTER = 242, CHART_MIN = 450;
 for (const [name, w, h] of [
-    ['design', 1920, 1200], ['A7 Lite', 1340, 800], ['iPad Pro 12.9', 1366, 1024], ['iPad 10.2', 1080, 810],
+    ['design', 1920, 1200], ['Teclast', 1340, 800], ['A7 Lite + chrome', 1340, 736],
+    ['16:9 panel', 1920, 1080], ['iPad Pro 12.9', 1366, 1024], ['iPad 10.2', 1080, 810],
 ]) {
     const { canvasH } = fit(w, h);
-    const chart = Math.max(CHART_DESIGN, canvasH - HEADER - FOOTER - TELEMETRY);
+    const chart = Math.max(CHART_MIN, canvasH - HEADER - FOOTER - TELEMETRY);
     const chartBottom = HEADER + TELEMETRY + chart;
     const footerTop = canvasH - FOOTER;
-    assert.ok(chart >= CHART_DESIGN, `${name}: chart shrank below design (${chart})`);
+    assert.ok(chart >= CHART_MIN, `${name}: chart shrank below its floor (${chart})`);
     assert.ok(Math.abs(chartBottom - footerTop) < 1, `${name}: chart overlaps footer by ${chartBottom - footerTop}`);
 }
 

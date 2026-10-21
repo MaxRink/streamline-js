@@ -86,9 +86,16 @@
     min-height: 0;
 }
 
+/* Basis 0 so the chart absorbs the free space the band and footer leave, and a
+   floor well under the 643px design height so it also GIVES space back when the
+   canvas is shorter than 1200 rows (16:9 and 1340x800 panels). The band above it
+   positions its name/telemetry absolutely and so cannot shrink without clipping
+   them, which is what happened while this floor was 643: the band lost the rows
+   instead. scaling.js keeps the canvas at or above MIN_CANVAS_HEIGHT, which is
+   derived from this floor. */
 #chart-wrap {
     flex: 1 1 0;
-    min-height: 643px;   /* the design height -- never shrink below it */
+    min-height: 450px;
 }
 
 /* Scoped to the main page on purpose: profile_selector.html reuses the

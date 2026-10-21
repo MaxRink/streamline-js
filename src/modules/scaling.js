@@ -137,30 +137,35 @@ export function initScaling() {
             keyboardShift = 0;
         }
 
-        // Width always fills. What happens vertically depends on the screen's aspect
-        // relative to the 16:10 design canvas:
+        // Width always fills. Vertically the canvas is elastic: the scale stays
+        // uniform (no text stretch) and the canvas takes however many design rows
+        // the screen leaves at that scale. #main-page is a flex column whose <main>
+        // absorbs the difference, so taller-than-16:10 screens (4:3 iPads) GROW past
+        // 1200 rows and shorter ones (Teclast 1340x800, 16:9 panels) SHRINK below it,
+        // with the change landing in the chart instead of in letterbox bars.
         //
-        //   taller than 16:10 (4:3 iPads)  -> keep the scale uniform and GROW the
-        //     canvas past 1200 design rows. #main-page is a flex column whose <main>
-        //     grows, so the extra rows land in the chart instead of in black bars.
-        //     No stretch, no letterbox.
-        //   shorter than 16:10 (A7 1340x800, 16:9 panels) -> can't grow into rows that
-        //     aren't there, so fall back to the TCL-style independent x/y squash
-        //     (dui.tcl uses separate xscale_factor/yscale_factor for the same reason),
-        //     clamped so round controls don't visibly turn into ellipses.
+        // The shrink stops at the rigid part of the main page -- 168px header +
+        // 150px profile/telemetry band + #chart-wrap's 450px min-height + the 242px
+        // footer band reserved by <main>'s padding-bottom. Below that the layout
+        // would clip, so screens flatter than 1920:1010 fall back to the TCL-style
+        // independent x/y squash
+        // (dui.tcl uses separate xscale_factor/yscale_factor for the same reason),
+        // clamped so round controls don't visibly turn into ellipses.
+        const MIN_CANVAS_HEIGHT = 1010;
         let sx = screenWidth / designWidth;
         let sy = screenHeight / designHeight;
         let canvasHeight = designHeight;
 
-        if (screenHeight / sx >= designHeight) {
+        if (screenHeight / sx >= MIN_CANVAS_HEIGHT) {
             sy = sx;
             canvasHeight = screenHeight / sx;
         } else {
-            // Only screens shorter than 16:10 land here, so this clamp no longer has
-            // to protect the 4:3 iPads (they take the grow branch above) -- it can
-            // stay loose enough to cover an A7 Lite whose height is eaten by browser
-            // chrome (1340x736 needs 1.138). localStorage 'maxStretch': 1.0 = never
-            // squash (letterbox instead), higher = fill more aggressively.
+            // Only screens flatter than 1920:1010 land here, so this clamp no longer
+            // has to protect the 4:3 iPads or the common 16:9/16:10-ish tablets (they
+            // take the uniform branch above) -- it can stay loose enough to cover an
+            // A7 Lite whose height is eaten by browser chrome. localStorage
+            // 'maxStretch': 1.0 = never squash (letterbox instead), higher = fill
+            // more aggressively.
             const MAX_STRETCH = parseFloat(localStorage.getItem('maxStretch') || '1.0');
             const stretch = Math.max(sx, sy) / Math.min(sx, sy);
             if (stretch > MAX_STRETCH) {
