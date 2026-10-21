@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { hydrate, installMirror, createWriteGate, SYNCED_KEYS, SETTINGS_NAMESPACE } from '../src/modules/settingsSync.js';
+import { hydrate, installMirror, createWriteGate, decideMerge, retryDelay, SYNCED_KEYS, SETTINGS_NAMESPACE } from '../src/modules/settingsSync.js';
 
 // Stand-in for window.localStorage with a shared prototype to patch, matching
 // the browser's Storage/Storage.prototype split.
@@ -304,4 +304,71 @@ test('a wiped launch counter cannot resurrect a help button the user retired', (
     assert.equal(helpHiddenFrom(null, null), false, 'counter alone: the button is back');
     assert.equal(helpHiddenFrom('1', null), true, 'the restored preference still hides it');
     assert.ok(SYNCED_KEYS.includes('streamlineHelpHidden'), 'and it is mirrored into KV');
+});
+
+// ── Late hydrate: what the user changed this session wins ────────────────────
+test('decideMerge: KV wins untouched keys, local wins locally-changed ones', () => {
+    assert.equal(decideMerge('en', 'de', false), 'apply');
+    assert.equal(decideMerge(null, 'de', false), 'apply');
+    assert.equal(decideMerge('de', 'de', false), 'keep');
+    assert.equal(decideMerge('en', 'de', true), 'seed');
+    assert.equal(decideMerge('de', 'de', true), 'keep');
+    assert.equal(decideMerge('1.4', 1.4, false), 'keep', 'remote non-strings compare as strings');
+    // Missing in KV: seed what we have, otherwise nothing.
+    assert.equal(decideMerge('x', undefined, false), 'seed');
+    assert.equal(decideMerge('x', null, true), 'seed');
+    assert.equal(decideMerge(null, undefined, false), 'keep');
+    assert.equal(decideMerge(undefined, null, true), 'keep');
+});
+
+test('a key changed while the gate was shut survives a late hydrate and is pushed', async () => {
+    const { storage, proto } = makeStorage();
+    const gate = createWriteGate({ push: () => {}, drop: () => {} });
+    installMirror(proto, gate.push, gate.drop);
+
+    storage.setItem('uiZoom', '1.0');   // boot default on a wiped store: first write, not a choice
+    storage.setItem('language', 'en');  // boot default
+    storage.setItem('uiZoom', '1.4');   // the user's change
+    assert.deepEqual([...gate.dirtyKeys()], ['uiZoom']);
+
+    const pushed = [];
+    const { applied, seeded } = await hydrate(
+        storage, { uiZoom: '1.2', language: 'de', theme: 'dark' }, proto.setItem,
+        (k, v) => pushed.push([k, v]), gate.dirtyKeys(),
+    );
+    assert.equal(storage.getItem('uiZoom'), '1.4');
+    assert.equal(storage.getItem('language'), 'de');
+    assert.deepEqual(applied, { language: 'de', theme: 'dark' });
+    assert.deepEqual(seeded, { uiZoom: '1.4' });
+    assert.deepEqual(pushed, [['uiZoom', '1.4']]);
+
+    gate.clearDirty();
+    assert.equal(gate.dirtyKeys().size, 0);
+});
+
+test('an open gate does not track dirty keys', () => {
+    const pushed = [];
+    const gate = createWriteGate({ push: (k, v) => pushed.push([k, v]), drop: () => {} });
+    gate.open();
+    gate.push('theme', 'dark', 'light');
+    assert.equal(gate.dirtyKeys().size, 0);
+    assert.deepEqual(pushed, [['theme', 'dark']]);
+});
+
+test('hydrate tolerates empty or garbage remote snapshots', async () => {
+    for (const remote of [undefined, null, 'oops', 42, {}]) {
+        const { storage, proto } = makeStorage();
+        storage.setItem('theme', 'dark');
+        const pushed = [];
+        const { applied } = await hydrate(storage, remote, proto.setItem, (k, v) => pushed.push([k, v]));
+        assert.deepEqual(applied, {});
+        assert.deepEqual(pushed, [['theme', 'dark']]);
+    }
+});
+
+test('retryDelay climbs the ladder, then settles at a capped steady interval', () => {
+    assert.equal(retryDelay(0), 1000);
+    assert.equal(retryDelay(4), 15000);
+    assert.equal(retryDelay(5), 60000);
+    assert.equal(retryDelay(500), 60000);
 });

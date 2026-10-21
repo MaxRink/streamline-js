@@ -53,7 +53,7 @@ Startup order matters:
 - the module is loaded before `app.js`;
 - it installs the Storage mirror once;
 - it hydrates from KV;
-- KV wins a conflict;
+- KV wins a conflict, except keys the user changed while the write gate was shut (a late hydrate keeps and pushes those; the retry ladder then continues every 60 s);
 - local values seed missing remote values;
 - `settingsReady` resolves even when Decaid is unavailable;
 - `app.js` waits before reading synchronized preferences.
