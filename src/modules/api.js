@@ -741,6 +741,46 @@ export function connectShotSettingsWebSocket(onData) {
     };
 }
 
+// Water tank feed (ws/v1/machine/waterLevels). Bound to a De1 *instance* on the
+// server (de1handler.dart `_withDe1Ws`), so app.js re-opens it after a machine
+// power-cycle; the slot closes and silences the previous socket first.
+const waterLevelSocketSlot = createSocketSlot('water level');
+
+export function connectWaterLevelsWebSocket(onData) {
+    const socket = waterLevelSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/waterLevels`, [], {
+        reconnectInterval: 3000,
+    }));
+
+    socket.onopen = () => {
+        logger.info('Water tank WebSocket connection established.');
+    };
+
+    socket.onmessage = (event) => {
+        let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch (error) {
+            logger.error('Error parsing water level data:', error);
+            return;
+        }
+        try {
+            onData(data);
+        } catch (error) {
+            logger.error('Error handling water level data:', error);
+        }
+    };
+
+    socket.onclose = (event) => {
+        logger.info('Water tank WebSocket connection closed.', event && event.reason);
+    };
+
+    socket.onerror = () => {
+        logger.error('Water tank WebSocket error. See library logs for details.');
+    };
+
+    return socket;
+}
+
 // ShotState feed (ws/v1/machine/shotState): shot phase + decision frames from
 // Rea's shot sequencer. The server replays the latest frame on connect and the
 // socket is not gated on a connected machine — attach once and keep it open.
