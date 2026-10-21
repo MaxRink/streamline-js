@@ -19,8 +19,9 @@ export const SYSTEM_MANAGED_BRIGHTNESS = 100;
 export const SYSTEM_MANAGED_NOTICE =
     'At 100% the system controls screen brightness and the level actually used may differ from the slider.';
 
-/** dimDisplay() sends getSaverBrightness() on sleep: SAVER_BRIGHTNESS_DEFAULT
- *  (10) for the image saver, 0 for the black screen saver. */
+/** dimDisplay() sends getSaverBrightness() on sleep: the configured screen
+ *  saver level for the image saver (SAVER_BRIGHTNESS_DEFAULT, 10, until one is
+ *  set), and 0 for the black screen saver. */
 export const SAVER_DIM_NOTICE =
     'The screen saver dims the screen to your screen saver level. Your brightness returns when you wake the screen.';
 
