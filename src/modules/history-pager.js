@@ -164,3 +164,14 @@ export function createHistoryPager({ pageSize, fetchServerPage, fetchSummaryPage
         }
     };
 }
+
+// Decides whether a /shots/latest probe means shots landed while this client
+// was away. Only reload when history is already loaded (knownId), the server
+// reports a different newest id, and no shot is live (a live shot's own
+// espresso->idle path owns the refresh).
+export function shouldReloadForLatestShot(latestId, knownId, shotLive) {
+    if (shotLive) return false;
+    if (typeof latestId !== 'string' || latestId === '') return false;
+    if (typeof knownId !== 'string' || knownId === '') return false;
+    return latestId !== knownId;
+}

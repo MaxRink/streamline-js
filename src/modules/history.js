@@ -501,7 +501,16 @@ export function getNewestShotId() {
 // A single fixed-delay reload races that write and silently shows the previous
 // shot. Poll the list until a shot newer than `knownNewestId` appears, then
 // render it. ponytail: fixed retry budget, not a server-side watcher.
-export async function refreshToNewestShot(knownNewestId, tries = 6, intervalMs = 2000, expectedId = null) {
+let newestRefreshInFlight = null;
+
+export function refreshToNewestShot(knownNewestId, tries = 6, intervalMs = 2000, expectedId = null) {
+    if (newestRefreshInFlight) return newestRefreshInFlight;
+    newestRefreshInFlight = runRefreshToNewestShot(knownNewestId, tries, intervalMs, expectedId)
+        .finally(() => { newestRefreshInFlight = null; });
+    return newestRefreshInFlight;
+}
+
+async function runRefreshToNewestShot(knownNewestId, tries, intervalMs, expectedId) {
     for (let i = 0; i < tries; i++) {
         await loadShotHistory();
         // Success = the expected shot id is on top (exact, from the shotState

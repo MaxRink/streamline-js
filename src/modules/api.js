@@ -2398,6 +2398,15 @@ export async function getShotIds() {
     return response.json();
 }
 
+// Newest shot's metadata (no measurements) -- cheap probe for "did a shot land
+// while we were away". Returns null when there is none or the server answers
+// non-OK; a network failure throws, so callers must catch.
+export async function getLatestShotSummary() {
+    const response = await fetch(`${API_BASE_URL}/shots/latest`);
+    if (!response.ok) return null;
+    return response.json();
+}
+
 export async function getShots(options = {}) {
     const { limit = 20, offset = 0, grinderId, grinderModel, beanBatchId, coffeeName, coffeeRoaster, profileTitle, ids, orderBy = 'timestamp', order = 'desc' } = options;
     

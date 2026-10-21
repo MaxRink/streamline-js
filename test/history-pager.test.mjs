@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createHistoryPager, getAuthoritativeRange, isInPruneRange, isShotAlreadyDeleted } from '../src/modules/history-pager.js';
+import { createHistoryPager, getAuthoritativeRange, isInPruneRange, isShotAlreadyDeleted, shouldReloadForLatestShot } from '../src/modules/history-pager.js';
 
 const shots = count => Array.from({ length: count }, (_, index) => ({
     id: `shot-${index}`,
@@ -214,4 +214,15 @@ test('a prune failure is reported without losing the page', async () => {
 test('only a 404 delete response counts as already deleted', () => {
     assert.equal(isShotAlreadyDeleted(404), true);
     for (const status of [400, 403, 500, 503]) assert.equal(isShotAlreadyDeleted(status), false);
+});
+
+test('shouldReloadForLatestShot reloads only for a different id while idle', () => {
+    assert.equal(shouldReloadForLatestShot('b', 'a', false), true);
+    assert.equal(shouldReloadForLatestShot('a', 'a', false), false);
+    assert.equal(shouldReloadForLatestShot('b', 'a', true), false);
+    assert.equal(shouldReloadForLatestShot(null, 'a', false), false);
+    assert.equal(shouldReloadForLatestShot(undefined, 'a', false), false);
+    assert.equal(shouldReloadForLatestShot({}, 'a', false), false);
+    assert.equal(shouldReloadForLatestShot('', 'a', false), false);
+    assert.equal(shouldReloadForLatestShot('b', null, false), false);
 });

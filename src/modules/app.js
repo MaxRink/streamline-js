@@ -7,6 +7,7 @@ import { initI18n, getTranslation, fitTelemetry } from './i18n.js';
 import { settingsReady } from './settingsSync.js';
 import { initUnits, formatTemp, fromDisplayTemp } from './units.js';
 import * as history from './history.js';
+import { shouldReloadForLatestShot } from './history-pager.js';
 import * as shotData from './shotData.js';
 import * as profileManager from './profileManager.js';
 import * as api from './api.js';
@@ -521,6 +522,38 @@ function handleDeviceConnectionError(err) {
 function onMachineSnapshotSocketOpen() {
     logger.info('Machine snapshot WebSocket (re)opened. Awaiting a frame to confirm the machine.');
     isDe1Connected = false; // the first frame re-confirms it (handleData)
+    // Decaid replays only its latest frame on connect, so a shot pulled while
+    // we were away shows no espresso->idle edge. Check after that first frame
+    // has refreshed previousState.
+    setTimeout(checkForMissedShot, 1500);
+}
+
+// Picks up a shot that finished while this client was disconnected or
+// backgrounded. Id-only probe; guarded against concurrent runs and bursts of
+// focus/visibility/reopen events.
+const MISSED_SHOT_MIN_INTERVAL_MS = 5000;
+let lastMissedShotCheckAt = 0;
+let missedShotCheckInFlight = false;
+
+async function checkForMissedShot() {
+    if (missedShotCheckInFlight) return;
+    if (Date.now() - lastMissedShotCheckAt < MISSED_SHOT_MIN_INTERVAL_MS) return;
+    missedShotCheckInFlight = true;
+    lastMissedShotCheckAt = Date.now();
+    try {
+        const latest = await api.getLatestShotSummary();
+        // Read the live state after the await: it may have changed meanwhile.
+        const shotLive = previousState?.state === MachineState.ESPRESSO;
+        const knownId = history.getNewestShotId();
+        if (shouldReloadForLatestShot(latest?.id, knownId, shotLive)) {
+            logger.info('Newer shot on the server than the local history; refreshing.');
+            history.refreshToNewestShot(knownId, 3, 1500, latest.id);
+        }
+    } catch (e) {
+        logger.warn('Missed-shot check failed:', e);
+    } finally {
+        missedShotCheckInFlight = false;
+    }
 }
 
 // A silent snapshot socket is NOT proof of a disconnected machine — it is exactly
@@ -1909,13 +1942,16 @@ function startWorkflowWatch() {
     workflowWatchStarted = true;
     setInterval(refreshWorkflowTiles, WORKFLOW_POLL_MS);
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') refreshWorkflowTiles();
+        if (document.visibilityState === 'visible') { refreshWorkflowTiles(); checkForMissedShot(); }
     });
-    window.addEventListener('focus', refreshWorkflowTiles);
+    window.addEventListener('focus', () => { refreshWorkflowTiles(); checkForMissedShot(); });
     // A plugin that changed the workflow and said so (plugin surfaces' `live`).
     // The skin wrote to Decaid: read it back now, and once more shortly after for a
     // plugin that answers the write by changing the workflow itself.
     api.onWorkflowUpdated(() => {
+        // The profile selector / editor write from a sub-page, where the refresh is
+        // skipped; remember it so the return to the dashboard re-reads.
+        if (isSubPage()) pendingForcedRefresh = true;
         refreshWorkflowTilesSoon();
         setTimeout(refreshWorkflowTilesSoon, WORKFLOW_READBACK_FOLLOWUP_MS);
     });
@@ -1949,9 +1985,6 @@ async function isShotBlockedByNoScale() {
 // page both render from the ONE shared snapshot in ./cup-warmer.js (the old
 // boot-seeded local boolean was one of three diverging copies — audit I1 /
 // bench checklist 2b). initCupWarmerToggle runs from loadInitialData on boot
-        // The profile selector / editor write from a sub-page, where the refresh is
-        // skipped; remember it so the return to the dashboard re-reads.
-        if (isSubPage()) pendingForcedRefresh = true;
 // AND on every machine (re)connect/wake, so a reconnect invalidates the
 // snapshot and re-seeds it fresh; the subscription below repaints the button
 // whenever anyone (this button, the Settings page, its ~5 s poll) updates the
