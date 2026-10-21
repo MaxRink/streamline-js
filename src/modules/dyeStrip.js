@@ -1293,13 +1293,31 @@ const AUTOSAVE_TARGETS = {
 };
 
 let activeItem = null; // { kind: 'recipe'|'favourite', id, profileId } from the apply that made it active
-let autoSaveSuppressed = false;
+let autoSaveSuppressDepth = 0; // overlapping applies: suppression holds until the LAST one finishes
 let autoSaveTimer = null;
 let autoSavePending = {}; // accumulated patch, flushed on the timer
 
 async function withAutoSaveSuppressed(fn) {
-    autoSaveSuppressed = true;
-    try { return await fn(); } finally { autoSaveSuppressed = false; }
+    // The apply's own workflowUpdated echo must never be auto-saved, and neither may an
+    // echo that lands while an earlier apply is still unwinding: drop the previous active
+    // item up front so nothing can be written onto it (activeItemId, the highlight, stays).
+    // A debounced dial-in edit still waiting on the timer belongs to that previous item, so
+    // write it there first rather than discarding it.
+    flushPendingAutoSave();
+    clearActiveItem();
+    autoSaveSuppressDepth++;
+    try { return await fn(); } finally { autoSaveSuppressDepth--; }
+}
+
+function flushPendingAutoSave() {
+    if (autoSaveTimer === null || !activeItem) return;
+    const { kind, id } = activeItem;
+    const fields = autoSavePending;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+    autoSavePending = {};
+    if (Object.keys(fields).length === 0) return;
+    saveItemFields(kind, id, fields).catch(e => logger.error(`dyeStrip: ${kind} auto-save failed`, e));
 }
 
 function forgetParkedSelection() {
@@ -1373,7 +1391,7 @@ function handleWorkflowUpdatedForAutoSave(workflow, dataToSend) {
     // same array, and it is the one that owns the schema. (activeItem is never set in
     // that mode either — this is belt and braces, and documents why.)
     if (dye2Armed) return;
-    if (autoSaveSuppressed || !activeItem || !isDye2Enabled()) return;
+    if (autoSaveSuppressDepth > 0 || !activeItem || !isDye2Enabled()) return;
     if (profileDrifted(activeItem, workflow)) {
         clearActiveItem();
         return;

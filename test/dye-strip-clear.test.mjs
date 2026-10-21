@@ -171,6 +171,99 @@ test('saveChanges retries once after DYE2 auto-updated', async () => {
     assert.equal(state.updates, 1);
     assert.equal(state.posts.length, 2, 'one retry, no loop');
 });
+
+// Legacy auto-save suppression: a depth counter, so overlapping applies keep the echo of the
+// newest one from being written onto the previous item.
+const suppressBody = lift([
+    /async function withAutoSaveSuppressed\([\s\S]*?\r?\n\}/,
+    /function flushPendingAutoSave\([\s\S]*?\r?\n\}/,
+    /function clearActiveItem\([\s\S]*?\r?\n\}/,
+    /function handleWorkflowUpdatedForAutoSave\([\s\S]*?\r?\n\}/,
+]);
+
+function buildSuppress() {
+    const state = { saves: [] };
+    const api = new Function(
+        'AUTOSAVE_TARGETS', 'AUTOSAVE_DEBOUNCE_MS', 'isDye2Enabled', 'profileDrifted', 'saveItemFields', 'logger', 'state',
+        `let activeItem = null, autoSaveSuppressDepth = 0, autoSaveTimer = null, autoSavePending = {}, dye2Armed = false;
+         ${suppressBody}
+         return {
+           withAutoSaveSuppressed, handleWorkflowUpdatedForAutoSave,
+           setActive: (item) => { activeItem = item; },
+           active: () => activeItem, depth: () => autoSaveSuppressDepth,
+         };`
+    )(
+        { recipe: { patch: (d) => ({ ...(d.context || {}) }) } },
+        0,
+        () => true,
+        () => false,
+        async (kind, id, fields) => { state.saves.push({ kind, id, fields }); },
+        { error() {} },
+        state,
+    );
+    return { api, state };
+}
+
+const tick = () => new Promise(r => setTimeout(r, 5));
+
+test('overlapping applies keep suppression until the last one finishes', async () => {
+    const { api } = buildSuppress();
+    let releaseA, releaseB;
+    const a = api.withAutoSaveSuppressed(() => new Promise(r => { releaseA = r; }));
+    const b = api.withAutoSaveSuppressed(() => new Promise(r => { releaseB = r; }));
+    assert.equal(api.depth(), 2);
+    releaseA(); await a;
+    assert.equal(api.depth(), 1, 'the second apply is still in flight');
+    releaseB(); await b;
+    assert.equal(api.depth(), 0);
+});
+
+test('a throwing apply still releases suppression', async () => {
+    const { api } = buildSuppress();
+    await assert.rejects(api.withAutoSaveSuppressed(async () => { throw new Error('boom'); }), /boom/);
+    assert.equal(api.depth(), 0);
+});
+
+test('an echo during an overlapping apply writes nothing, and an apply drops the previous active item', async () => {
+    const { api, state } = buildSuppress();
+    api.setActive({ kind: 'recipe', id: 'prev' });
+    let releaseA, releaseB;
+    const a = api.withAutoSaveSuppressed(() => new Promise(r => { releaseA = r; }));
+    assert.equal(api.active(), null, 'previous item is no longer the auto-save target');
+    const b = api.withAutoSaveSuppressed(() => new Promise(r => { releaseB = r; }));
+    releaseA(); await a;
+    api.setActive({ kind: 'recipe', id: 'prev' }); // even if something re-set it, depth still blocks
+    api.handleWorkflowUpdatedForAutoSave({}, { context: { targetDoseWeight: 18 } });
+    await tick();
+    assert.deepEqual(state.saves, []);
+    releaseB(); await b;
+    api.handleWorkflowUpdatedForAutoSave({}, { context: { targetDoseWeight: 18 } });
+    await tick();
+    assert.equal(state.saves.length, 1, 'once every apply is done, a tile edit saves again');
+});
+
+test('a pending debounced edit is flushed once to the OLD item before a new apply', async () => {
+    const { api, state } = buildSuppress();
+    api.setActive({ kind: 'recipe', id: 'old' });
+    api.handleWorkflowUpdatedForAutoSave({}, { context: { targetDoseWeight: 18 } });
+    let release;
+    const a = api.withAutoSaveSuppressed(() => new Promise(r => { release = r; }));
+    assert.equal(state.saves.length, 1);
+    assert.equal(state.saves[0].id, 'old');
+    assert.deepEqual(state.saves[0].fields, { targetDoseWeight: 18 });
+    await new Promise(r => setTimeout(r, 80)); // the cancelled timer must not write again
+    assert.equal(state.saves.length, 1);
+    release(); await a;
+});
+
+test('an apply with nothing pending writes nothing', async () => {
+    const { api, state } = buildSuppress();
+    api.setActive({ kind: 'recipe', id: 'old' });
+    await api.withAutoSaveSuppressed(async () => {});
+    await new Promise(r => setTimeout(r, 80));
+    assert.deepEqual(state.saves, []);
+});
+
 // ── A failed DYE2 read keeps what the strip already has ──────────────────────
 import { keepPreviousOnFailure, resolveRecordsDialIn } from '../src/modules/dye-selection.js';
 
