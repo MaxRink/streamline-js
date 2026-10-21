@@ -290,8 +290,18 @@ function updateDoseValue(type, newValue) {
                 ...(ratioDose !== null && { targetDoseWeight: ratioDose }) });
         }
     }).catch(error => {
-        logger.error(`Failed to update dose ${type} value via workflow:`, error);
+        tileWriteFailed(`dose ${type} value`, error);
     });
+}
+
+// A tile write Decaid refused (503 machine unavailable, 409 superseded, ...). The
+// tile was painted optimistically, so put the workflow's value back at once
+// instead of leaving the failed number up until the next poll: the forced
+// workflow-refresh event repaints the tiles through app.js's normal path.
+function tileWriteFailed(what, error) {
+    logger.error(`Failed to update ${what} via workflow:`, error);
+    showToast(getTranslation('Change did not reach the machine. Restoring the previous value.'), 4000, 'error');
+    document.dispatchEvent(new Event('streamline:workflow-refresh'));
 }
 
 export function updateDoseAndDrinkOutValue(newDoseIn, newDrinkOut) {
@@ -311,7 +321,7 @@ export function updateDoseAndDrinkOutValue(newDoseIn, newDrinkOut) {
         // ratio preset was the one way to set dose/yield that did not stick.
         window.app?.saveContextToActiveProfile?.({ targetDoseWeight: newDoseIn, targetYield: newDrinkOut });
     }).catch(error => {
-        logger.error(`Failed to update dose in and drink out values via workflow:`, error);
+        tileWriteFailed('dose in and drink out values', error);
     });
 }
 
@@ -359,7 +369,7 @@ export function updateTemperatureValue(newValue) {
                 // silently restore the profile's baked-in temperature.
                 window.app?.saveContextToActiveProfile?.({ brewTemperature: parseFloat(newValue) });
             }).catch(error => {
-                logger.error('Failed to update temperature via workflow:', error);
+                tileWriteFailed('temperature', error);
             });
         }
     });
@@ -462,12 +472,14 @@ export function updateGrindValue(newValue) {
             grinderSetting: parseFloat(newValue).toFixed(2)
         }
     };
+    // Override saved only once Decaid accepted the value: a refused write must
+    // not become the profile's remembered grind.
     const done = updateWorkflow(workflowUpdate).then(() => {
         logger.debug('Grind value updated successfully:', newValue);
+        window.app?.saveGrindToActiveProfile?.(parseFloat(newValue).toFixed(2));
     }).catch(error => {
-        logger.error('Failed to update grind value:', error);
+        tileWriteFailed('grind value', error);
     });
-    window.app?.saveGrindToActiveProfile?.(parseFloat(newValue).toFixed(2));
     return done;
 }
 
