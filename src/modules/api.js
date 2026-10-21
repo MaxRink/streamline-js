@@ -44,7 +44,7 @@ export const MachineState = {
 export let reconnectingWebSocket = null; // Exporting for app.js access
 export let currentMachineState = null;
 let previousMachineState = null;
-let scaleWebSocket = null;
+const scaleSocketSlot = createSocketSlot('scale');
 const calibratedSteamSamples = createScaleSampleBuffer();
 let calibratedSteamSamplingEnabled = false;
 
@@ -617,14 +617,12 @@ export function closeAddressedScaleWebSocket() {
 
 export function connectScaleWebSocket(onData, onReconnect, onDisconnect) {
     calibratedSteamSamples.clear();
-    if (scaleWebSocket) {
-        logger.info('Closing existing scale WebSocket before creating a new one.');
-        scaleWebSocket.close();
-    }
-
-    scaleWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/scale/snapshot`, [], {
+    // The slot silences the previous socket before closing it, so a deliberate
+    // replace (settings wizard takeover/release, post-scan reopen) never fires the
+    // old owner's onDisconnect. Genuine drops still reach onclose below.
+    const scaleWebSocket = scaleSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/scale/snapshot`, [], {
         reconnectInterval: 3000,
-    });
+    }));
 
     scaleWebSocket.onopen = () => {
         calibratedSteamSamples.clear();
