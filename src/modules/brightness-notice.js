@@ -22,7 +22,7 @@ export const SYSTEM_MANAGED_NOTICE =
 /** dimDisplay() sends getSaverBrightness() on sleep: SAVER_BRIGHTNESS_DEFAULT
  *  (10) for the image saver, 0 for the black screen saver. */
 export const SAVER_DIM_NOTICE =
-    'While the screen saver is showing, brightness is reduced to the minimum and your level returns when you wake the screen.';
+    'The screen saver dims the screen to your screen saver level. Your brightness returns when you wake the screen.';
 
 export const SAVER_BLACK_NOTICE =
     'With the black screen saver the screen goes dark rather than dim, and tapping it restores your brightness.';
