@@ -10,6 +10,7 @@ import { shouldUseNumpad } from './numpad-policy.js';
 import { openContextMenu } from './context-menu.js';
 import { initCalibratedSteam } from './calibrated-steam-ui.js';
 import { logger } from './logger.js';
+import { shouldWriteStatus } from './machine-status-render.js';
 import { SETTINGS_RESTORED_EVENT } from './settingsSync.js';
 import * as chart from './chart.js';
 
@@ -2891,7 +2892,29 @@ function bindSkipStepHandler() {
 // idiom app.js already applies to machine-state transitions.
 let lastPuckVisible = null;
 
+// One cache per element, shared by snapshot renders and the 1s counters.
+// Compare the original strings rather than browser-normalized innerHTML.
+const lastMachineStatusContent = new WeakMap();
+let lastMachineStatusData = null;
+
+function setMachineStatusContent(element, content, type = 'html') {
+    const next = { type, content };
+    if (!shouldWriteStatus(lastMachineStatusContent.get(element), next)) return;
+    // Dynamic status owns translation; page-wide translation must not restore
+    // the static "Connecting" placeholder during navigation.
+    element.removeAttribute('data-i18n-key');
+    if (type === 'text') element.textContent = content;
+    else element.innerHTML = content;
+    lastMachineStatusContent.set(element, next);
+}
+
+// Rebuild translated output immediately, including active counter labels.
+document.addEventListener('streamline:languagechange', () => {
+    if (lastMachineStatusData) updateMachineStatus(lastMachineStatusData);
+});
+
 export function updateMachineStatus(data) {
+    lastMachineStatusData = data;
     const { status, state, substate, stepName, profileStepName, timeValue, isClickable,  isHeating, isHeatingFromTimeToReady, steamTemperature } = data;
     // Puck (group-head) temperature only means anything while a shot is pulling,
     // so it joins the telemetry row for espresso and leaves again afterwards.
@@ -3011,19 +3034,19 @@ export function updateMachineStatus(data) {
             const frozenValue = typeof machineStatusEl.currentSteamValue === 'number'
                 ? machineStatusEl.currentSteamValue
                 : 0;
-            machineStatusEl.innerHTML = `<span class="text-[var(--status-ready-green)]">${steamText}:</span> <span class="text-[var(--status-clickable-color)]">${frozenValue}s</span>`;
+            setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-ready-green)]">${steamText}:</span> <span class="text-[var(--status-clickable-color)]">${frozenValue}s</span>`);
         } else if (isFlushState) {
             const flushText = getTranslation('Flush');
             const frozenValue = typeof machineStatusEl.currentFlushValue === 'number'
                 ? machineStatusEl.currentFlushValue
                 : 0;
-            machineStatusEl.innerHTML = `<span class="text-[var(--status-ready-green)]">${flushText}:</span> <span class="text-[var(--status-clickable-color)]">${frozenValue}s</span>`;
+            setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-ready-green)]">${flushText}:</span> <span class="text-[var(--status-clickable-color)]">${frozenValue}s</span>`);
         } else {
             const pouringText = getTranslation('Pouring');
             const mlText = (hotWaterVolValueEl && hotWaterVolValueEl.textContent)
                 ? hotWaterVolValueEl.textContent.trim()
                 : '';
-            machineStatusEl.innerHTML = `<span class="text-[var(--status-green-color)]">${pouringText}:</span> <span class="text-[var(--status-clickable-color)]">${mlText}</span>`;
+            setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-green-color)]">${pouringText}:</span> <span class="text-[var(--status-clickable-color)]">${mlText}</span>`);
         }
         return;
     }
@@ -3035,18 +3058,18 @@ export function updateMachineStatus(data) {
     // Handle Needs Water state - takes priority
     if (isNeedsWaterState) {
         const outOfWaterText = getTranslation('Out of water') || 'Out of water';
-        machineStatusEl.innerHTML = `<span class="text-[var(--status-red-color)]">${outOfWaterText}</span>`;
+        setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-red-color)]">${outOfWaterText}</span>`);
         logger.debug('DEBUG: Out of water state - Set machine status with red styling');
     } else if (isEspressoPreparingForShot) {
         logger.debug('Entering isEspressoPreparingForShot condition');
         const espressoHeatingWaitText = getTranslation('Heating');
-        machineStatusEl.innerHTML = `<span class="text-[var(--status-red-color)]">${espressoHeatingWaitText}</span>`;
+        setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-red-color)]">${espressoHeatingWaitText}</span>`);
     } else if (isHeatingWithTimeRemaining) {
         // Apply different colors to the "Heating:" label and the "Xs remaining" countdown
         const { label: heatingPart, remaining: timeRemainingPart } = heatingStatusParts(status);
 
         // Apply --status-red-color to "Heating" and --heatingstatus to "Xs remaining" <span class="text-[var(--heatingstatus)]">${timeRemainingPart}</span>
-        machineStatusEl.innerHTML = `<span class="text-[var(--status-red-color)]">${heatingPart}</span><span class="text-[var(--heatingstatus)]">${timeRemainingPart}</span>`;
+        setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-red-color)]">${heatingPart}</span><span class="text-[var(--heatingstatus)]">${timeRemainingPart}</span>`);
         // logger.info(`DEBUG: Heating with time remaining - Set machine status to: ${machineStatusEl.innerHTML}`);
     } else {
         // Check if this is a preinfusion or pouring state and apply special formatting
@@ -3076,9 +3099,9 @@ export function updateMachineStatus(data) {
                     machineStatusEl.currentPreinfusionOrPouringValue = Math.floor(getShotTotalTime());
 
                     const currentStageText = machineStatusEl.currentPreinfusionOrPouringStageText || stageText;
-                    machineStatusEl.innerHTML = `<span class="text-[var(--status-green-color)]">${currentStageText}</span> <span class="text-[var(--status-clickable-color)]">| ${machineStatusEl.currentPreinfusionOrPouringValue}s ${SKIP_STEP_GLYPH}</span>`;
+                    setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-green-color)]">${currentStageText}</span> <span class="text-[var(--status-clickable-color)]">| ${machineStatusEl.currentPreinfusionOrPouringValue}s ${SKIP_STEP_GLYPH}</span>`);
                     bindSkipStepHandler();
-                    logger.info(`DEBUG: Preinfusion/Pouring live counter update: ${machineStatusEl.innerHTML}`); // Keep log
+                    logger.debug(`DEBUG: Preinfusion/Pouring live counter update: ${machineStatusEl.innerHTML}`); // Keep log
                 }, 1000);
             }
 
@@ -3086,7 +3109,7 @@ export function updateMachineStatus(data) {
             // make sure the label and value reflect the *current* stage.
             const displayValue = Math.floor(getShotTotalTime());
             machineStatusEl.currentPreinfusionOrPouringValue = displayValue;
-            machineStatusEl.innerHTML = `<span class="text-[var(--status-green-color)]">${stageText}</span> <span class="text-[var(--status-clickable-color)]">| ${displayValue}s ${SKIP_STEP_GLYPH}</span>`;
+            setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-green-color)]">${stageText}</span> <span class="text-[var(--status-clickable-color)]">| ${displayValue}s ${SKIP_STEP_GLYPH}</span>`);
             bindSkipStepHandler();
         } else {
             // Check if this is a flush state and apply special formatting
@@ -3104,12 +3127,12 @@ export function updateMachineStatus(data) {
                     machineStatusEl.flushIntervalId = setInterval(() => {
                         machineStatusEl.currentFlushValue += 1;
 
-                        machineStatusEl.innerHTML = `<span class="text-[var(--status-ready-green)]">${flushText}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentFlushValue}s</span>`;
-                        logger.info(`DEBUG: Flush live counter update: ${machineStatusEl.innerHTML}`);
+                        setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-ready-green)]">${getTranslation('Flush')}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentFlushValue}s</span>`);
+                        logger.debug(`DEBUG: Flush live counter update: ${machineStatusEl.innerHTML}`);
                     }, 1000);
-                    // Manually set the initial state immediately after starting the interval
-                    machineStatusEl.innerHTML = `<span class="text-[var(--status-ready-green)]">${flushText}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentFlushValue}s</span>`;
                 }
+                // Also refresh the label on language changes while the counter runs.
+                setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-ready-green)]">${flushText}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentFlushValue}s</span>`);
             } else if (isCurrentlySteamState) {
                 // Special handling for steam "pouring" state to show a live time counter.
                 const steamText = getTranslation('Steaming');
@@ -3126,7 +3149,7 @@ export function updateMachineStatus(data) {
                     substate?.toLowerCase().includes('preparing for shot') ||
                     isreadystate;
                 if (isSteamHeatingPhase && steamHeaterCold) {
-                    machineStatusEl.innerHTML = `<span class="text-[var(--status-red-color)]">${steamonlytext}${steamheatingtext}:</span><span class="text-[var(--status-clickable-color)]">${steamwaitingText}</span>`;
+                    setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-red-color)]">${steamonlytext}${steamheatingtext}:</span><span class="text-[var(--status-clickable-color)]">${steamwaitingText}</span>`);
                 } else {
                     // Original steam counter logic for active steaming
                     if (!machineStatusEl.steamIntervalId) {
@@ -3141,18 +3164,18 @@ export function updateMachineStatus(data) {
                         machineStatusEl.steamIntervalId = setInterval(() => {
                             machineStatusEl.currentSteamValue += 1;
 
-                            machineStatusEl.innerHTML = `<span class="text-[var(--status-ready-green)]">${steamText}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentSteamValue}s</span>`;
-                            logger.info(`DEBUG: Steam live counter update: ${machineStatusEl.innerHTML}`);
+                            setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-ready-green)]">${getTranslation('Steaming')}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentSteamValue}s</span>`);
+                            logger.debug(`DEBUG: Steam live counter update: ${machineStatusEl.innerHTML}`);
                         }, 1000);
 
                         // Initial render at 0s
-                        machineStatusEl.innerHTML = `<span class="text-[var(--status-ready-green)]">${steamText}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentSteamValue}s</span>`;
+                        setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-ready-green)]">${steamText}:</span> <span class="text-[var(--status-clickable-color)]">${machineStatusEl.currentSteamValue}s</span>`);
                     } else {
                         // If already running, just ensure we render the latest value with correct label.
                         const currentValue = typeof machineStatusEl.currentSteamValue === 'number'
                             ? machineStatusEl.currentSteamValue
                             : 0;
-                        machineStatusEl.innerHTML = `<span class="text-[var(--status-ready-green)]">${steamText}:</span> <span class="text-[var(--status-clickable-color)]">${currentValue}s</span>`;
+                        setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-ready-green)]">${steamText}:</span> <span class="text-[var(--status-clickable-color)]">${currentValue}s</span>`);
                     }
                 }
             } else {
@@ -3165,7 +3188,7 @@ export function updateMachineStatus(data) {
                         ? hotWaterVolValueEl.textContent.trim()
                         : '';
 
-                    machineStatusEl.innerHTML = `<span class="text-[var(--status-green-color)]">${pouringText}:</span> <span class="text-[var(--status-clickable-color)]">${mlText}</span>`;
+                    setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-green-color)]">${pouringText}:</span> <span class="text-[var(--status-clickable-color)]">${mlText}</span>`);
                     logger.info(`DEBUG: Hot Water state - Set machine status to: ${machineStatusEl.innerHTML}`);
                 } else {
                     // Determine message and class based on status and substate using a mapping approach
@@ -3173,10 +3196,10 @@ export function updateMachineStatus(data) {
 
                     // Handle plain "Heating" message (without time remaining)
                     if (isHeating && status === "Heating") {
-                        machineStatusEl.innerHTML = `<span class="text-[var(--status-red-color)]">${getTranslation('Heating')}</span>`;
+                        setMachineStatusContent(machineStatusEl, `<span class="text-[var(--status-red-color)]">${getTranslation('Heating')}</span>`);
                         logger.info(`DEBUG: Generic Heating state - Set machine status to: ${machineStatusEl.innerHTML}`);
                     } else {
-                        machineStatusEl.textContent = statusConfig.message;
+                        setMachineStatusContent(machineStatusEl, statusConfig.message, 'text');
                         // logger.info(`DEBUG: Generic state from getStatusConfiguration - Set machine status to: ${machineStatusEl.textContent}`);
                         
                     }
