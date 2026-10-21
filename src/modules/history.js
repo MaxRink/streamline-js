@@ -381,18 +381,18 @@ function setupHistoryLongPress() {
                     if (md != null) copyMd(md);
                 },
             },
-            {
-                label: getTranslation('Select coffee batch for next shot'),
-                onSelect: () => openBeanSelectionModal({
-                    onSaved: () => showToast(getTranslation('Coffee for next shot updated'), 2400, 'success'),
-                }).catch(error => {
-                    logger.warn('Coffee batch selection failed:', error);
-                    showToast(getTranslation('Could not open coffee selection'), 4000, 'error');
-                }),
-            },
         ];
         if (hasDialIn) {
             items.push(
+                {
+                    label: getTranslation('Select coffee batch for next shot'),
+                    onSelect: () => openBeanSelectionModal({
+                        onSaved: () => showToast(getTranslation('Coffee for next shot updated'), 2400, 'success'),
+                    }).catch(error => {
+                        logger.warn('Coffee batch selection failed:', error);
+                        showToast(getTranslation('Could not open coffee selection'), 4000, 'error');
+                    }),
+                },
                 { label: getTranslation('Assisted dial-in analysis'), onSelect: () => openAssistedDialIn('analyze') },
                 { label: getTranslation('Assisted dial-in feedback'), onSelect: () => openAssistedDialIn('feedback') },
                 {
