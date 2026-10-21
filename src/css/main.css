@@ -244,6 +244,7 @@ body {
     --button-primary-bg: #385a92;
     --button-primary-tint: rgba(56, 90, 146, 0.15); /* 15% of --button-primary-bg; no color-mix for older WebViews */
     --button-primary-text: #ffffff;
+    --dye-toggle-inactive-bg: #D7DEE9; /* Figma Action.Primary.Inactive (2386:1119): DYE strip P/F/R idle pill */
     --button-secondary-bg: #e8e8e8;
     --button-secondary-text: #121212;
     /* bg colors in profile editor */
@@ -320,6 +321,7 @@ body {
     --button-primary-bg: #415996;
     --button-primary-tint: rgba(65, 89, 150, 0.15); /* 15% of --button-primary-bg; no color-mix for older WebViews */
     --button-primary-text: #e8e8e8;
+    --dye-toggle-inactive-bg: #292c38; /* dark Buttons/Primary.Background.Inactive */
     --button-secondary-bg: #292c38;
     --button-secondary-text: #e8e8e8;
 }

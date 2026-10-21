@@ -952,10 +952,10 @@ export function setStripMode(mode) {
         const pill = document.getElementById(`dye-toggle-${m}`);
         if (!pill) return;
         const active = m === mode;
-        pill.classList.toggle('bg-[var(--mimoja-blue-v2)]', active);
+        pill.classList.toggle('bg-[var(--button-primary-bg)]', active);
         pill.classList.toggle('text-[var(--button-primary-text)]', active);
-        pill.classList.toggle('text-[var(--mimoja-blue-v2)]', !active);
-        pill.classList.toggle('bg-[var(--box-color)]', !active);
+        pill.classList.toggle('text-[var(--tab-text-inactive)]', !active);
+        pill.classList.toggle('bg-[var(--dye-toggle-inactive-bg)]', !active);
     });
 
     // Visibility via inline display (a Tailwind `flex` utility overrides [hidden]).

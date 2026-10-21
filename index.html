@@ -45,13 +45,13 @@
     <!-- Header -->
     <header class="bg-[var(--box-color)] border-b border-[var(--border-primary)] w-full h-[165px] relative" role="banner">
         <!-- DYE2 strip mode toggle: P (profiles, default) / F (auto-favs) / R (recipes).
-             Extends Figma 2386:1116 (F/R) with a P pill on top. See src/modules/dyeStrip.js. -->
+             Extends Figma 2386:1116 (F/R: 54px circles, 12px gap) with a P circle on top, scaled to 44px so three fit the 165px header. See src/modules/dyeStrip.js. -->
         <!-- Hidden via inline display:none (not the `hidden` attr — a Tailwind `flex`
              display utility would override [hidden]). dyeStrip.js reveals it when DYE2 is enabled. -->
-        <div id="dye-strip-toggle" class="absolute left-[18px] top-[37.5px] w-[46px] h-[90px] flex flex-col gap-[4px] z-10" role="tablist" aria-label="Header strip mode" style="display:none">
-            <button id="dye-toggle-P" type="button" role="tab" aria-label="Profile favourites" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] text-[20px] font-bold">P</button>
-            <button id="dye-toggle-F" type="button" role="tab" aria-label="Auto favourites" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] text-[20px] font-bold">F</button>
-            <button id="dye-toggle-R" type="button" role="tab" aria-label="Recipes" class="flex-1 flex items-center justify-center rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] text-[20px] font-bold">R</button>
+        <div id="dye-strip-toggle" class="absolute left-[18px] top-[12.5px] w-[44px] h-[140px] flex flex-col gap-[4px] z-10" role="tablist" aria-label="Header strip mode" style="display:none">
+            <button id="dye-toggle-P" type="button" role="tab" aria-label="Profile favourites" class="w-[44px] h-[44px] flex-none flex items-center justify-center rounded-full text-[22px] leading-none font-bold">P</button>
+            <button id="dye-toggle-F" type="button" role="tab" aria-label="Auto favourites" class="w-[44px] h-[44px] flex-none flex items-center justify-center rounded-full text-[22px] leading-none font-bold">F</button>
+            <button id="dye-toggle-R" type="button" role="tab" aria-label="Recipes" class="w-[44px] h-[44px] flex-none flex items-center justify-center rounded-full text-[22px] leading-none font-bold">R</button>
         </div>
         <!-- Profile Favorites (P mode — existing behaviour, untouched logic). Stock
              position left-[37.5px]; dyeStrip.js shifts it to left-[80px] only when DYE2 is enabled. -->
