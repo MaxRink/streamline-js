@@ -242,6 +242,13 @@ export function resolveSteamTileMode(currentMode, milkAvailable, milkStopArmed, 
 /** Retries allowed after a failed steam push before the tile stops chasing it. */
 export const STEAM_SYNC_RETRY_LIMIT = 3;
 
+/**
+ * Wait before each successive retry (index = retries already spent). Backing off
+ * keeps a brief outage from stranding the red mark for 8 s while a long one is
+ * not hammered.
+ */
+export const STEAM_SYNC_RETRY_DELAYS_MS = [2000, 4000, 8000];
+
 /** Clean (everything the user set is on the machine) sync state. */
 export const STEAM_SYNC_SYNCED = { field: null, retriesLeft: 0 };
 
@@ -281,6 +288,13 @@ export function foldSteamSyncState(prev, event) {
         default:
             return state;
     }
+}
+
+/** Delay before the next retry for this sync state; clamps to the last rung. */
+export function steamSyncRetryDelay(state) {
+    const spent = STEAM_SYNC_RETRY_LIMIT - (state?.retriesLeft ?? STEAM_SYNC_RETRY_LIMIT);
+    const index = Math.min(Math.max(0, spent), STEAM_SYNC_RETRY_DELAYS_MS.length - 1);
+    return STEAM_SYNC_RETRY_DELAYS_MS[index];
 }
 
 /** Whether a retry is still owed for the current sync state. */

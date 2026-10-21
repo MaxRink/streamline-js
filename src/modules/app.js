@@ -22,7 +22,7 @@ import { setMachineModel, isBengleMachine, setRefillKitPresent, isRefillKitPrese
 import { classifyStopReason, canonicalStopReason, STOP_TARGET_WEIGHT, STOP_TARGET_VOLUME, STOP_PROFILE_ENDED } from './stop-reason.js';
 import { resolveMilkProbePresence, MILK_PROBE_ABSENT_AFTER_MS, selectMilkProbeSensorId } from './steam-mode.js';
 import { readTimeToReadyFrame, heatingSecondsLeft } from './heating-countdown.js';
-import { workflowTileValues, tilesToPaint, profileChanged } from './workflow-watch.js';
+import { workflowTileValues, tilesToPaint, profileChanged, WORKFLOW_EDIT_GUARD_MS } from './workflow-watch.js';
 import { isCupWarmerOn, readCupWarmerTarget, resolvePrewarm, getCupWarmerState, setCupWarmerState, patchCupWarmerState, invalidateCupWarmerState, onCupWarmerStateChange, CUP_WARMER_TARGET_KEY } from './cup-warmer.js';
 import { openDB, setSetting } from './idb.js';
 import { openContextMenu } from './context-menu.js';
@@ -1838,10 +1838,9 @@ async function loadInitialData() {
 // the title together.
 const WORKFLOW_POLL_MS = 20_000;
 const WORKFLOW_REFRESH_MIN_GAP_MS = 250; // focus + visibilitychange can both fire
-// A tile press is pushed after a one second debounce, so a press this recent has
-// not reached Decaid yet: painting now would reassign the very variable the
-// pending push is about to send.
-const WORKFLOW_EDIT_GUARD_MS = 1100;
+// A press inside WORKFLOW_EDIT_GUARD_MS (the tile debounce plus slack) has not
+// reached Decaid yet: painting now would reassign the variable the pending push
+// is about to send.
 const WORKFLOW_READBACK_FOLLOWUP_MS = 1500; // a plugin reacting to our write
 const tileEditPending = () => ui.msSinceTileInteraction() < WORKFLOW_EDIT_GUARD_MS || api.hasWorkflowWriteInFlight();
 let lastWorkflowTiles = null;

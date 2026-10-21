@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { profileFingerprint } from '../src/modules/dye-selection.js';
 
-import { workflowTileValues, changedTileValues, tilesToPaint, profileChanged, FORCED_KEYS } from '../src/modules/workflow-watch.js';
+import { workflowTileValues, changedTileValues, tilesToPaint, profileChanged, FORCED_KEYS, API_DEBOUNCE_MS, WORKFLOW_EDIT_GUARD_MS } from '../src/modules/workflow-watch.js';
 
 // The dashboard learns about a workflow changed elsewhere (Decaid's UI, another
 // skin, a DYE2 page) only by re-reading GET /workflow -- there is no workflow
@@ -316,4 +316,10 @@ test('profile change detection: null and garbage are safe', () => {
         assert.doesNotThrow(() => workflowTileValues(bad));
     }
     assert.deepEqual(changedTileValues(workflowTileValues({ profile: { title: 'A' } }), workflowTileValues(null)), {});
+});
+
+test('the edit guard outlasts the tile write debounce and is not duplicated as a literal', () => {
+    assert.ok(WORKFLOW_EDIT_GUARD_MS > API_DEBOUNCE_MS);
+    assert.doesNotMatch(readFileSync(new URL('../src/modules/app.js', import.meta.url), 'utf8'), /WORKFLOW_EDIT_GUARD_MS\s*=\s*\d/);
+    assert.doesNotMatch(readFileSync(new URL('../src/modules/ui.js', import.meta.url), 'utf8'), /API_DEBOUNCE_MS\s*=\s*\d/);
 });

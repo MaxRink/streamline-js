@@ -10,6 +10,13 @@
 //
 import { profileFingerprint } from './dye-selection.js';
 
+// A tile press is pushed to Decaid after this debounce (ui.js imports it).
+export const API_DEBOUNCE_MS = 1000;
+// A press this recent has not reached Decaid yet: repainting from a read now
+// would reassign the variable the pending push is about to send. Derived from
+// the debounce so the two cannot drift apart.
+export const WORKFLOW_EDIT_GUARD_MS = API_DEBOUNCE_MS + 100;
+
 // Only the values the main-page tiles actually show are compared. Diffing whole
 // documents would fire on profile internals the sidebar never renders.
 

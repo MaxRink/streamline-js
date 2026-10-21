@@ -5,7 +5,8 @@ import { openDB, getSetting } from './idb.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, formatScreensaverClockDate, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
 import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine } from './screensaver-policy.js';
 import { isBengleMachine, isBengleModel } from './machine.js';
-import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync } from './steam-mode.js';
+import { STEAM_FLOW_PRESETS_BY_MODEL, MILK_STOP_PRESETS, resolveSteamFlowPresetsForModel, resolveSteamTileMode, milkTelemetryValue, steamFlowHighlightIndex, STEAM_SYNC_SYNCED, steamSyncField, foldSteamSyncState, shouldRetrySteamSync, steamSyncRetryDelay } from './steam-mode.js';
+import { API_DEBOUNCE_MS } from './workflow-watch.js';
 import { shouldUseNumpad } from './numpad-policy.js';
 import { openContextMenu } from './context-menu.js';
 import { initCalibratedSteam } from './calibrated-steam-ui.js';
@@ -181,7 +182,6 @@ let selectedSteamFlowPresetIndex = 1; // default = second leftmost
 let lastSteamFlowModel = null;
 let steamApiDebounce = null;
 let hotWaterApiDebounce = null;
-const API_DEBOUNCE_MS = 1000;
 
 // When a tile last scheduled a write. The workflow watch reads this: repainting a
 // tile from the server between a debounced push and the next keypress would
@@ -1043,7 +1043,6 @@ export function updateSteamDisplay(data) {
 // BEFORE the push precisely so the user's intent survives a failed one.
 const STEAM_UNSYNCED_CLASS = 'text-[var(--status-red-color)]';
 const STEAM_PRIMARY_CLASS = 'text-[var(--text-primary)]';
-const STEAM_SYNC_RETRY_MS = 8000;
 let steamSync = { ...STEAM_SYNC_SYNCED };
 let steamSyncRetryTimer = null;
 
@@ -1085,7 +1084,7 @@ export function pushSteamSetting(field, promise) {
         applySteamSyncEvent({ type: 'push-failed', field });
         showToast(getTranslation('Steam setting did not reach the machine. Retrying...'), 3000, 'error');
         clearTimeout(steamSyncRetryTimer);
-        steamSyncRetryTimer = setTimeout(runSteamSyncRetry, STEAM_SYNC_RETRY_MS);
+        steamSyncRetryTimer = setTimeout(runSteamSyncRetry, steamSyncRetryDelay(steamSync));
     });
 }
 
@@ -1098,7 +1097,7 @@ async function runSteamSyncRetry() {
         logger.warn('Steam resync retry failed:', e);
         applySteamSyncEvent({ type: 'retry-failed' });
         if (shouldRetrySteamSync(steamSync)) {
-            steamSyncRetryTimer = setTimeout(runSteamSyncRetry, STEAM_SYNC_RETRY_MS);
+            steamSyncRetryTimer = setTimeout(runSteamSyncRetry, steamSyncRetryDelay(steamSync));
         } else {
             showToast(getTranslation('Steam setting still not applied — check the machine connection.'), 4000, 'error');
         }

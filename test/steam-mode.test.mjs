@@ -18,6 +18,8 @@ import {
     steamSyncField,
     foldSteamSyncState,
     shouldRetrySteamSync,
+    STEAM_SYNC_RETRY_DELAYS_MS,
+    steamSyncRetryDelay,
     ECO_STEAM_TEMP,
     ECO_STEAM_DELAY_MS,
     shouldEnterEcoSteam,
@@ -350,6 +352,18 @@ test('foldSteamSyncState: a failed push marks the field and arms the retries', (
     assert.equal(s.field, 'duration');
     assert.equal(s.retriesLeft, STEAM_SYNC_RETRY_LIMIT);
     assert.equal(shouldRetrySteamSync(s), true);
+});
+
+test('steamSyncRetryDelay: one backoff rung per retry, ladder matches the limit', () => {
+    assert.equal(STEAM_SYNC_RETRY_DELAYS_MS.length, STEAM_SYNC_RETRY_LIMIT);
+    let s = foldSteamSyncState(STEAM_SYNC_SYNCED, { type: 'push-failed', field: 'duration' });
+    const delays = [];
+    while (shouldRetrySteamSync(s)) {
+        delays.push(steamSyncRetryDelay(s));
+        s = foldSteamSyncState(s, { type: 'retry-failed' });
+    }
+    assert.deepEqual(delays, [2000, 4000, 8000]);
+    assert.equal(steamSyncRetryDelay(s), 8000); // clamps once exhausted
 });
 
 test('foldSteamSyncState: a successful push of the same field clears the mark', () => {
