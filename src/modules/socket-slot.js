@@ -21,6 +21,20 @@
 import { logger } from './logger.js';
 
 /**
+ * Reconnect timing per socket class, spread into every `new ReconnectingWebSocket`
+ * in api.js. Jitter only shortens a delay and a socket must stay open
+ * `stableAfterMs` before its backoff resets, so a flapping link keeps backing off.
+ *  - critical:   machine snapshot + devices (a retry is what recovers the dashboard).
+ *  - standard:   scale, shot settings, water levels, shot state, display, time-to-ready.
+ *  - background: grinder, sensor, profileGenerated, update, plugin push.
+ */
+export const RECONNECT_POLICY = Object.freeze({
+    critical: Object.freeze({ reconnectInterval: 2000, reconnectDecay: 1.5, maxReconnectInterval: 10000, reconnectJitter: 0.3, stableAfterMs: 5000 }),
+    standard: Object.freeze({ reconnectInterval: 3000, reconnectDecay: 1.5, maxReconnectInterval: 30000, reconnectJitter: 0.3, stableAfterMs: 5000 }),
+    background: Object.freeze({ reconnectInterval: 5000, reconnectDecay: 1.5, maxReconnectInterval: 30000, reconnectJitter: 0.3, stableAfterMs: 5000 }),
+});
+
+/**
  * Detach a socket's handlers so a socket we are discarding can no longer touch
  * the UI or fire app callbacks. Returns the socket for chaining.
  */

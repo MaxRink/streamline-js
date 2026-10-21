@@ -15,6 +15,7 @@ const loadApi = (socket) => new Function(
     'WS_PROTOCOL',
     'reaHostname',
     'REA_PORT',
+    'RECONNECT_POLICY',
     'logger',
     `let updateWebSocket = null;
     let updateWebSocketReady = false;
@@ -26,6 +27,7 @@ const loadApi = (socket) => new Function(
     'ws:',
     'decaid',
     8080,
+    { critical: {}, standard: {}, background: {} },
     { error() {}, info() {}, warn() {} },
 );
 

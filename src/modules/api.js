@@ -1,6 +1,6 @@
 import * as ui from './ui.js';
 import { logger ,setDebug} from './logger.js';
-import { createSocketSlot } from './socket-slot.js';
+import { createSocketSlot, RECONNECT_POLICY } from './socket-slot.js';
 import { decideResync } from './resync-policy.js';
 import { createScaleSampleBuffer } from './calibrated-steam.js';
 import { clampAutoSteamSettings } from './auto-steam-safety.js';
@@ -206,9 +206,7 @@ export async function setGrinderSetting(setting) {
  * moment to forget what was last seen. Returns { close }.
  */
 export function connectGrinderSnapshot(onSnapshot, onOpen = null) {
-    const socket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/grinder/snapshot`, [], {
-        reconnectInterval: 3000,
-    });
+    const socket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/grinder/snapshot`, [], { ...RECONNECT_POLICY.background });
     socket.onopen = () => { if (onOpen) onOpen(); };
     socket.onmessage = (event) => {
         try { onSnapshot(JSON.parse(event.data)); } catch (error) { logger.warn('Bad grinder snapshot:', error); }
@@ -514,9 +512,7 @@ export function ensureMachineSnapshotSocket() {
 }
 
 export function connectWebSocket(onData, onReconnect) {
-    reconnectingWebSocket = snapshotSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/snapshot`, [], {
-        reconnectInterval: 3000,
-    }));
+    reconnectingWebSocket = snapshotSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/snapshot`, [], { ...RECONNECT_POLICY.critical }));
 
     reconnectingWebSocket.onopen = () => {
         logger.info('WebSocket (re)connected.');
@@ -569,11 +565,6 @@ export function connectWebSocket(onData, onReconnect) {
     reconnectingWebSocket.onclose = () => {
         logger.info('WebSocket disconnected. Attempting to reconnect...');
         ui.updateMachineStatus({ status: "Disconnected" });
-        setTimeout(() => {
-            logger.info('reloading now');
-            // location.reload();
-
-        }, 6000);
     };
 
     reconnectingWebSocket.onerror = (error) => {
@@ -592,7 +583,7 @@ export function connectAddressedScaleWebSocket(deviceId, onData, onReconnect, on
     const socket = addressedScaleSocketSlot.replace(() => new ReconnectingWebSocket(
         `${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/scales/${encodeURIComponent(String(deviceId))}/snapshot`,
         [],
-        { reconnectInterval: 3000 },
+        { ...RECONNECT_POLICY.standard },
     ));
     socket.onopen = () => onReconnect?.();
     socket.onmessage = event => {
@@ -620,9 +611,7 @@ export function connectScaleWebSocket(onData, onReconnect, onDisconnect) {
     // The slot silences the previous socket before closing it, so a deliberate
     // replace (settings wizard takeover/release, post-scan reopen) never fires the
     // old owner's onDisconnect. Genuine drops still reach onclose below.
-    const scaleWebSocket = scaleSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/scale/snapshot`, [], {
-        reconnectInterval: 3000,
-    }));
+    const scaleWebSocket = scaleSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/scale/snapshot`, [], { ...RECONNECT_POLICY.standard }));
 
     scaleWebSocket.onopen = () => {
         calibratedSteamSamples.clear();
@@ -685,9 +674,7 @@ export function connectSensorSnapshotWebSocket(sensorId, onData) {
     }
 
     sensorSnapshotWebSocketId = sensorId;
-    sensorSnapshotWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/sensors/${sensorId}/snapshot`, [], {
-        reconnectInterval: 3000,
-    });
+    sensorSnapshotWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/sensors/${sensorId}/snapshot`, [], { ...RECONNECT_POLICY.background });
 
     sensorSnapshotWebSocket.onmessage = (event) => {
         try {
@@ -714,9 +701,7 @@ export function closeSensorSnapshotWebSocket() {
 }
 
 export function connectShotSettingsWebSocket(onData) {
-    const shotSettingsWebSocket = shotSettingsSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/shotSettings`, [], {
-        reconnectInterval: 3000,
-    }));
+    const shotSettingsWebSocket = shotSettingsSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/shotSettings`, [], { ...RECONNECT_POLICY.standard }));
 
     shotSettingsWebSocket.onopen = () => {
         logger.info('Shot Settings WebSocket connected');
@@ -747,9 +732,7 @@ export function connectShotSettingsWebSocket(onData) {
 const waterLevelSocketSlot = createSocketSlot('water level');
 
 export function connectWaterLevelsWebSocket(onData) {
-    const socket = waterLevelSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/waterLevels`, [], {
-        reconnectInterval: 3000,
-    }));
+    const socket = waterLevelSocketSlot.replace(() => new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/waterLevels`, [], { ...RECONNECT_POLICY.standard }));
 
     socket.onopen = () => {
         logger.info('Water tank WebSocket connection established.');
@@ -785,9 +768,7 @@ export function connectWaterLevelsWebSocket(onData) {
 // Rea's shot sequencer. The server replays the latest frame on connect and the
 // socket is not gated on a connected machine — attach once and keep it open.
 export function connectShotStateWebSocket(onData) {
-    const shotStateWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/shotState`, [], {
-        reconnectInterval: 3000,
-    });
+    const shotStateWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/machine/shotState`, [], { ...RECONNECT_POLICY.standard });
 
     shotStateWebSocket.onopen = () => {
         logger.info('Shot State WebSocket connected');
@@ -824,7 +805,7 @@ export function connectPluginPush(pluginId, endpoint, onPush) {
     return slot.replace(() => {
         const socket = new ReconnectingWebSocket(
             `${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/${encodeURIComponent(pluginId)}/${encodeURIComponent(endpoint)}`,
-            [], { reconnectInterval: 5000, maxReconnectInterval: 60000 });
+            [], { ...RECONNECT_POLICY.background, maxReconnectInterval: 60000 });
         socket.onmessage = (event) => { try { onPush(event?.data); } catch (error) { logger.warn('Plugin push handler failed:', error); } };
         return socket;
     });
@@ -838,9 +819,7 @@ export function closePluginPush(pluginId) {
 }
 
 export function connectTimeToReadyWebSocket(onData) {
-    const timeToReadyWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/time-to-ready.reaplugin/timeToReady`, [], {
-        reconnectInterval: 3000,
-    });
+    const timeToReadyWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/time-to-ready.reaplugin/timeToReady`, [], { ...RECONNECT_POLICY.standard });
 
     timeToReadyWebSocket.onopen = () => {
         logger.info('Time-to-ready WebSocket connected');
@@ -871,7 +850,7 @@ export function connectProfileGeneratedWebSocket(onData) {
     profileGeneratedWebSocket = new ReconnectingWebSocket(
         `${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/plugins/decent-profile.reaplugin/profileGenerated`,
         [],
-        { debug: false, reconnectInterval: 3000 }
+        { ...RECONNECT_POLICY.background, debug: false }
     );
 
     profileGeneratedWebSocket.onopen = () => {
@@ -950,9 +929,7 @@ export function connectDeviceWebSocket(onData, onReconnect, onDisconnect, onErro
         return;
     }
 
-    deviceWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/devices`, [], {
-        reconnectInterval: 3000,
-    });
+    deviceWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/devices`, [], { ...RECONNECT_POLICY.critical });
 
     deviceWebSocket.onopen = () => {
         logger.info('Device WebSocket (re)connected.');
@@ -1183,9 +1160,7 @@ export function connectUpdateWebSocket(onData, onOpen) {
         return;
     }
 
-    updateWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/update`, [], {
-        reconnectInterval: 3000,
-    });
+    updateWebSocket = new ReconnectingWebSocket(`${WS_PROTOCOL}//${reaHostname}:${REA_PORT}/ws/v1/update`, [], { ...RECONNECT_POLICY.background });
 
     updateWebSocket.onopen = () => {
         logger.info('Update WebSocket connected');

@@ -38,6 +38,14 @@ Contract details are channel-specific:
 - Device, display, update, and raw-command sockets have different bidirectional and queueing behavior; inspect their schema and existing handler before modifying them.
 - A reconnect, machine swap, or page navigation must not create a second owner for the same stream.
 
+Reconnect timing comes from `RECONNECT_POLICY` in `socket-slot.js`; spread a class into every `new ReconnectingWebSocket(` in `api.js`:
+
+- `critical` (machine snapshot, devices): 2 s base, 10 s cap.
+- `standard` (scale, shot settings, water levels, shot state, display, time-to-ready): 3 s base, 30 s cap.
+- `background` (grinder, sensor, profileGenerated, update, plugin push): 5 s base, 30 s cap (the plugin push sockets override the cap to 60 s, their previous value).
+
+All use 0.3 downward jitter and `stableAfterMs: 5000` (vendored-library options: the backoff counter resets only after a socket stayed open that long, so an open-then-drop flap keeps backing off). Machine power-on recovery does not rely on the backoff: `onLinkUp` -> `resyncMachineSockets` opens fresh instances.
+
 Keep UI work out of socket construction. Parse and normalize at the boundary, then call the owning app or UI handler.
 
 ## Machine And Settings Safety
