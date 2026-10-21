@@ -10,7 +10,7 @@ export async function openBeanScaleCaptureModal({ onCapture } = {}) {
     let devices = [];
     const dialog = document.createElement('dialog');
     dialog.setAttribute('aria-labelledby', 'bean-scale-heading');
-    dialog.className = 'rounded-2xl bg-[var(--background-color)] p-6 text-[var(--text-primary)]';
+    dialog.className = 'rounded-2xl bg-[var(--bgmain-color)] p-6 text-[var(--text-primary)]';
     dialog.innerHTML = `
       <form method="dialog" class="flex min-w-[420px] flex-col gap-5">
         <h2 id="bean-scale-heading" class="text-[26px]">${getTranslation('Capture bean weight')}</h2>

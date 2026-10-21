@@ -8,7 +8,7 @@ export async function openBeanSelectionModal({ onSaved } = {}) {
     const token = { active: true, generation: 0 };
     const dialog = document.createElement('dialog');
     dialog.setAttribute('aria-labelledby', 'bean-selection-heading');
-    dialog.className = 'rounded-2xl bg-[var(--background-color)] p-6 text-[var(--text-primary)]';
+    dialog.className = 'rounded-2xl bg-[var(--bgmain-color)] p-6 text-[var(--text-primary)]';
     dialog.innerHTML = `<form method="dialog" class="flex w-[min(92vw,640px)] flex-col gap-5">
       <h2 id="bean-selection-heading" class="text-[26px]">${getTranslation('Select coffee batch for next shot')}</h2>
       <label class="flex flex-col gap-2"><span>${getTranslation('Coffee')}</span><select name="bean" class="rounded-lg p-3 text-black" required><option value="">${getTranslation('Choose coffee')}</option></select></label>
