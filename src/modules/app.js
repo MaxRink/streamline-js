@@ -1172,8 +1172,8 @@ async function handleWeightClick() {
                     sendDeviceCommand({ command: 'scan', connect: true });
                 },
                 handleDeviceWsData,
-                () => {},
-                () => {},
+                null,
+                null,
                 handleDeviceConnectionError
             );
         } else {

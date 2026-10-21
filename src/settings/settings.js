@@ -9942,6 +9942,12 @@ export function cleanupSettings() {
     ledRestoreStrip();
     ledSeqReleaseManual();
     if (calWsClaimed) calReleaseScaleWs();
+    sensorCalStopLive();
+    // Same teardown as switching category: invalidate a pending import and
+    // stop the mounted maintenance page's poller/listeners.
+    maintenanceSequence += 1;
+    maintenanceCleanup?.();
+    maintenanceCleanup = null;
 }
 
 /**
