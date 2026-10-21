@@ -1311,9 +1311,50 @@ function checkExitCondition(machineData, exitCondition) {
     return false;
 }
 
+// The profile selector's preview. While a shot is being pulled the selector can still be
+// opened, and chartData / the expanded-chart tracking / latestMainRender are the LIVE
+// shot's: drawing the preview through them would replace the live points with the profile's
+// target lines (and clearChart would wipe the shot), so on return the new frames would
+// append to the preview. With a shot running the preview is drawn from scratch arrays and
+// everything it touched is put back; otherwise the preview owns the shared state, which is
+// how the dashboard chart ends up showing the profile just picked.
 export function plotProfile(profile) {
+    if (!isLiveShot) {
+        drawProfilePreview(profile, false);
+        return;
+    }
+    const liveArrays = {};
+    for (const trace in chartData) liveArrays[trace] = { x: chartData[trace].x, y: chartData[trace].y };
+    const priorRender = latestMainRender;
+    const priorDirty = mainRenderDirty;
+    try {
+        drawProfilePreview(profile, true);
+    } finally {
+        for (const trace in chartData) {
+            chartData[trace].x = liveArrays[trace].x;
+            chartData[trace].y = liveArrays[trace].y;
+        }
+        latestMainRender = priorRender;
+        mainRenderDirty = priorDirty;
+    }
+}
+
+function drawProfilePreview(profile, isolated) {
     if (!profile || !profile.steps || profile.steps.length === 0) {
-        clearChart();
+        if (!isolated) {
+            clearChart();
+            return;
+        }
+        for (const trace in chartData) {
+            chartData[trace].x = [];
+            chartData[trace].y = [];
+        }
+        const emptyLayout = JSON.parse(JSON.stringify(currentTheme === 'dark' ? darkLayout : lightLayout));
+        emptyLayout.annotations = [];
+        emptyLayout.shapes = [];
+        emptyLayout.xaxis = { ...emptyLayout.xaxis, autorange: true };
+        const element = getChartElement();
+        if (element) renderMain(JSON.parse(JSON.stringify(chartTraces)), emptyLayout);
         return;
     }
 
@@ -1459,7 +1500,7 @@ export function plotProfile(profile) {
         console.error('plotProfile: chartElement not found in DOM');
         return;
     }
-    rebuildExpandedFromChartData();
+    if (!isolated) rebuildExpandedFromChartData();
     renderMain(plotData, layout);
 }
 

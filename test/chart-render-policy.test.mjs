@@ -53,3 +53,15 @@ test('hidden renders coalesce and teardown invalidates queued work before dispos
     assert.match(chart, /renderGenerations\.set\(element, generation\);[\s\S]*await enqueue\?\.dispose\(\);[\s\S]*destroyChart\(element\)/);
     assert.match(chart, /!element\.isConnected \|\| renderGenerations\.get\(element\) !== generation/g);
 });
+
+test('the profile preview leaves a running shot\'s chart state alone', () => {
+    const chart = readFileSync(new URL('../src/modules/chart.js', import.meta.url), 'utf8');
+    const start = chart.indexOf('export function plotProfile(');
+    const body = chart.slice(start, chart.indexOf('function drawProfilePreview(', start));
+    assert.match(body, /if \(!isLiveShot\)/, 'idle keeps the preview-owns-the-chart behavior');
+    assert.match(body, /liveArrays\[trace\] = \{ x: chartData\[trace\]\.x, y: chartData\[trace\]\.y \}/, 'live arrays are saved');
+    assert.match(body, /finally \{[\s\S]*chartData\[trace\]\.x = liveArrays\[trace\]\.x;[\s\S]*latestMainRender = priorRender;/, 'and restored in a finally');
+    const draw = chart.slice(chart.indexOf('function drawProfilePreview('));
+    assert.match(draw, /if \(!isolated\) rebuildExpandedFromChartData\(\)/, 'the live shot\'s expanded tracking is not reset');
+    assert.match(draw, /if \(!isolated\) \{\s*clearChart\(\);/, 'clearChart (which wipes the shot) is not used for an isolated preview');
+});
