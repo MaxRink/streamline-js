@@ -222,6 +222,22 @@ test('custom saver brightness preserves zero and opt-out shows the effective def
     assert.match(automatic, new RegExp(`id="saver-brightness-value"[^>]*>${SAVER_BRIGHTNESS_DEFAULT}%`));
 });
 
+test('the clock format, date and position rows follow the show-clock toggle', () => {
+    const off = renderSaverSettings({ screensaverShowClock: 'false' });
+    assert.ok(off.includes('id="screensaver-show-clock"'));
+    for (const id of ['screensaver-clock-format', 'screensaver-date-format', 'screensaver-clock-position']) {
+        assert.ok(!off.includes(`id="${id}"`), `${id} describes a clock that is not rendering`);
+    }
+    // The toggle must come before the rows it reveals: the grid reads row-wise.
+    const on = renderSaverSettings();
+    assert.ok(on.indexOf('id="screensaver-show-clock"') < on.indexOf('id="screensaver-clock-format"'));
+
+    // Without a repaint the rows only appear on the next visit to the panel.
+    const source = readFileSync(new URL('../src/settings/settings.js', import.meta.url), 'utf8');
+    const handler = source.match(/window\.setScreensaverShowClock = function[\s\S]*?\n    \};/)[0];
+    assert.match(handler, /updateSettingsContentArea\(activeSettingsCategory\)/);
+});
+
 test('the style segment ignores a tap on the mode already selected', () => {
     // Every tap calls window.setBlackScreenSaver, so without this guard a tap on
     // the selected segment rewrites screensaverEnabled and turns a saver the user

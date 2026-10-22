@@ -2144,10 +2144,11 @@ export function renderScreenSaverSettings() {
 
             <div style="${grid}">
                 ${blackSaver ? '' : toggle('Show screen saver when the machine sleeps', 'Show screen saver when the machine sleeps', enabled, 'window.setScreensaverEnabled')}
-                ${select('screensaver-clock-format', 'Clock format', SCREENSAVER_CLOCK_FORMATS, clockFormat, 'window.setScreensaverClockFormat')}
                 ${toggle('Show date and time', 'Show date and time', showClock, 'window.setScreensaverShowClock', 'screensaver-show-clock')}
+                ${showClock ? `
+                ${select('screensaver-clock-format', 'Clock format', SCREENSAVER_CLOCK_FORMATS, clockFormat, 'window.setScreensaverClockFormat')}
                 ${select('screensaver-date-format', 'Date format', SCREENSAVER_DATE_FORMATS, dateFormat, 'window.setScreensaverDateFormat')}
-                ${select('screensaver-clock-position', 'Clock position', SCREENSAVER_CLOCK_POSITIONS, clockPosition, 'window.setScreensaverClockPosition')}
+                ${select('screensaver-clock-position', 'Clock position', SCREENSAVER_CLOCK_POSITIONS, clockPosition, 'window.setScreensaverClockPosition')}` : ''}
             </div>
 
             ${!blackSaver ? `
@@ -8216,6 +8217,9 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
 
     window.setScreensaverShowClock = function(enabled) {
         ui.setScreensaverClockEnabled(enabled);
+        // The clock format, date format and position rows only exist while the
+        // clock does, so this toggle has to repaint the panel.
+        if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
     };
 
     window.setScreensaverClockFormat = function(format) {
