@@ -2900,16 +2900,23 @@ function finishSaveSuccess(id) {
 // A save writes to /profiles, which is the library. The machine keeps running
 // whatever updateWorkflow last sent it, so an edit to the profile currently
 // loaded stayed invisible on the machine until the user re-picked it in the
-// selector. Push it here instead.
+// selector. Push it here instead: saving loads the profile.
 //
-// Only when it IS the loaded one -- saving some other profile from the library
-// must not swap what the machine is brewing. isActiveProfile compares the id
-// directly rather than through availableProfiles, so it still answers for an id
-// this very save just minted.
-async function pushSavedProfileToMachine(previousId, saved) {
-    if (!saved?.profile || !isActiveProfile(previousId)) return;
+// Never during an espresso. Decaid's WorkflowDeviceSync listens on the workflow
+// controller and calls De1.setProfile the moment the profile changes, with no
+// machine-state check of its own (workflow_device_sync.dart _onChange/_drain),
+// and setProfile rewrites the header, every step frame and the tail
+// (unified_de1.profile.dart _sendProfile). Mid-shot that replaces the frames the
+// machine is executing. An unknown state does not block: it means the snapshot
+// socket is down, which is also a machine we cannot be writing a shot to.
+async function pushSavedProfileToMachine(saved) {
+    if (!saved?.profile) return;
     try {
-        const { updateWorkflow } = await import('./api.js');
+        const { updateWorkflow, currentMachineState, MachineState } = await import('./api.js');
+        if (currentMachineState === MachineState.ESPRESSO) {
+            showToast(getTranslation('Saved. The machine is brewing, so it keeps the loaded profile.'), 4000, 'info');
+            return;
+        }
         const { withSavedBrewTemp, setActiveProfile, lastGrinderSetting,
                 lastTargetDoseWeight, DEFAULT_DOSE_WEIGHT } = await import('./profileManager.js');
         const meta = saved.metadata || {};
@@ -2926,9 +2933,10 @@ async function pushSavedProfileToMachine(previousId, saved) {
                 grinderSetting: meta.grinderSetting ?? lastGrinderSetting() ?? null,
             },
         });
-        // A fork mints a new id. Without rebinding, the machine runs the saved
-        // profile while tile edits still write to the old record's overrides.
-        if (saved.id !== previousId) setActiveProfile(saved.id);
+        // The machine now runs this record, so tile edits belong to its id --
+        // a fork mints a new one, and without this they would keep writing to
+        // the retired record's overrides.
+        setActiveProfile(saved.id);
     } catch (err) {
         // The save itself succeeded. Leaving the machine on the previous profile
         // is exactly what happened before this existed, so report and carry on
@@ -2971,7 +2979,7 @@ async function saveDraftEdit(draftRecord) {
             });
             editorState.sourceProfileRecord = updated;
             _baselineProfileJson = JSON.stringify(editorState.profile);
-            await pushSavedProfileToMachine(draftRecord.id, updated);
+            await pushSavedProfileToMachine(updated);
             finishSaveSuccess(updated.id);
             return;
         }
@@ -3016,7 +3024,7 @@ async function saveDraftEdit(draftRecord) {
         editorState.sourceProfileId = saved.id;
         _baselineProfileJson = JSON.stringify(editorState.profile);
 
-        await pushSavedProfileToMachine(draftRecord.id, saved);
+        await pushSavedProfileToMachine(saved);
         finishSaveSuccess(saved.id);
     } catch (err) {
         console.error('Draft save failed:', err);
@@ -3362,7 +3370,7 @@ async function saveProfile({ asNew = false } = {}) {
         _baselineProfileJson = JSON.stringify(editorState.profile);
         updateSaveAsNewButtonState();
 
-        await pushSavedProfileToMachine(oldId, saved);
+        await pushSavedProfileToMachine(saved);
         finishSaveSuccess(saved.id);
     } catch (err) {
         console.error('Profile save failed:', err);

@@ -434,16 +434,20 @@ test('the tail is a percentage, so it tracks the scrollbar gutter rather than as
 // --- sending a saved profile to the machine -------------------------------
 // Lifted the same way as pushChannel above; the two dynamic imports become an
 // injected `deps` so the browser-only module graph is never loaded.
-const pushMatch = source.match(/async function pushSavedProfileToMachine\([\s\S]*?\r?\n\}/);
+const pushMatch = source.match(/async function pushSavedProfileToMachine\([\s\S]*?\n\}/);
 assert.ok(pushMatch, 'pushSavedProfileToMachine not found in profile_editor.js');
 const pushSource = pushMatch[0]
     .replace("await import('./api.js')", 'deps.api')
     .replace("await import('./profileManager.js')", 'deps.pm');
 
-function machinePush({ activeId = 'A', lastGrind = null, lastDose = null, fail = false } = {}) {
-    const sent = [], bound = [], warned = [];
+function machinePush({ state = 'idle', lastGrind = null, lastDose = null, fail = false } = {}) {
+    const sent = [], bound = [], warned = [], toasts = [];
     const deps = {
-        api: { updateWorkflow: async w => { if (fail) throw new Error('offline'); sent.push(w); } },
+        api: {
+            updateWorkflow: async w => { if (fail) throw new Error('offline'); sent.push(w); },
+            currentMachineState: state,
+            MachineState: { ESPRESSO: 'espresso', IDLE: 'idle', STEAM: 'steam' },
+        },
         pm: {
             withSavedBrewTemp: (profile, meta) =>
                 Number.isFinite(meta?.brewTemperature) ? { ...profile, _temp: meta.brewTemperature } : profile,
@@ -453,61 +457,76 @@ function machinePush({ activeId = 'A', lastGrind = null, lastDose = null, fail =
             DEFAULT_DOSE_WEIGHT: 18,
         },
     };
-    const fn = new Function('deps', 'isActiveProfile', 'console',
+    const fn = new Function('deps', 'console', 'showToast', 'getTranslation',
         `${pushSource}\nreturn pushSavedProfileToMachine;`)(
-        deps, id => !!id && id === activeId, { warn: (...a) => warned.push(a) });
-    return { fn, sent, bound, warned };
+        deps, { warn: (...a) => warned.push(a) }, (m, ...r) => toasts.push(m), k => k);
+    return { fn, sent, bound, warned, toasts };
 }
 
 const record = (over = {}) => ({
     id: 'A', profile: { title: 'Londinium', target_weight: '36' }, metadata: {}, ...over,
 });
 
-test('a saved profile reaches the machine only when it is the one loaded', async () => {
-    const other = machinePush({ activeId: 'A' });
-    await other.fn('B', record({ id: 'B' }));
-    assert.deepEqual(other.sent, [], 'saving another library profile must not swap what is brewing');
+test('saving loads the profile on the machine, but never mid-espresso', async () => {
+    const idle = machinePush({ state: 'idle' });
+    await idle.fn(record());
+    assert.equal(idle.sent.length, 1);
+    assert.equal(idle.sent[0].profile.title, 'Londinium');
+    assert.deepEqual(idle.bound, ['A'], 'the machine runs this record now, so it is the active one');
 
-    const active = machinePush({ activeId: 'A' });
-    await active.fn('A', record());
-    assert.equal(active.sent.length, 1);
-    assert.equal(active.sent[0].profile.title, 'Londinium');
+    // Decaid pushes a changed workflow profile straight to De1.setProfile with
+    // no state check of its own, and that rewrites the frames a running shot is
+    // executing -- so this guard is the only thing standing between a save and
+    // a corrupted shot.
+    const brewing = machinePush({ state: 'espresso' });
+    await brewing.fn(record());
+    assert.deepEqual(brewing.sent, []);
+    assert.deepEqual(brewing.bound, []);
+    assert.equal(brewing.toasts.length, 1, 'the user must be told the machine kept the old profile');
+
+    // Steam, flush and hot water do not run profile frames.
+    const steaming = machinePush({ state: 'steam' });
+    await steaming.fn(record());
+    assert.equal(steaming.sent.length, 1);
+
+    // Unknown state means the snapshot socket is down, which is not a machine
+    // we can be mid-shot on; blocking there would break the feature outright.
+    const unknown = machinePush({ state: null });
+    await unknown.fn(record());
+    assert.equal(unknown.sent.length, 1);
 
     // Nothing to send without a record, and no throw either.
-    const empty = machinePush({ activeId: 'A' });
-    await empty.fn('A', null);
-    await empty.fn('A', { id: 'A' });
+    const empty = machinePush();
+    await empty.fn(null);
+    await empty.fn({ id: 'A' });
     assert.deepEqual(empty.sent, []);
 });
 
 test('the workflow push carries dose, yield and grind, with the selector fallbacks', async () => {
-    const saved = machinePush({ activeId: 'A' });
-    await saved.fn('A', record({ metadata: { targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5, brewTemperature: 92 } }));
+    const saved = machinePush();
+    await saved.fn(record({ metadata: { targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5, brewTemperature: 92 } }));
     assert.deepEqual(saved.sent[0].context, { targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5 });
     assert.equal(saved.sent[0].profile._temp, 92, 'a saved brew temp must be folded in, as the favourites do');
 
     // No overrides: dose falls back to the last one set anywhere, then the
     // default; yield comes off the profile; grind stays null rather than absent.
-    const bare = machinePush({ activeId: 'A', lastGrind: 5, lastDose: 19 });
-    await bare.fn('A', record());
+    const bare = machinePush({ lastGrind: 5, lastDose: 19 });
+    await bare.fn(record());
     assert.deepEqual(bare.sent[0].context, { targetDoseWeight: 19, targetYield: 36, grinderSetting: 5 });
 
-    const none = machinePush({ activeId: 'A' });
-    await none.fn('A', record({ profile: { title: 'x', target_weight: 'n/a' } }));
+    const none = machinePush();
+    await none.fn(record({ profile: { title: 'x', target_weight: 'n/a' } }));
     assert.deepEqual(none.sent[0].context, { targetDoseWeight: 18, targetYield: 0, grinderSetting: null },
         'an unparsable target weight must send 0, never NaN');
 });
 
 test('a fork rebinds the active profile, and a failed send never fails the save', async () => {
-    const fork = machinePush({ activeId: 'old' });
-    await fork.fn('old', record({ id: 'new' }));
+    const fork = machinePush();
+    await fork.fn(record({ id: 'new' }));
     assert.deepEqual(fork.bound, ['new'], 'tile edits would otherwise write to the retired id');
 
-    const inPlace = machinePush({ activeId: 'A' });
-    await inPlace.fn('A', record());
-    assert.deepEqual(inPlace.bound, [], 'same id, nothing to rebind');
-
-    const offline = machinePush({ activeId: 'A', fail: true });
-    await offline.fn('A', record());   // must not reject
+    const offline = machinePush({ fail: true });
+    await offline.fn(record());   // must not reject
     assert.equal(offline.warned.length, 1);
+    assert.deepEqual(offline.bound, [], 'a send that failed must not claim the machine switched');
 });
