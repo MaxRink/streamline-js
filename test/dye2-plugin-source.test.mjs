@@ -278,39 +278,21 @@ function lift(module, patterns) {
     });
 }
 
-// ── Workflow context cleanup (dyeStrip.js) ──────────────────────────────────
-// DYE2 stamps bean/barista identity onto the workflow context and Decaid copies
-// the workflow into every persisted ShotRecord, so anything left there labels
-// later shots nobody meant to label. The clear runs after each persisted shot
-// and at boot when DYE2 isn't running; what matters is that it nulls exactly the
-// plugin-owned fields, leaves the dashboard's own dose/yield/grind alone, and
-// stays silent when there is nothing to clear.
+// ── Workflow context policy (dyeStrip.js, workflow-note.js) ─────────────────
+// Bean, roaster, batch, grinder, barista, drinker, basket and rpm persist across
+// shots and reloads; only the note is per shot. The one remaining wipe is the
+// Settings switch-off of DYE2.
 {
+    const { noteClearContext } = await import('../src/modules/workflow-note.js');
     const body = lift('dyeStrip.js', [
-        /const DYE_CONTEXT_FIELDS = \{[\s\S]*?\n\};/,
-        /export function hasDyeContext\([\s\S]*?\r?\n\}/,
-        /export async function clearDyeWorkflowContext\([\s\S]*?\r?\n\}/,
+        /const DYE2_OWNED_CONTEXT = \{[\s\S]*?\n\};/,
+        /export async function clearDye2ContextOnDisable\([\s\S]*?\r?\n\}/,
     ]);
-
-    const { scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } = await import('../src/modules/dye-context.js');
-    const build = (context, { scoped = false, inUse = true, selection = null } = {}) => {
+    const build = (context) => {
         const puts = [];
-        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker', 'isDye2Enabled', 'dye2PluginLoaded', 'skinBeanClearContext', 'mergeClearContext', 'getKVValue', 'DYE2_KV_NAMESPACE',
-            `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
-        const api = fn(
-            async () => ({ context }),
-            async (payload) => { puts.push(payload); return payload; },
-            { info() {}, warn() {} },
-            async () => scoped,
-            scopedClearContext,
-            hasDyeMarker,
-            () => inUse,
-            async () => inUse,
-            skinBeanClearContext,
-            mergeClearContext,
-            async () => selection,
-            'dye2.reaplugin',
-        );
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger',
+            `${body}\nreturn { clearDye2ContextOnDisable };`);
+        const api = fn(async () => ({ context }), async (p) => { puts.push(p); return p; }, { info() {}, warn() {} });
         return { ...api, puts };
     };
 
@@ -318,160 +300,50 @@ function lift(module, patterns) {
         targetDoseWeight: 22, targetYield: 44, grinderSetting: '21.00',
         beanBatchId: 'b1', coffeeName: 'Colombia El Paraiso', coffeeRoaster: 'La Cabra',
         grinderId: 'g1', baristaName: 'Mark', drinkerName: 'John',
-        extras: { note: 'Well balanced', rpm: 0, basketId: 'k1', basketName: 'ims 18g' },
+        extras: { note: 'Well balanced', rpm: 0, basketId: 'k1', basketName: 'ims 18g', dye: { v: 1 } },
     };
 
-    test('a selected recipe keeps its batch, grinder and basket; only per-shot fields clear (#149)', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { selection: { kind: 'recipe', id: 'r1' } });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        assert.deepEqual(puts[0].context, { baristaName: null, drinkerName: null, extras: { note: null } });
+    test('the note is cleared after a shot only when one is set, and nothing else is touched', () => {
+        assert.deepEqual(noteClearContext(dirty), { extras: { note: null } });
+        assert.deepEqual(noteClearContext({ extras: { note: '' } }), { extras: { note: null } });
+        assert.equal(noteClearContext({ extras: { note: null } }), null);
+        assert.equal(noteClearContext({ coffeeName: 'x', baristaName: 'y' }), null);
+        assert.equal(noteClearContext(null), null);
+        assert.deepEqual(Object.keys(noteClearContext(dirty)), ['extras']);
     });
 
-    test('a selected favourite is cleared as before', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { selection: { kind: 'favourite', id: 'f1' } });
-        await clearDyeWorkflowContext();
-        assert.equal(puts[0].context.beanBatchId, null);
-    });
-
-    test('clears every plugin-owned field and nothing the dashboard owns', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty);
-        assert.equal(await clearDyeWorkflowContext(), true);
+    test('the DYE2 switch-off wipes every DYE2-owned field including grinderSetting', async () => {
+        const { clearDye2ContextOnDisable, puts } = build(dirty);
+        assert.equal(await clearDye2ContextOnDisable(), true);
         assert.equal(puts.length, 1);
         const sent = puts[0].context;
-        for (const key of ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'grinderId',
-            'grinderModel', 'baristaName', 'drinkerName']) {
+        for (const key of ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'grinderId', 'grinderModel',
+            'grinderSetting', 'baristaName', 'drinkerName']) {
             assert.equal(sent[key], null, key);
         }
-        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null, dye: null, streamlineBean: null });
-        assert.ok(!('targetDoseWeight' in sent));
-        assert.ok(!('targetYield' in sent));
-        assert.ok(!('grinderSetting' in sent), 'the grind tile is not DYE2-owned');
-        assert.ok(!('profile' in puts[0]));
+        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null, dye: null });
+        assert.ok(!('targetDoseWeight' in sent) && !('targetYield' in sent) && !('profile' in sent));
     });
 
-    test('leaves another plugin\'s values alone when DYE2 is not in use', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { inUse: false });
-        assert.equal(await clearDyeWorkflowContext(), false);
-        assert.equal(puts.length, 0);
-    });
-
-    test('a coffee the skin picker set for one shot is still dropped when DYE2 is not in use', async () => {
-        const ctx = { targetDoseWeight: 18, beanBatchId: 'b', coffeeName: 'Lot', coffeeRoaster: 'R', grinderId: 'g1', extras: { streamlineBean: true } };
-        const { clearDyeWorkflowContext, puts } = build(ctx, { inUse: false });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        assert.deepEqual(puts[0].context, { beanBatchId: null, coffeeName: null, coffeeRoaster: null, extras: { streamlineBean: null } });
-    });
-
-    test('the skin picker\'s coffee is dropped alongside a marked DYE2 clear', async () => {
-        const ctx = { beanBatchId: 'b', coffeeName: 'Lot', coffeeRoaster: 'R', grinderId: 'g1',
-            extras: { streamlineBean: true, dye: { v: 1, grinderId: true } } };
-        const { clearDyeWorkflowContext, puts } = build(ctx, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        const sent = puts[0].context;
-        // report #4: the grinder is equipment, so it survives the post-shot clear while its DYE2 flag does not
-        assert.ok(!('grinderId' in sent));
-        assert.equal(sent.coffeeName, null);
-        assert.equal(sent.extras.streamlineBean, null);
-        assert.deepEqual(sent.extras.dye, { grinderId: null });
-    });
-
-    test('the Settings switch-off still clears everything', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { inUse: false });
-        assert.equal(await clearDyeWorkflowContext({ includeGrinderSetting: true }), true);
-        assert.equal(puts.length, 1);
-    });
-
-    test('coffee picker selection is cleared for the following shot without changing dose or grind', async () => {
-        const context = {
-            targetDoseWeight: 18, targetYield: 36, grinderSetting: '21',
-            ...currentBeanContext({ id: 'bean', name: 'Lot', roaster: 'Roaster' }, { id: 'batch', beanId: 'bean' }),
-        };
-        const { clearDyeWorkflowContext, puts } = build(context);
-        assert.equal(context.beanBatchId, 'batch');
-        assert.equal(await clearDyeWorkflowContext(), true);
-        const followingShot = { ...context, ...puts[0].context };
-        assert.equal(followingShot.beanBatchId, null);
-        assert.equal(followingShot.coffeeName, null);
-        assert.equal(followingShot.coffeeRoaster, null);
-        assert.equal(followingShot.targetDoseWeight, 18);
-        assert.equal(followingShot.targetYield, 36);
-        assert.equal(followingShot.grinderSetting, '21');
-    });
-
-    test('a DYE2 that marks its writes: only the flagged fields are cleared, another plugin\'s stay', async () => {
-        const context = {
-            ...dirty,
-            grinderModel: 'EG-1', // set by another plugin, never flagged
-            extras: { ...dirty.extras, dye: { v: 1, coffeeName: true, beanBatchId: true, note: true } },
-        };
-        const { clearDyeWorkflowContext, puts } = build(context, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        const sent = puts[0].context;
-        assert.equal(sent.coffeeName, null);
-        assert.equal(sent.beanBatchId, null);
-        assert.equal(sent.extras.note, null);
-        assert.deepEqual(sent.extras.dye, { coffeeName: null, beanBatchId: null, note: null });
-        for (const kept of ['coffeeRoaster', 'grinderId', 'grinderModel', 'baristaName', 'drinkerName']) {
-            assert.ok(!(kept in sent), kept);
-        }
-        assert.ok(!('rpm' in sent.extras) && !('basketId' in sent.extras));
-    });
-
-    test('marked DYE2 that wrote nothing: nothing is cleared, no PUT', async () => {
-        const { clearDyeWorkflowContext, puts } = build({ ...dirty, extras: { ...dirty.extras, dye: { v: 1 } } }, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), false);
-        assert.equal(puts.length, 0);
-    });
-
-    test('a marker-capable version that sent no marker still gets the blanket clear', async () => {
-        // The version gate says the plugin COULD mark its writes, not that it did: a
-        // build that declares the version and writes no marker must not silently stop
-        // the clear, or one shot's bean identity labels every later shot.
-        const { clearDyeWorkflowContext, puts } = build(dirty, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        assert.equal(puts[0].context.coffeeName, null);
-        assert.equal(puts[0].context.beanBatchId, null);
-        assert.ok(!('grinderSetting' in puts[0].context));
-    });
-
-    test('the settings switch-off still clears everything, marked or not', async () => {
-        const { clearDyeWorkflowContext, puts } = build({ ...dirty, extras: { ...dirty.extras, dye: { v: 1, note: true } } }, { scoped: true });
-        await clearDyeWorkflowContext({ includeGrinderSetting: true });
-        assert.equal(puts[0].context.coffeeName, null);
-        assert.equal(puts[0].context.grinderSetting, null);
-    });
-
-    test('grinderSetting goes only when the whole plugin is switched off', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty);
-        await clearDyeWorkflowContext({ includeGrinderSetting: true });
-        assert.equal(puts[0].context.grinderSetting, null);
-    });
-
-    test('no PUT when there is nothing to clear -- every shot and every boot calls this', async () => {
-        const { clearDyeWorkflowContext, puts } = build({ targetDoseWeight: 18, targetYield: 36, grinderSetting: '21.00' });
-        assert.equal(await clearDyeWorkflowContext(), false);
-        assert.equal(puts.length, 0);
-    });
-
-    test('rpm 0 and an empty-string note still count as set', async () => {
-        const { hasDyeContext } = build({});
-        assert.equal(hasDyeContext({ extras: { rpm: 0 } }), true);
-        assert.equal(hasDyeContext({ extras: { note: '' } }), true);
-        assert.equal(hasDyeContext({ extras: { note: null } }), false);
-        assert.equal(hasDyeContext(null), false);
-        assert.equal(hasDyeContext({ grinderSetting: '21.00' }), false);
-        assert.equal(hasDyeContext({ grinderSetting: '21.00' }, true), true);
+    test('no PUT when nothing is set; rpm 0 and an empty note count as set', async () => {
+        const empty = build({ targetDoseWeight: 18, targetYield: 36 });
+        assert.equal(await empty.clearDye2ContextOnDisable(), false);
+        assert.equal(empty.puts.length, 0);
+        assert.equal(await build({ extras: { rpm: 0 } }).clearDye2ContextOnDisable(), true);
+        assert.equal(await build({ extras: { note: '' } }).clearDye2ContextOnDisable(), true);
+        assert.equal(await build({ grinderSetting: '21.00' }).clearDye2ContextOnDisable(), true);
+        assert.equal(await build(null).clearDye2ContextOnDisable(), false);
     });
 
     test('a failed workflow read never throws at the caller', async () => {
         const fn = new Function('getWorkflow', 'updateWorkflow', 'logger',
-            `${body}\nreturn { clearDyeWorkflowContext };`);
-        const { clearDyeWorkflowContext } = fn(
+            `${body}\nreturn { clearDye2ContextOnDisable };`);
+        const { clearDye2ContextOnDisable } = fn(
             async () => { throw new Error('bridge down'); },
             async () => { throw new Error('should not be reached'); },
             { info() {}, warn() {} },
         );
-        assert.equal(await clearDyeWorkflowContext(), false);
+        assert.equal(await clearDye2ContextOnDisable(), false);
     });
 }
 

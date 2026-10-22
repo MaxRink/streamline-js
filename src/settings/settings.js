@@ -24,7 +24,7 @@ import { APP_VERSION, SKIN_ID } from '../version.js';
 import { openNotesModal } from '../modules/notes-modal.js';
 import { openDB, getSetting, setSetting, addEmails, getAllEmails, getLatestEmailTimestamp } from '../modules/idb.js';
 import { openModal, shouldUseNumpad, initializeNumpadModal } from '../modules/numpad-modal.js';
-import { ensureDye2PluginReady, getDye2VersionInfo, installDye2Plugin, offerDye2Update, checkDye2UpdatesIfDue, clearDyeWorkflowContext } from '../modules/dyeStrip.js';
+import { ensureDye2PluginReady, getDye2VersionInfo, installDye2Plugin, offerDye2Update, checkDye2UpdatesIfDue, clearDye2ContextOnDisable } from '../modules/dyeStrip.js';
 import { pluginKeywords, pluginListKeywords, subcategoryMatches, textFromHtml, tokenPattern, HIGHLIGHT_CLASS } from '../modules/settings-search.js';
 import { haYamlBlocks } from '../modules/home-assistant.js';
 import { loadIro } from '../modules/vendor-loader.js';
@@ -8438,7 +8438,7 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
                 // ponytail: covers the switch in this skin only -- disabling DYE2
                 // from Decaid's own settings page bypasses it. Move to
                 // PluginLoaderService.disablePlugin upstream if that path matters.
-                if (pluginId === DYE2_PLUGIN_ID) await clearDyeWorkflowContext({ includeGrinderSetting: true });
+                if (pluginId === DYE2_PLUGIN_ID) await clearDye2ContextOnDisable();
                 await disablePlugin(pluginId);
             }
             if (label) label.textContent = enable ? 'Enabled' : 'Disabled';

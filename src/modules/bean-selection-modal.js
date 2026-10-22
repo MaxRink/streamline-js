@@ -1,9 +1,8 @@
 import { getBeans, getBeanBatches, updateWorkflow } from './api.js';
 import { getTranslation } from './i18n.js';
-import { SKIN_BEAN_FLAG } from './dye-context.js';
 import { selectableBeans, selectableBatches, currentBeanContext } from './bean-selection.js';
 
-/** Select the bean batch for the next shot; normal workflow cleanup clears it afterward. */
+/** Select the bean batch; it persists across shots until changed. */
 export async function openBeanSelectionModal({ onSaved } = {}) {
     const token = { active: true, generation: 0 };
     const dialog = document.createElement('dialog');
@@ -60,7 +59,7 @@ export async function openBeanSelectionModal({ onSaved } = {}) {
         batchSelect.disabled = true;
         status.textContent = getTranslation('Saving coffee for next shot…');
         try {
-            await updateWorkflow({ context: { ...context, extras: { [SKIN_BEAN_FLAG]: true } } }); // flagged so the post-shot clean-up drops it
+            await updateWorkflow({ context });
             if (token.active) { onSaved?.(context); dialog.close(); }
         } catch (_) { if (token.active) { save.disabled = false; beanSelect.disabled = false; batchSelect.disabled = false; status.textContent = getTranslation('Could not save coffee for next shot'); } }
     });

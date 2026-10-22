@@ -31,7 +31,7 @@ import { initEcoSteam, noteEcoSteamActivity } from './eco-steam.js';
 import { loadStyle } from './vendor-loader.js';
 import { loadECharts } from './echarts-loader.js';
 import { initHelpLauncher } from './help-launcher.js';
-import { clearDyeWorkflowContext } from './dyeStrip.js';
+import { noteClearContext } from './workflow-note.js';
 import { SLEEP_PROFILE_KEY, sleepProfileMark, shouldApplyWakeProfile } from './wake-profile.js';
 import { isVisualizerEnabled, isAutoUploadEnabled } from './visualizer.js';
 
@@ -990,11 +990,8 @@ function handleData(data) {
             const previousNewestId = history.getNewestShotId();
             history.refreshToNewestShot(previousNewestId);
 
-            // The shot record has the workflow baked in by now, so the bean /
-            // barista / note identity in the live context has done its job —
-            // leave it there and it stamps every later shot too. DYE2 restates
-            // it per shot when the user means it (see dyeStrip.js).
-            clearDyeWorkflowContext();
+            // No context clear here: bean/barista identity persists across shots, and the
+            // per-shot note is cleared once, on the record-persisted frame below.
         })();
     }
 
@@ -1502,9 +1499,12 @@ function handleShotStateEvent(frame) {
                 }).catch(error => logger.warn('Could not fetch actualYield for finalized shot:', error));
             }
             seqRefreshHistory(frame.shotId);
-            // Record persisted — the context it captured is now history, so clear
-            // it rather than let it label the next shot (see dyeStrip.js).
-            clearDyeWorkflowContext();
+            // Record persisted — the note it captured is now history; everything else in
+            // the context persists on purpose (see workflow-note.js).
+            getWorkflow().then(live => {
+                const clear = noteClearContext(live?.context);
+                return clear && api.updateWorkflow({ context: clear });
+            }).catch(error => logger.warn('Could not clear the shot note:', error));
             break;
         // advance frames: chart already tracks step changes via profileFrame
     }

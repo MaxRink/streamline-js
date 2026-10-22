@@ -26,7 +26,6 @@ import { fitTextToBox, getTranslation } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode, showToast } from './ui.js';
-import { DYE_MARKER_VERSION, scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } from './dye-context.js';
 import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, recipeStripCells, favStripCells } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
@@ -1130,120 +1129,35 @@ export function disableDye2Ui() {
 
 // ─── Workflow context hygiene ──────────────────────────────────────────────────
 //
-// DYE2 is the usual writer of bean/equipment identity on the workflow context (other
-// plugins may set it too, so the clean-up is scoped; see clearDyeWorkflowContext), and
-// Decaid copies the whole workflow into every ShotRecord it persists — so
-// whatever is left sitting in the context silently labels every later shot. The
-// intent behind those fields belongs to the plugin, one shot at a time, so clear
-// them once a shot is persisted, and at boot -- but only while DYE2 is running
-// (option on, plugin loaded), or for what a marked DYE2 flagged.
+// Bean, roaster, batch, grinder, barista, drinker, basket and rpm are persistent
+// description state: they survive shots and reloads, and Decaid copies them into every
+// ShotRecord. Only the note is per shot (see workflow-note.js). The one time this file
+// wipes them is when DYE2 itself is switched off in Settings, so the plugin's leftovers
+// do not keep labelling shots with nobody left to change them.
 //
-// Left alone on purpose: targetDoseWeight / targetYield / grinderSetting, which
-// this dashboard owns and writes itself, and `profile`, the espresso profile the
-// machine actually runs (non-nullable in Decaid's Workflow model).
-// `grinderSetting` is cleared only for the Settings toggle, which turns DYE2 off
-// wholesale (includeGrinderSetting).
-const DYE_CONTEXT_FIELDS = {
+// Left alone on purpose: targetDoseWeight / targetYield, which this dashboard owns, and
+// `profile`, the espresso profile the machine actually runs (non-nullable in Decaid's
+// Workflow model).
+const DYE2_OWNED_CONTEXT = {
     beanBatchId: null, coffeeName: null, coffeeRoaster: null,
-    grinderId: null, grinderModel: null,
+    grinderId: null, grinderModel: null, grinderSetting: null,
     baristaName: null, drinkerName: null,
-    // The marker goes with the values: left behind, its stale flags would have the
-    // scoped clean-up null whatever another plugin sets under those names later.
-    extras: { basketId: null, basketName: null, rpm: null, note: null, dye: null, streamlineBean: null },
+    extras: { basketId: null, basketName: null, rpm: null, note: null, dye: null },
 };
 
-// Is there anything to clear? Without this the post-shot and boot hooks would PUT
-// a workflow on every shot and every load for the majority of users who never set
-// any of this.
-export function hasDyeContext(context, includeGrinderSetting = false) {
-    if (!context) return false;
-    const extras = context.extras || {};
-    const top = Object.keys(DYE_CONTEXT_FIELDS).filter(k => k !== 'extras');
-    if (includeGrinderSetting) top.push('grinderSetting');
-    return top.some(k => context[k] != null)
-        || Object.keys(DYE_CONTEXT_FIELDS.extras).some(k => extras[k] != null);
-}
-
-// Does the installed DYE2 mark the fields it writes (DYE_MARKER_VERSION)? Then the
-// clean-up clears only those and leaves another plugin's values alone. Looked up
-// lazily and cached briefly: shots and boot both call the clean-up, and a plugin
-// update should be noticed without a reload. Unreachable or missing plugin means
-// "no marker": the stale-DYE2-context clean-up it always was.
-let scopedClearCache = { at: 0, value: false };
-async function scopedClearSupported() {
-    if (Date.now() - scopedClearCache.at < 5 * 60 * 1000) return scopedClearCache.value;
-    let value = false;
-    try {
-        const plugins = await getPlugins();
-        const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === PLUGIN_ID) : null;
-        value = !!plugin && plugin.loaded !== false && !isOlderVersion(plugin.version, DYE_MARKER_VERSION);
-    } catch (e) { /* treated as unsupported */ }
-    scopedClearCache = { at: Date.now(), value };
-    return value;
-}
-
-async function dye2PluginLoaded() {
-    try {
-        const plugins = await getPlugins();
-        const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === PLUGIN_ID) : null;
-        return !!plugin && plugin.loaded !== false;
-    } catch (e) { return false; }
-}
-
-export async function clearDyeWorkflowContext({ includeGrinderSetting = false } = {}) {
+export async function clearDye2ContextOnDisable() {
     try {
         const live = await getWorkflow();
-        // The whole-plugin switch-off clears everything DYE2-shaped; only the
-        // per-shot and boot hooks are scoped to what DYE2 flagged.
-        // The version gate only promises the installed DYE2 COULD mark its writes, so
-        // scope the clear to the marker only when this context actually carries one.
-        // Without that check a plugin build that declares the version but writes no
-        // marker would stop the clear altogether and let one shot's bean identity label
-        // every later shot. A marker that flags nothing still clears nothing.
-        const skinBean = includeGrinderSetting ? null : skinBeanClearContext(live?.context);
-        // While DYE2 has a recipe selected the barista is still dialling it in: its
-        // batch, grinder, Basket and RPM describe the next shot too (#149). Only what a
-        // recipe does not set -- barista, drinker, note -- is per shot.
-        if (!includeGrinderSetting && isDye2Enabled() && await dye2PluginLoaded()) {
-            const sel = await getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => null);
-            if (sel?.kind === 'recipe' && sel.id != null) {
-                const c = live?.context || {};
-                const perShot = {};
-                if (c.baristaName != null) perShot.baristaName = null;
-                if (c.drinkerName != null) perShot.drinkerName = null;
-                if (c.extras?.note != null) perShot.extras = { note: null };
-                const merged = mergeClearContext(Object.keys(perShot).length ? perShot : null, skinBean);
-                if (!merged) return false;
-                await updateWorkflow({ context: merged });
-                logger.info('dyeStrip: cleared the per-shot context, kept the selected recipe\'s');
-                return true;
-            }
-        }
-        if (!includeGrinderSetting && hasDyeMarker(live?.context) && await scopedClearSupported()) {
-            const scoped = mergeClearContext(scopedClearContext(live?.context), skinBean);
-            if (!scoped) return false;
-            await updateWorkflow({ context: scoped });
-            logger.info('dyeStrip: cleared the workflow context fields DYE2 set');
-            return true;
-        }
-        // No marker to scope by: the all-fields clear is only for a DYE2 that is
-        // actually running (option on, plugin loaded) and cannot mark its writes.
-        // Otherwise the values belong to someone else (another plugin, the user).
-        if (!includeGrinderSetting && !(isDye2Enabled() && await dye2PluginLoaded())) {
-            // The coffee the skin's own picker set for one shot is still ours to drop.
-            if (!skinBean) return false;
-            await updateWorkflow({ context: skinBean });
-            logger.info('dyeStrip: cleared the coffee picked for one shot');
-            return true;
-        }
-        if (!hasDyeContext(live?.context, includeGrinderSetting)) return false;
-        const context = { ...DYE_CONTEXT_FIELDS };
-        if (includeGrinderSetting) context.grinderSetting = null;
-        await updateWorkflow({ context });
-        logger.info('dyeStrip: cleared stale DYE2 workflow context');
+        const context = live?.context;
+        if (!context) return false;
+        const extras = context.extras || {};
+        const set = Object.keys(DYE2_OWNED_CONTEXT).some(k => k !== 'extras' && context[k] != null)
+            || Object.keys(DYE2_OWNED_CONTEXT.extras).some(k => extras[k] != null);
+        if (!set) return false;
+        await updateWorkflow({ context: DYE2_OWNED_CONTEXT });
+        logger.info('dyeStrip: cleared DYE2 workflow context');
         return true;
     } catch (err) {
-        // Cleanup is hygiene, never the point of the call that triggered it.
         logger.warn('Failed to clear DYE2 workflow context:', err);
         return false;
     }
@@ -1530,9 +1444,6 @@ export async function initDyeStrip() {
     if (isDye2Enabled()) {
         await enableDye2Ui();
         await restoreParkedSelection().catch(e => logger.warn('dyeStrip: could not restore selection', e));
-        // The boot-time clean-up runs in the post-shot hook's own gate: only a
-        // running DYE2 owns the context (see clearDyeWorkflowContext).
-        clearDyeWorkflowContext(); // not awaited — boot does not wait on a PUT
     } else {
         disableDye2Ui();
     }

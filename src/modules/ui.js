@@ -1,6 +1,7 @@
 import { autoSteamPitcherLabel, compactAutoSteamTargetLabel, shouldKeepAutoSteamMode, steamAdjustmentControls } from './auto-steam-flow.js';
 import { manualSteamMode, steamModeCycle } from './auto-steam-capability.js';
 import { getProfile, getWorkflow, updateWorkflow, setMachineState, setTargetHotWaterVolume, setTargetHotWaterTemp, setTargetHotWaterDuration, setDe1Settings, setTargetSteamFlow, setTargetSteamDuration, setStopAtTemperature, resyncSteamFromStore, MachineState, persistSharedValue, FLUSH_DURATION_LAST_VALUE_KEY, isBlackScreenSaver, getSaverBrightness } from './api.js';
+import { resolveStatusStateKey, isActionTailSubstate } from './machine-status-policy.js';
 import { openDB, getSetting } from './idb.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, formatScreensaverClockDate, formatScreensaverClockTime, screensaverClockPositionStyle } from './screensaver-clock.js';
 import { deriveSleepButtonAction, isWakePending, mayTapWakeMachine } from './screensaver-policy.js';
@@ -3034,10 +3035,10 @@ export function updateMachineStatus(data) {
     // and `includes('need')` caught anything with "need" in it, so the skin could
     // sit on "Out of water" while decaid reported another state entirely.
     const isNeedsWaterState = state === 'needsWater';
-    // pouringDone is the post-action tail (e.g. steam auto-purge). DE1 keeps
+    // pouringDone / puffing are the post-action tail (e.g. steam auto-purge). DE1 keeps
     // state='steam' during this window but the user-visible action is over —
     // exit the steam counter immediately rather than counting through the purge.
-    const isPouringDone = substate === 'pouringDone';
+    const isPouringDone = isActionTailSubstate(substate);
 
     // Flush should take priority over preinfusion/pouring when both match,
     // e.g. "Flush (Pouring)" should be treated as a flush state, not a shot pour.
@@ -3083,7 +3084,7 @@ export function updateMachineStatus(data) {
         delete machineStatusEl.flushIntervalId;
     }
 
-    // Steam/flush/hotwater pouringDone is the post-action tail (e.g. auto-purge).
+    // Steam/flush/hotwater pouringDone/puffing is the post-action tail (e.g. auto-purge).
     // Freeze the last counter value so the UI doesn't keep ticking through the
     // purge, and don't fall into the espresso pouring branch. Once state leaves
     // steam/flush/hotwater, the normal path renders Ready.
@@ -3318,35 +3319,9 @@ function getStatusConfiguration(status, substate, stepName, timeValue, isClickab
             message: `${getTranslation('Steaming')}: ${formatTimeAbbreviated(timeValue)}`,
             messageClass: 'status-msg-red'
         },
-        'hotwater': {
-            message: `${getTranslation('Pouring')}: ${0}ml`,
-            messageClass: 'status-msg-green'
-        }
     };
 
-    const lowerStatus = status?.toLowerCase() || '';
-    const lowerSubstate = substate?.toLowerCase() || '';
-
-    // Prioritized list of states to check against `status` and `substate`
-    const statePriority = [
-        'disconnected', 'sleeping', 'error', 'heating', 'idle',
-        'flushing', 'steaming', 'hotwater',
-        'preinfusion', 'pouring'
-    ];
-
-    let effectiveState = '';
-
-    // Determine the effective state based on inclusion and priority
-    for (const stateKey of statePriority) {
-        if (lowerStatus.includes(stateKey)) {
-            effectiveState = stateKey;
-            break;
-        }
-        if (lowerSubstate.includes(stateKey)) {
-            effectiveState = stateKey;
-            break;
-        }
-    }
+    const effectiveState = resolveStatusStateKey(status, substate);
 
     if (effectiveState && configMap[effectiveState]) {
         const config = configMap[effectiveState];
@@ -3354,13 +3329,7 @@ function getStatusConfiguration(status, substate, stepName, timeValue, isClickab
             return config(status); // Pass original status for 'heating' as it expects it
         } else {
             // Apply custom formatting for specific states based on requirements
-            if (effectiveState === 'hotwater') {
-                // For hotwater, show "Pouring(green): x ml(blue)" with different colors for different parts
-                return {
-                    message: `${getTranslation('Pouring')}: ${hotWaterVolValueEl.textContent || 0}ml`,
-                    messageClass: 'status-msg-green-blue'  // Custom class to handle green "Pouring" and blue value
-                };
-            } else if (effectiveState === 'steaming') {
+            if (effectiveState === 'steaming') {
                 // For steaming, show "Steaming: x s" with seconds counting up
                 return {
                     message: `${getTranslation('Steaming')}: ${formatTimeAbbreviated(timeValue)}`,
