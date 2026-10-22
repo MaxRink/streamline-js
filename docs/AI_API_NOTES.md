@@ -80,8 +80,6 @@ Inspect both `src/modules/profileManager.js` and the target API wrapper before c
 
 Plugin settings are transport, so they belong behind `api.js` like any other Decaid call. A skin switch and a plugin flag are not always one-to-one.
 
-`src/modules/visualizer.js` presents two switches, `visualizerEnabled` (the integration) and `visualizerAutoUpload` (automatic upload), over the plugin's single `AutoUpload` flag, which receives the AND of the two. Manual per-shot upload goes through `uploadShotToVisualizer(shotId)` and is deliberately independent of the automatic flag. Read the current switch mapping before adding a third control or changing what the plugin is sent.
-
 ## Error Handling
 
 - Check `response.ok` before parsing a success body.

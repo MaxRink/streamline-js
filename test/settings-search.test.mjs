@@ -115,14 +115,14 @@ test('a subcategory still matches on its own name and id', () => {
 });
 
 test('keywords make a plugin setting reachable from the page that hosts it', () => {
-    const subcat = { id: 'extention1', name: 'Visualizer', keywords: pluginKeywords(visualizer) };
+    const subcat = { id: 'plugin-visualizer', name: 'Visualizer', keywords: pluginKeywords(visualizer) };
     assert.equal(subcategoryMatches(subcat, 'upload'), true);
     assert.equal(subcategoryMatches(subcat, 'threshold'), true);
     assert.equal(subcategoryMatches(subcat, 'grinder'), false);
 });
 
 test('matching is case-insensitive and an empty term matches everything', () => {
-    const subcat = { id: 'extention1', name: 'Visualizer', keywords: pluginKeywords(visualizer) };
+    const subcat = { id: 'plugin-visualizer', name: 'Visualizer', keywords: pluginKeywords(visualizer) };
     assert.equal(subcategoryMatches(subcat, 'UPLOAD'), true);
     assert.equal(subcategoryMatches(subcat, ''), true);
 });

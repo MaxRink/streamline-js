@@ -100,10 +100,10 @@ test('ECharts loads after first paint only on chart-bearing routes', () => {
     assert.match(loader, /catch\(error => \{\s*echartsPromise = null;/);
 });
 
-test('core startup does not wait for Visualizer verification', () => {
+test('core startup does not wait for the legacy Visualizer credential purge', () => {
     const app = read('src/modules/app.js');
-    assert.doesNotMatch(app, /await initVisualizer\(\)/);
-    assert.match(app, /connectShotSettingsWebSocket\(handleShotSettingsData\);\s*void initVisualizer\(\)/);
+    assert.doesNotMatch(app, /await purgeLegacyVisualizerCredentials\(\)/);
+    assert.match(app, /connectShotSettingsWebSocket\(handleShotSettingsData\);\s*void purgeLegacyVisualizerCredentials\(\)\.catch\(\(\) => \{\}\)/);
     assert.match(app, /Promise\.all\(\[historyInit, profileManager\.init\(\)\]\)/);
 });
 

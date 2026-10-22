@@ -13,7 +13,6 @@ import { brightnessNotices, QUEUED_NOTICE, LOW_BATTERY_NOTICE, GO_TO_SETTING_LAB
 import { resolveSteamStopMode, applyMilkProbeGate } from '../modules/steam-mode.js';
 import { summarizeFirmwareCatalog, isFirmwareCancellationError, estimateRemainingSeconds, isUploadComplete, estimateVerifyRemainingSeconds, estimateTotalRemainingSeconds, FIRMWARE_VERIFY_SECONDS, formatDuration } from '../modules/firmware-progress.js';
 import { setScreensaverSuppressed, isMachineAsleep } from '../modules/screensaver-policy.js';
-import { VISUALIZER_DEFAULT_SERVER, VISUALIZER_SERVER_SETTING, normalizeServerUrl, pluginSupportsCustomServer, planServerChange } from '../modules/visualizer-server.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, resolveScreensaverDateFormat, resolveScreensaverClockFormat, resolveScreensaverClockPosition } from '../modules/screensaver-clock.js';
 import { ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewComposite, ledLiveWriteState } from '../modules/led-color.js';
 import { LED_SEQUENCE_KEY, MIN_STEP_DURATION_MS, MAX_STEP_DURATION_MS, LED_TRIGGER_STATES, parseLedSequence, serializeLedSequence, addStep, removeStep, updateStep, moveStep, toggleTriggerState } from '../modules/led-sequence.js';
@@ -82,7 +81,6 @@ const SETTINGS_NUMPAD_CONFIGS = {
     'sleep-timeout-input':       { title: 'SLEEP TIMEOUT',     unit: 'min',  min: 1,   max: 120,  fieldType: 'settings-sleep-timeout' },
     'brightness-number':         { title: 'BRIGHTNESS',        unit: '%',    min: 0,   max: 100,  fieldType: 'settings-brightness' },
     'screensaver-cycle-seconds': { title: 'IMAGE CYCLE',       unit: 'sec',  min: 2,   max: 600,  fieldType: 'settings-screensaver-cycle' },
-    'visualizer-min-duration':   { title: 'MIN SHOT DURATION', unit: 'sec',  min: 1,              fieldType: 'settings-visualizer-min' },
     'keep-awake-hours-input':    { title: 'KEEP AWAKE HOURS',  unit: 'hr',   min: 0,   max: 12,   fieldType: 'settings-keep-awake-hours' },
     'keep-awake-mins-input':     { title: 'KEEP AWAKE MINS',   unit: 'min',  min: 0,   max: 59,   fieldType: 'settings-keep-awake-mins' },
     // Bengle cup-warmer fields -- register so they open the in-app numpad on the
@@ -921,10 +919,6 @@ export function renderSettingsContent(category) {
             return renderPluginManagerSettings();
         case 'shotupload':
             return renderShotUploadSettings();
-        case 'extensions':
-        case 'extention1':
-        case 'extention2':
-            return renderExtensionsSettings();
         case 'screensaver':
             return renderScreenSaverSettings();
         case 'brightness':
@@ -6327,7 +6321,7 @@ function setupShotUploadListeners() {
             return;
         }
         // The page can be left while those awaits are in flight, which drops the
-        // form -- same hazard loadVisualizerSettings guards against.
+        // form -- an async load must not paint a page that is gone.
         if (!document.getElementById('shotupload-controls')) return;
 
         const schema = plugin.settings && typeof plugin.settings === 'object' ? plugin.settings : {};
@@ -6376,99 +6370,6 @@ function setupShotUploadListeners() {
             this.disabled = false;
         });
     })();
-}
-
-// Render extensions settings
-export function renderExtensionsSettings() {
-    // Return the HTML template
-    const template = `
-        <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
-            <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
-                <p class="leading-[1.2]" data-i18n-key="Extensions Settings">Extensions Settings</p>
-            </div>
-
-            <div class="content-stretch flex flex-col items-start relative w-full">
-                <div class="content-stretch flex flex-col gap-[30px] items-start relative w-full">
-                    <div class="content-stretch flex items-center justify-between relative w-full">
-                        <div class="flex flex-col font-['Inter:Bold',sans-serif] font-bold justify-center leading-[0] not-italic relative text-[var(--mimoja-blue-v2)] text-[30px]">
-                            <p class="leading-[1.2]" data-i18n-key="Visualizer">Visualizer</p>
-                             <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full" data-i18n-key="Upload shots to visualizer.coffee">
-                        Upload shots to visualizer.coffee
-                    </p>
-                        </div>
-                        <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                            <input type="checkbox" id="visualizer-enabled" class="sr-only peer">
-                            <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
-                            <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-                        </label>
-                    </div>
-
-                    <div class="justify-between grid-cols-4 mt-2 w-full">
-                        <div id="visualizer-form-container" class="w-full mt-6">
-                            <div class="flex flex-col gap-8 w-full">
-                                <!-- Account: credentials side by side, the server tucked under Advanced -->
-                                <div class="flex flex-col gap-6">
-                                    <div class="grid grid-cols-2 gap-6">
-                                    <div class="flex flex-col gap-2">
-                                        <label for="visualizer-username" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Username:">Username:</label>
-                                        <input type="text" id="visualizer-username" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer username">
-                                    </div>
-                                    <div class="flex flex-col gap-2">
-                                        <label for="visualizer-password" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Password:">Password:</label>
-                                        <input type="password" id="visualizer-password" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="Enter your Visualizer password">
-                                    </div>
-                                    </div>
-                                    <details id="visualizer-advanced" class="w-full">
-                                        <summary class="cursor-pointer text-[var(--text-primary)] text-[24px]" data-i18n-key="Advanced">Advanced</summary>
-                                    <div class="flex flex-col gap-2 mt-4">
-                                        <label for="visualizer-server" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Server:">Server:</label>
-                                        <input type="url" id="visualizer-server" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" class="w-full p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" placeholder="${VISUALIZER_DEFAULT_SERVER}">
-                                        <p id="visualizer-server-status" class="text-[var(--text-primary)] text-[20px]"></p>
-                                    </div>
-                                    </details>
-                                </div>
-                                <!-- Uploads: the switch and its threshold side by side -->
-                                <div class="grid grid-cols-2 gap-6 items-center">
-                                    <div class="flex items-center justify-between gap-6">
-                                        <div class="flex flex-col">
-                                            <label for="visualizer-auto-upload" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Auto-upload shots to Visualizer">Auto-upload shots to Visualizer</label>
-                                            <p class="text-[var(--text-primary)] text-[20px]" data-i18n-key="Off: long-press the shot history panel to upload a shot yourself.">Off: long-press the shot history panel to upload a shot yourself.</p>
-                                        </div>
-                                        <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
-                                            <input type="checkbox" id="visualizer-auto-upload" class="sr-only peer">
-                                            <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
-                                            <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-                                        </label>
-                                    </div>
-                                    <div class="flex items-center gap-4">
-                                        <label for="visualizer-min-duration" class="text-[var(--text-primary)] text-[24px]" data-i18n-key="Minimum Shot Duration (seconds):">Minimum Shot Duration (seconds):</label>
-                                        <input type="number" id="visualizer-min-duration" class="w-24 p-3 rounded-lg border border-[var(--border-color)] bg-[var(--profile-button-background-color)] text-[var(--text-primary)] text-[24px] focus:outline-none focus:ring-2 focus:ring-[var(--mimoja-blue-v2)]" min="1" value="5">
-                                    </div>
-                                </div>
-                                <div class="flex justify-end">
-                                    <button id="save-visualizer-credentials" class=" w-[150px] h-[50px] pt-3 pb-[15px] border border-solid border-[var(--mimoja-blue-v2)] text-[var(--profile-button-text-color)] rounded-[22.5px]">
-                                        Save Credentials
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    </div>
-
-                   
-
-                    
-                </div>
-            </div>
-
-            
-        </div>
-    `;
-
-    // After returning the template, set up the event listeners
-    setTimeout(setupVisualizerEventListeners, 0);
-
-    return template;
 }
 
 // Some plugins append their own ui URL to the end of their description
@@ -6889,322 +6790,6 @@ function setupPluginCard(cardEl, pluginId, plugins) {
             },
         });
     })();
-}
-
-
-// Whether the visualizer plugin currently has a stored (secure) password.
-// PR #588: secure values are returned as { isSet } state, never plaintext.
-let visualizerPasswordIsSet = false;
-
-// What the plugin has stored, as last loaded: the server the credentials belong
-// to, and whether it can take a different one at all. The form is judged against
-// this -- never against what is merely typed.
-let visualizerSaved = { url: VISUALIZER_DEFAULT_SERVER, username: '', passwordIsSet: false, supported: false };
-let visualizerLoadSeq = 0; // a load that outlives its page must not paint a later one
-
-const VISUALIZER_PASSWORD_PLACEHOLDER = 'Enter your Visualizer password';
-
-// Re-judge the form after the server field changes. A different server drops
-// the previous account's username and masked password -- they were never valid
-// there -- while typing the saved server back restores them. Returns the plan.
-function applyVisualizerServerForm() {
-    const serverInput = document.getElementById('visualizer-server');
-    const usernameInput = document.getElementById('visualizer-username');
-    const passwordInput = document.getElementById('visualizer-password');
-    const statusEl = document.getElementById('visualizer-server-status');
-    if (!serverInput || !usernameInput || !passwordInput) return null;
-
-    const plan = planServerChange({ input: serverInput.value, activeUrl: visualizerSaved.url, supported: visualizerSaved.supported });
-    const same = plan.state === 'same';
-    if (plan.state !== 'invalid' && plan.state !== 'unsupported') {
-        const wasSame = usernameInput.dataset.server !== 'other';
-        if (same && !wasSame) usernameInput.value = visualizerSaved.username;
-        if (!same && wasSame) usernameInput.value = '';
-        usernameInput.dataset.server = same ? 'saved' : 'other';
-        if (!same) passwordInput.value = '';
-        visualizerPasswordIsSet = same && visualizerSaved.passwordIsSet;
-        passwordInput.placeholder = visualizerPasswordIsSet
-            ? 'Password saved — leave empty to keep'
-            : VISUALIZER_PASSWORD_PLACEHOLDER;
-    }
-    if (statusEl) {
-        statusEl.textContent = plan.error
-            || (same ? `Active server: ${visualizerSaved.url}` : `New server: enter your username and password for ${plan.url}`);
-    }
-    return plan;
-}
-
-// Function to set up event listeners for the Visualizer settings
-function setupVisualizerEventListeners() {
-    const saveButton = document.getElementById('save-visualizer-credentials');
-    const usernameInput = document.getElementById('visualizer-username');
-    const passwordInput = document.getElementById('visualizer-password');
-    const autoUploadCheckbox = document.getElementById('visualizer-auto-upload');
-    const minDurationInput = document.getElementById('visualizer-min-duration');
-    const statusDiv = document.getElementById('visualizer-status');
-    const formContainer = document.getElementById('visualizer-form-container');
-    const enabledToggle = document.getElementById('visualizer-enabled');
-
-    if (!saveButton) {
-        console.warn('Save button for Visualizer credentials not found');
-        return;
-    }
-
-    // Load existing settings when the form loads
-    loadVisualizerSettings();
-
-    const serverInput = document.getElementById('visualizer-server');
-    if (serverInput) {
-        serverInput.addEventListener('input', applyVisualizerServerForm);
-        serverInput.addEventListener('change', applyVisualizerServerForm);
-    }
-
-    // Initially hide the form if the Visualizer integration is off
-    if (enabledToggle && formContainer && !enabledToggle.checked) {
-        formContainer.style.display = 'none';
-    }
-
-    // Two independent switches over the plugin's one AutoUpload flag: the master
-    // toggle is the integration itself (credentials form, manual upload from the
-    // shot history), the inner one is whether a finished shot goes up by itself.
-    // visualizer.js writes the AND of the two to the plugin.
-    if (enabledToggle) {
-        enabledToggle.addEventListener('change', async function() {
-            const isEnabled = this.checked;
-            if (formContainer) formContainer.style.display = isEnabled ? 'block' : 'none';
-            try {
-                const { setVisualizerEnabled } = await import('../modules/visualizer.js');
-                await setVisualizerEnabled(isEnabled);
-                ui.showToast(`${getTranslation('Visualizer')} ${isEnabled ? getTranslation('Enabled') : getTranslation('Disabled')}`, 1500, 'success');
-            } catch (error) {
-                console.error('Failed to save Visualizer state:', error);
-                ui.showToast('Failed to update Visualizer state', 2000, 'error');
-            }
-        });
-    }
-
-    if (autoUploadCheckbox) {
-        autoUploadCheckbox.addEventListener('change', async function() {
-            const isAutoUpload = this.checked;
-            try {
-                const { setAutoUpload } = await import('../modules/visualizer.js');
-                await setAutoUpload(isAutoUpload);
-                ui.showToast(
-                    isAutoUpload
-                        ? getTranslation('Shots upload automatically')
-                        : getTranslation('Upload shots from the history long-press menu'),
-                    2000,
-                    'success'
-                );
-            } catch (error) {
-                console.error('Failed to save Visualizer auto-upload state:', error);
-                ui.showToast('Failed to update auto-upload', 2000, 'error');
-            }
-        });
-    }
-
-    // Add click handler for the save button
-    saveButton.addEventListener('click', async () => {
-        if (saveButton.disabled) return;
-        const username = usernameInput.value.trim();
-        const password = passwordInput.value; // Don't trim password as spaces might be valid
-
-        const plan = applyVisualizerServerForm();
-        if (!plan || plan.error) {
-            const advanced = document.getElementById('visualizer-advanced');
-            if (advanced) advanced.open = true;
-            ui.showToast(plan?.error || 'Visualizer settings are not ready', 3500, 'error');
-            return;
-        }
-        // A server the saved credentials don't belong to needs its own
-        // password, verified there, before anything is stored.
-        const serverChanged = plan.state === 'changed';
-        if (serverChanged && !password) {
-            ui.showToast('Enter your password for the new Visualizer server', 3000, 'error');
-            return;
-        }
-        // Always name the server when the plugin supports one: omitting it for
-        // the hosted default would verify against the plugin's stored custom
-        // server instead. An older plugin never sees the field.
-        const serverForVerify = visualizerSaved.supported ? plan.url : undefined;
-
-        if (!username) {
-            ui.showToast('Please enter your Visualizer username', 1500, 'error');
-            return;
-        }
-
-        // Settings POST is a patch (Decaid #588): a typed password sets the
-        // credential, an empty field preserves the stored one via the isSet
-        // marker, an empty field with nothing stored leaves it unset.
-        let passwordPayload;
-        if (password) {
-            try {
-                // Import verifyVisualizerCredentials from api.js
-                const { verifyVisualizerCredentials } = await import('../modules/api.js');
-
-                saveButton.disabled = true;
-                let result;
-                try {
-                    result = await verifyVisualizerCredentials(username, password, serverForVerify);
-                } finally {
-                    saveButton.disabled = false;
-                }
-
-                if (!result.valid) {
-                    // error = the check itself failed (unreachable, TLS, plugin);
-                    // otherwise the server answered and said no.
-                    ui.showToast(
-                        result.error
-                            ? `Could not reach ${plan.url}: ${result.error}`
-                            : 'Visualizer log-in failed, check credentials',
-                        result.error ? 5000 : 900, 'error');
-                    return; // Stop here if credentials are bad
-                }
-
-                ui.showToast('Visualizer log-in success', 900, 'success');
-            } catch (error) {
-                console.error('Error during credential validation:', error);
-                ui.showToast(`Error validating credentials: ${error.message}`, 3000, 'error');
-                return;
-            }
-            passwordPayload = password;
-        } else {
-            passwordPayload = { isSet: visualizerPasswordIsSet }; // preserve current state
-        }
-
-        // Proceed to save to plugin
-        const autoUpload = autoUploadCheckbox.checked;
-        const minDuration = parseInt(minDurationInput.value, 10) || 5;
-
-        // 1. Save UI-only settings to localStorage
-        localStorage.setItem('visualizerAutoUpload', autoUpload.toString());
-
-        // 2. Prepare and save plugin settings - use correct field names expected by visualizer plugin manifest
-        const { setPluginSettings } = await import('../modules/api.js');
-        const { isAutoUploadEnabled } = await import('../modules/visualizer.js');
-        const pluginId = 'visualizer.reaplugin';
-
-        const settingsPayload = {
-            Username: username,
-            Password: passwordPayload,
-            // Both switches gate it — saving credentials must not start uploads
-            // while the integration itself is switched off.
-            AutoUpload: isAutoUploadEnabled(),
-            LengthThreshold: minDuration
-        };
-        // Only a backend that declares the setting is sent it; an older one
-        // would drop it and keep talking to the hosted server.
-        if (visualizerSaved.supported) settingsPayload[VISUALIZER_SERVER_SETTING] = plan.url;
-
-        try {
-            await setPluginSettings(pluginId, settingsPayload);
-            visualizerSaved = {
-                ...visualizerSaved,
-                url: plan.url,
-                username,
-                passwordIsSet: !!password || (visualizerPasswordIsSet && !serverChanged),
-            };
-            visualizerPasswordIsSet = visualizerSaved.passwordIsSet;
-            const pw = document.getElementById('visualizer-password');
-            if (pw && document.body.contains(saveButton)) {
-                pw.value = '';
-                applyVisualizerServerForm();
-            }
-            ui.showToast('Visualizer settings saved successfully', 3000, 'success');
-        } catch (error) {
-            console.error('Failed to save visualizer plugin settings:', error);
-            ui.showToast(`Failed to save plugin settings: ${error.message}`, 3000, 'error');
-        }
-    });
-}
-
-// Function to load existing Visualizer settings
-async function loadVisualizerSettings() {
-    const seq = ++visualizerLoadSeq;
-    try {
-        const { getPluginSettings, getPlugins } = await import('../modules/api.js');
-        const pluginId = 'visualizer.reaplugin';
-
-        const [savedSettings, plugins] = await Promise.all([getPluginSettings(pluginId), getPlugins()]);
-        if (seq !== visualizerLoadSeq) return;
-        const plugin = Array.isArray(plugins) ? plugins.find(p => p.id === pluginId) : null;
-        const supported = pluginSupportsCustomServer(plugin);
-
-        const usernameInput = document.getElementById('visualizer-username');
-        const passwordInput = document.getElementById('visualizer-password');
-        const autoUploadCheckbox = document.getElementById('visualizer-auto-upload');
-        const minDurationInput = document.getElementById('visualizer-min-duration');
-        const formContainer = document.getElementById('visualizer-form-container');
-        const enabledToggle = document.getElementById('visualizer-enabled');
-
-        // The awaits above can outlive the page: leaving the Visualizer sub-page
-        // re-renders the content area and drops the form, so by the time settings
-        // arrive these lookups return null. Nothing to populate — bail.
-        if (!usernameInput || !passwordInput || !autoUploadCheckbox || !minDurationInput) return;
-
-        if (savedSettings && savedSettings.Username) {
-            usernameInput.value = savedSettings.Username;
-        } else {
-            usernameInput.value = '';
-        }
-
-        // Always clear the password field for security
-        passwordInput.value = '';
-
-        // Secure values are returned as { isSet } state, never plaintext (Decaid #588).
-        const passwordVal = savedSettings?.Password;
-        visualizerPasswordIsSet = passwordVal != null &&
-            (typeof passwordVal === 'object' ? passwordVal.isSet === true : !!passwordVal);
-        // An older Decaid has no server setting and talks to the hosted server.
-        const savedUrl = supported ? normalizeServerUrl(savedSettings?.[VISUALIZER_SERVER_SETTING]) : null;
-        visualizerSaved = {
-            url: savedUrl?.ok ? savedUrl.url : VISUALIZER_DEFAULT_SERVER,
-            username: savedSettings?.Username || '',
-            passwordIsSet: visualizerPasswordIsSet,
-            supported,
-        };
-        const serverInput = document.getElementById('visualizer-server');
-        if (serverInput) {
-            serverInput.value = visualizerSaved.url === VISUALIZER_DEFAULT_SERVER ? '' : visualizerSaved.url;
-            serverInput.disabled = !supported;
-            serverInput.title = supported ? '' : 'Update Decaid to use a custom Visualizer server';
-        }
-        // Hosted users never see the field; a custom server is shown open.
-        const advanced = document.getElementById('visualizer-advanced');
-        if (advanced) advanced.open = visualizerSaved.url !== VISUALIZER_DEFAULT_SERVER;
-        usernameInput.dataset.server = 'saved';
-        applyVisualizerServerForm();
-
-        // The master switch used to be the plugin's AutoUpload flag and nothing
-        // else, so it left no key of its own behind: for an existing install,
-        // "configured" (a username is stored) means the integration is on.
-        if (localStorage.getItem('visualizerEnabled') === null) {
-            localStorage.setItem('visualizerEnabled', String(!!savedSettings?.Username));
-        }
-        const isEnabled = localStorage.getItem('visualizerEnabled') === 'true';
-
-        // Auto-upload keeps the user's own choice even while the master switch is
-        // off (the plugin flag is then false, and says nothing about the choice).
-        const storedAutoUpload = localStorage.getItem('visualizerAutoUpload');
-        const autoUploadValue = storedAutoUpload !== null
-            ? storedAutoUpload === 'true'
-            : (typeof savedSettings.AutoUpload !== 'undefined' ? !!savedSettings.AutoUpload : true);
-        autoUploadCheckbox.checked = autoUploadValue;
-        if (enabledToggle) enabledToggle.checked = isEnabled;
-
-        // Visualizer plugin uses 'Length' not 'LengthThreshold'
-        if (typeof savedSettings.Length !== 'undefined') {
-            minDurationInput.value = parseInt(savedSettings.Length, 10) || 5;
-        }
-
-        // Set form visibility based on the master switch
-        if (formContainer) {
-            formContainer.style.display = isEnabled ? 'block' : 'none';
-        }
-    } catch (error) {
-        console.error('Failed to load Visualizer settings:', error);
-        ui.showToast('Could not load Visualizer plugin settings', 3000, 'error');
-    }
 }
 
 export function renderMachineInformationSettings() {
@@ -7789,9 +7374,9 @@ export function subcategoriesFor(mainCategoryKey) {
     const statics = (category?.subcategories || []).filter(subcat => !subcat.bengleOnly || isBengleMachine());
     if (mainCategoryKey !== 'extensions') return statics;
 
-    // Visualizer and Shot Uploader already have hand-built pages of their own
-    // (credentials, account linking) that the generic card cannot replace, so
-    // they must not also appear as a second, poorer row for the same plugin.
+    // Shot Uploader already has a hand-built page of its own (account linking)
+    // that the generic card cannot replace, so it must not also appear as a
+    // second, poorer row for the same plugin.
     const dedicated = new Set(Object.values(PLUGIN_BACKED_SUBCATEGORIES));
     const pluginRows = extensionPluginNavEntries().filter(row => !dedicated.has(row.pluginId));
     // The aggregate Plugins page is the fallback for "no plugins, or the bridge
@@ -8115,10 +7700,6 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     const saveBtn = document.getElementById('save-settings-btn');
     if (saveBtn) {
         saveBtn.addEventListener('click', async () => {
-            const visualizerAutoUpload = document.getElementById('visualizer-auto-upload');
-            if (visualizerAutoUpload) {
-                localStorage.setItem('visualizerAutoUpload', visualizerAutoUpload.checked.toString());
-            }
             try {
                 await flushPendingChanges();
             } catch (error) {
@@ -9774,7 +9355,6 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
 // Pages that ARE one plugin's settings UI, so that plugin's vocabulary belongs on
 // them specifically as well as on the Plugins list.
 const PLUGIN_BACKED_SUBCATEGORIES = {
-    extention1: 'visualizer.reaplugin',
     shotupload: 'shot-upload.reaplugin',
 };
 

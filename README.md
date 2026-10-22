@@ -466,7 +466,7 @@ editor's **SETTINGS** tab:
   editor to review; nothing reaches your library until you tap **SAVE**.
 - **Import from Share Code** — enter the 4-character code from a profile shared on visualizer.coffee
   and tap **Import**. This needs a Decent Visualizer account already configured — if you haven't
-  added one, a message tells you to set it up in Settings → **Extensions** → **Visualizer** (§13)
+  added one, a message tells you to log in from the Visualizer card in Settings → **Extensions** (§8)
   first. A working code saves the profile straight to your library and opens it here so you can keep
   tweaking it.
 
@@ -632,16 +632,18 @@ effect immediately — no reload needed.
 ![Language settings](docs/media/language.jpg)
 
 ### 8. Extensions
-Three sub-pages:
+**Shot Uploader** — its own page, for linking a Decent account.
 
-**Visualizer** — toggle on and enter your Decent Visualizer credentials to upload shots
-automatically.
+Below it, one row per plugin Decaid has installed, each with a card built from the plugin's own
+manifest: what it is, an **Open** link when it has a web UI, an enable switch, version and update
+state, and its settings. A plugin needs no support in the skin to appear here — installing it is
+enough. **Visualizer** shows up this way; turn it on and enter your visualizer.coffee login there to
+upload shots. When Decaid reports no plugins (or cannot be reached), a single **Plugins** row stands
+in instead.
 
-**Plugins** — the plugins Decaid has installed.
-
-**DYE2** — the *Describe Your Espresso* master switch, **default off**. Turning it on adds the P/F/R
-toggle, the auto-favourite/recipe strip and the DYE button to the header (§7). Requires
-`dye2.reaplugin` installed in Decaid.
+**DYE2** — the *Describe Your Espresso* card carries one extra control, a master switch that is
+**default off**. Turning it on adds the P/F/R toggle, the auto-favourite/recipe strip and the DYE
+button to the header (§7). Requires `dye2.reaplugin` installed in Decaid.
 
 ### 9. Miscellaneous
 A group of sub-pages: **Decaid Settings**, **Brightness**, **Wake Lock**, **Presence

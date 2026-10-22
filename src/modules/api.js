@@ -2765,35 +2765,6 @@ export async function callPluginEndpoint(pluginId, endpoint, body, method = 'POS
     }
 }
 
-// Resolves { valid, error }. `error` is set only when the check itself failed
-// (server unreachable, TLS, plugin error) as opposed to bad credentials, so the
-// caller can say which. `serverUrl` is sent only for a non-default server --
-// an older plugin ignores it, so the caller must gate on plugin support first.
-export async function verifyVisualizerCredentials(username, password, serverUrl) {
-    try {
-        const body = { username, password };
-        if (serverUrl) body.serverUrl = serverUrl;
-        const response = await fetch(`${API_BASE_URL}/plugins/visualizer.reaplugin/verifyCredentials`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        if (!response.ok) {
-            let detail = '';
-            try {
-                const err = await response.json();
-                detail = err?.detail || err?.error || '';
-            } catch { /* non-JSON error body */ }
-            return { valid: false, error: detail || `API Error: ${response.status}` };
-        }
-        const result = await response.json();
-        return { valid: result.valid === true, error: result.error || null };
-    } catch (error) {
-        logger.error('Failed to verify Visualizer credentials:', error.message);
-        return { valid: false, error: error.message || 'Connection failed' };
-    }
-}
-
 export async function getDisplayState() {
     try {
         const response = await fetch(`${API_BASE_URL}/display`);

@@ -440,3 +440,40 @@ test('a dashboard link returns to the dashboard and can select a plugin view', (
     // The view still goes through when there is nothing safe to return to.
     assert.equal(buildPluginUiUrl(plugin, base, 'javascript:alert(1)', { view: 'next' }), `${base}/plugins/p.reaplugin/ui?view=next`);
 });
+
+// ── Visualizer account gate ──────────────────────────────────────────────────
+// The manual "Upload to Visualizer" entry is offered only to a logged-in
+// account: the plugin owns the credentials, so its settings are the only test.
+{
+    const { visualizerAccountConfigured } = await import('../src/modules/visualizer-account.js');
+
+    test('a logged-in account is offered the upload', () => {
+        // Secure password: state only, never plaintext (decaid #588).
+        assert.equal(visualizerAccountConfigured({ Username: 'mark', Password: { isSet: true } }), true);
+        // Older decaid still answers with the string.
+        assert.equal(visualizerAccountConfigured({ Username: 'mark', Password: 'hunter2' }), true);
+    });
+
+    test('anything short of a working login is not', () => {
+        const cases = {
+            'no settings at all (plugin absent)': undefined,
+            'read failed': null,
+            'nothing configured': {},
+            'username only': { Username: 'mark' },
+            'password only': { Password: { isSet: true } },
+            'password field present but unset': { Username: 'mark', Password: { isSet: false } },
+            'empty password string': { Username: 'mark', Password: '' },
+            'empty username': { Username: '', Password: { isSet: true } },
+            'account switched off': { Username: 'mark', Password: { isSet: true }, Enabled: false },
+        };
+        for (const [why, settings] of Object.entries(cases)) {
+            assert.equal(visualizerAccountConfigured(settings), false, why);
+        }
+    });
+
+    test('Enabled is only disqualifying when explicitly false', () => {
+        // An older plugin manifest has no Enabled field; absence must not read as off.
+        assert.equal(visualizerAccountConfigured({ Username: 'm', Password: { isSet: true }, Enabled: undefined }), true);
+        assert.equal(visualizerAccountConfigured({ Username: 'm', Password: { isSet: true }, Enabled: true }), true);
+    });
+}

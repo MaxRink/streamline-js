@@ -1,7 +1,7 @@
 import * as chart from './chart.js';
 import { logger } from './logger.js';
 import { openDB, getLatestShotSummaries, getLatestCachedShotSummaries, getLatestCachedShot, getShot, addShot, addShots, deleteShot as idbDeleteShot, pruneShotsInRange, clearShots } from './idb.js';
-import { API_BASE_URL, getPlugins } from './api.js';
+import { API_BASE_URL, getPlugins, getPluginSettings, callPluginEndpoint } from './api.js';
 import { createHistoryPager, isShotAlreadyDeleted } from './history-pager.js';
 import { renderPastShot, clearShotData } from './shotData.js';
 import { getTranslation } from './i18n.js';
@@ -10,10 +10,10 @@ import { generateShotSummary } from './shotSummary.js';
 import { openContextMenu } from './context-menu.js';
 import { showToast, setupPressAndHold } from './ui.js';
 import { pluginMenuEntries } from './plugin-menu-items.js';
-import { isVisualizerEnabled, uploadShotToVisualizer } from './visualizer.js';
 import { ASSISTED_DIALIN_PLUGIN_ID, findAssistedDialInPlugin, buildAssistedDialInUrl } from './assisted-dialin.js';
 import { openBeanScaleCaptureModal } from './bean-scale-modal.js';
 import { openBeanSelectionModal } from './bean-selection-modal.js';
+import { VISUALIZER_PLUGIN_ID, visualizerAccountConfigured } from './visualizer-account.js';
 
 const PAGE_SIZE = 20;
 let shots = [];
@@ -346,6 +346,16 @@ function refreshDialInAvailability() {
     getPlugins().then(plugins => { dialInAvailable = !!findAssistedDialInPlugin(plugins); });
 }
 
+// Manual Visualizer upload is offered only to someone actually logged in: the
+// plugin owns the account, so its own settings are the test. Same cached shape
+// as the dial-in flag above, so the menu never waits on a request to open.
+let visualizerLoggedIn = false;
+function refreshVisualizerAvailability() {
+    getPluginSettings(VISUALIZER_PLUGIN_ID)
+        .then(settings => { visualizerLoggedIn = visualizerAccountConfigured(settings); })
+        .catch(() => { visualizerLoggedIn = false; }); // not installed, or unreachable
+}
+
 function setupHistoryLongPress() {
     const panel = document.getElementById('shot-history-panel');
     if (!panel) return;
@@ -360,12 +370,15 @@ function setupHistoryLongPress() {
     });
 
     refreshDialInAvailability();
+    refreshVisualizerAvailability();
     setupPressAndHold(panel, () => {}, () => {
         // Dial-in entries only appear when the plugin is installed and loaded, so
         // nobody taps one just to get a "not installed" toast. Uses the cached
         // answer so the menu opens instantly; the refresh catches installs for next time.
         const hasDialIn = dialInAvailable;
+        const canUpload = visualizerLoggedIn;
         refreshDialInAvailability();
+        refreshVisualizerAvailability();
         const items = [
             {
                 label: getTranslation('Discuss with Derek'),
@@ -406,10 +419,9 @@ function setupHistoryLongPress() {
                 },
             );
         }
-        // Manual upload: the one on screen, whichever the user has paged to.
-        // Offered whenever Visualizer is switched on — with auto-upload off this
-        // is the only way up, and with it on it re-sends a shot that was missed.
-        if (isVisualizerEnabled()) {
+        // Only for an account that logged in: without one the upload can only fail
+        // with a credentials error, and the plugin's settings already say so.
+        if (canUpload) {
             items.push({
                 label: getTranslation('Upload to Visualizer'),
                 onSelect: () => uploadCurrentShotToVisualizer(),
@@ -422,19 +434,18 @@ function setupHistoryLongPress() {
     });
 }
 
-// Upload the shot on screen. The plugin fetches it from Decaid by id, so the
-// measurements do not have to be loaded here.
+// Upload the shot on screen now, whatever the plugin's auto-upload setting is.
+// The plugin fetches the shot from Decaid by id and pushes it on; its own error
+// message (too short, offline, credentials) is what the user sees.
 async function uploadCurrentShotToVisualizer() {
     const shot = shots[currentShotIndex];
-    if (!shot?.id) { showToast(getTranslation('No shot selected'), 2400, 'warning'); return; }
+    if (!shot?.id) return;
     showToast(getTranslation('Uploading to Visualizer…'), 2000, 'info');
     try {
-        await uploadShotToVisualizer(shot.id);
+        await callPluginEndpoint(VISUALIZER_PLUGIN_ID, 'upload', { shotId: shot.id });
         showToast(getTranslation('Shot uploaded to Visualizer'), 2400, 'success');
     } catch (error) {
         logger.warn('Manual Visualizer upload failed:', error);
-        // The plugin's own reason is the useful part: too short, bad credentials,
-        // offline. It arrives inside the api.js wrapper's message.
         showToast(`${getTranslation('Upload to Visualizer failed')}: ${error.message}`, 4000, 'error');
     }
 }

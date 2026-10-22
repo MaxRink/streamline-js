@@ -135,7 +135,7 @@ async function showMainPage({ history = 'push' } = {}) {
     // Ensure main-page data init has run — booting on a sub-page URL skips it,
     // so without this the main page would render static HTML with no data.
     // Don't gate the chart repaint on this whole thing finishing though: it
-    // also connects DE1/scale/visualizer and six-plus websockets, none of
+    // also connects DE1/scale and six-plus websockets, none of
     // which the chart needs, and blocking on all of it is what made the
     // repaint (and the stale profile curve before it) take 1-2s on first
     // return to the main page.

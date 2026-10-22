@@ -2189,18 +2189,13 @@ function renderSettingsTab() {
             shareImportBtn.textContent = getTranslation('Importing');
             shareStatus.textContent = '';
             try {
-                const vizSettings = await getPluginSettings('visualizer.reaplugin');
-                // Secure settings come back as { isSet } state, never plaintext (decaid #588).
-                const password = vizSettings?.Password;
-                const passwordSet = password == null ? false
-                    : typeof password === 'object' ? password.isSet === true
-                    : !!password; // legacy cleartext from older decaid
-                const isConfigured = vizSettings?.Enabled !== false && !!(vizSettings?.Username && passwordSet);
-                if (!isConfigured) {
+                const { VISUALIZER_PLUGIN_ID, visualizerAccountConfigured } = await import('./visualizer-account.js');
+                const vizSettings = await getPluginSettings(VISUALIZER_PLUGIN_ID);
+                if (!visualizerAccountConfigured(vizSettings)) {
                     shareStatus.innerHTML = 'No Visualizer account found. Go to <strong>Settings → Extensions → Visualizer</strong> to log in first.';
                     return;
                 }
-                const result = await callPluginEndpoint('visualizer.reaplugin', 'import', { shareCode: code });
+                const result = await callPluginEndpoint(VISUALIZER_PLUGIN_ID, 'import', { shareCode: code });
                 if (!result.success) {
                     const msg = result.error || 'Import failed';
                     const isAuthError = /credential|login|auth|unauthorized|password|username/i.test(msg);

@@ -32,9 +32,6 @@ export const SETTINGS_RESTORED_EVENT = 'streamline-settings-restored';
 //
 // Deliberately excluded:
 //  - reaHostname: names the Decaid we are talking to, so it cannot come from it.
-//  - visualizer credentials: the KV store answers over the LAN (webui binds the
-//    WiFi address), and a password in localStorage is at least confined to the
-//    WebView. Not worth the trade for skipping one re-login after an update.
 //  - smde_*: draft text from the notes editor, not a setting.
 export const SYNCED_KEYS = [
     'language',
@@ -70,8 +67,6 @@ export const SYNCED_KEYS = [
     'streamline.ledSequences',
     'streamline.settings.location',
     'tempUnit',
-    'visualizerEnabled',
-    'visualizerAutoUpload',
     // Main-page quick presets. The values the buttons SET are Decaid's, but the
     // button labels are the user's own shortcuts — re-entering a favourite
     // 14:28 ratio after every app update is exactly the loss this mirror exists

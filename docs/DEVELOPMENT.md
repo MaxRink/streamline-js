@@ -68,7 +68,7 @@ A modern web UI skin for the Decent Espresso DE1, built on top of [Decaid](https
 - **Skin** — light/dark theme toggle; skin switcher (reloads to apply); presence-based auto-sleep with configurable schedule; wake-lock toggle
 - **Display** — brightness control and auto-brightness toggle; display size (zoom) selector with localStorage persistence
 - **Language** — multi-language support via CSV-based i18n; runtime language switching
-- **Extensions** — Decent Visualizer integration (toggle + credentials)
+- **Extensions** — Shot Uploader page and one generic settings card per installed plugin (including Visualizer), rendered from each plugin's manifest
 - **REA Settings** — weight/volume flow multipliers; gateway mode selection
 - **Updates** — Decaid app version, build info, machine firmware version and serial; DE1 firmware file upload
 - **User Manual** — links to Decent Espresso support, quickstart, and skin dev docs

@@ -67,7 +67,6 @@ export const SETTINGS_TREE = {
     'extensions': {
         name: 'Extensions',
         subcategories: [
-            { id: 'extention1', name: 'Visualizer', settingsCategory: 'extensions' },
             { id: 'shotupload', name: 'Shot Uploader', settingsCategory: 'shotupload', i18nKey: 'Shot Uploader' },
             // The one dynamic node: lists every plugin Decaid reports (see
             // window.loadPluginList in settings.js) with a full generic settings

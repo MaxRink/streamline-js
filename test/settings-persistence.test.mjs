@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { LEGACY_VISUALIZER_KEYS, LEGACY_VISUALIZER_PURGED_FLAG, legacyKeysToPurge } from '../src/modules/legacy-credentials-purge.js';
 import { hydrate, installMirror, createWriteGate, decideMerge, retryDelay, SYNCED_KEYS, SETTINGS_NAMESPACE } from '../src/modules/settingsSync.js';
 
 // Stand-in for window.localStorage with a shared prototype to patch, matching
@@ -71,6 +72,24 @@ test('credentials and the hostname stay out of the KV store', () => {
     }
     assert.notEqual(SETTINGS_NAMESPACE, 'streamline',
         'the legacy namespace is a migration source profileManager deletes keys out of');
+});
+
+test('the retired Visualizer switches are no longer mirrored', () => {
+    for (const key of ['visualizerEnabled', 'visualizerAutoUpload']) {
+        assert.ok(!SYNCED_KEYS.includes(key), `${key} has no consumer left`);
+    }
+});
+
+test('the legacy Visualizer purge covers the credentials and runs once per device', () => {
+    assert.deepEqual([...LEGACY_VISUALIZER_KEYS].sort(),
+        ['visualizerAutoUpload', 'visualizerEnabled', 'visualizerPassword', 'visualizerUsername']);
+    assert.deepEqual(legacyKeysToPurge(undefined), LEGACY_VISUALIZER_KEYS);
+    assert.deepEqual(legacyKeysToPurge(false), LEGACY_VISUALIZER_KEYS);
+    assert.deepEqual(legacyKeysToPurge(true), []);
+    assert.equal(typeof LEGACY_VISUALIZER_PURGED_FLAG, 'string');
+    // The caller gets a copy: mutating it must not widen or shrink the list.
+    legacyKeysToPurge(false).push('x');
+    assert.equal(LEGACY_VISUALIZER_KEYS.length, 4);
 });
 
 test('wake-profile toggle and selection are synced and survive a wipe', async () => {
