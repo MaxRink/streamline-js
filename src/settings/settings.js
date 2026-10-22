@@ -1,5 +1,5 @@
 import { isEcoSteamEnabled, setEcoSteamEnabled } from '../modules/eco-steam.js';
-import {  getReaSettings, getDe1Settings, getDe1AdvancedSettings, setReaSettings, setDe1Settings, setDe1AdvancedSettings, resetDe1Settings, setMachineState, connectScaleDevice, connectDeviceWebSocket, sendDeviceCommand, awaitDeviceConnectResult, dimDisplay, restoreDisplay, isBlackScreenSaver, setBlackScreenSaver as apiSetBlackScreenSaver, rememberBrightness, getLastDisplayState, currentMachineState, signalHeartbeat, MachineState, getDeviceWebSocket, initDeviceWebSocketWithCallback, saveScaleDeviceId, getScaleDeviceId, connectDisplayWebSocket, sendDisplayCommand, connectUpdateWebSocket, sendUpdateCommand, enableWakeLock, disableWakeLock, isWakeLockEnabled, isWakeProfileEnabled, getWakeProfileId, getPresenceSettings, setPresenceSettings, getPresenceSchedules, createPresenceSchedule, updatePresenceSchedule, deletePresenceSchedule, getAppInfo, getMachineInfo, getWorkflow, updateWorkflow, getAllSkins, getDefaultSkin, setDefaultSkin, updateSkins, stopWebuiServer, startWebuiServer, getWebuiServerStatus, uploadFirmware, applyFirmware, cancelFirmwareUpdate, getFirmwareCatalog, setWaterLevels, API_BASE_URL, listWifiScales, addWifiScale, removeWifiScale, forgetDevice, getLedStrip, setLedStrip, commitLedStrip, getCupWarmer, setCupWarmer, setCupWarmerPrewarm, calibrateScale, tareScale, getSensorCalibration, setSensorCalibration, getLastMachineSnapshot, ensureMachineSnapshotSocket, connectScaleWebSocket, setFirmwareFlashInFlight, persistSharedValue, MILK_STOP_LAST_VALUE_KEY, STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, STEAM_TEMP_LAST_VALUE_KEY, HOT_WATER_VOLUME_LAST_VALUE_KEY, HOT_WATER_TEMP_LAST_VALUE_KEY, approvePluginUpdate, getPlugins, getDecentAccountStatus, getPluginSettings, setPluginSettings, callPluginEndpoint, enablePlugin } from '../modules/api.js';
+import {  getReaSettings, getDe1Settings, getDe1AdvancedSettings, setReaSettings, setDe1Settings, setDe1AdvancedSettings, resetDe1Settings, setMachineState, connectScaleDevice, connectDeviceWebSocket, sendDeviceCommand, awaitDeviceConnectResult, dimDisplay, restoreDisplay, isBlackScreenSaver, setBlackScreenSaver as apiSetBlackScreenSaver, rememberBrightness, getLastDisplayState, currentMachineState, signalHeartbeat, MachineState, getDeviceWebSocket, initDeviceWebSocketWithCallback, saveScaleDeviceId, getScaleDeviceId, connectDisplayWebSocket, sendDisplayCommand, connectUpdateWebSocket, sendUpdateCommand, enableWakeLock, disableWakeLock, isWakeLockEnabled, isWakeProfileEnabled, getWakeProfileId, getPresenceSettings, setPresenceSettings, getPresenceSchedules, createPresenceSchedule, updatePresenceSchedule, deletePresenceSchedule, getAppInfo, getMachineInfo, getWorkflow, updateWorkflow, getAllSkins, getDefaultSkin, setDefaultSkin, updateSkins, stopWebuiServer, startWebuiServer, getWebuiServerStatus, uploadFirmware, applyFirmware, cancelFirmwareUpdate, getFirmwareCatalog, setWaterLevels, API_BASE_URL, listWifiScales, addWifiScale, removeWifiScale, forgetDevice, getLedStrip, setLedStrip, commitLedStrip, previewLedStrip, clearLedStripPreview, getCupWarmer, setCupWarmer, setCupWarmerPrewarm, calibrateScale, tareScale, getSensorCalibration, setSensorCalibration, getLastMachineSnapshot, ensureMachineSnapshotSocket, connectScaleWebSocket, setFirmwareFlashInFlight, persistSharedValue, MILK_STOP_LAST_VALUE_KEY, STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, STEAM_TEMP_LAST_VALUE_KEY, HOT_WATER_VOLUME_LAST_VALUE_KEY, HOT_WATER_TEMP_LAST_VALUE_KEY, approvePluginUpdate, getPlugins, getDecentAccountStatus, getPluginSettings, setPluginSettings, callPluginEndpoint, enablePlugin } from '../modules/api.js';
 import { isCustomSaverBrightness, setCustomSaverBrightnessEnabled, getSaverBrightness, setSaverBrightness, SAVER_BRIGHTNESS_DEFAULT } from '../modules/api.js';
 import * as ui from '../modules/ui.js';
 import { availableProfiles, translateProfileTitle, loadAvailableProfiles } from '../modules/profileManager.js';
@@ -14,7 +14,7 @@ import { resolveSteamStopMode, applyMilkProbeGate } from '../modules/steam-mode.
 import { summarizeFirmwareCatalog, isFirmwareCancellationError, estimateRemainingSeconds, isUploadComplete, estimateVerifyRemainingSeconds, estimateTotalRemainingSeconds, FIRMWARE_VERIFY_SECONDS, formatDuration } from '../modules/firmware-progress.js';
 import { setScreensaverSuppressed, isMachineAsleep } from '../modules/screensaver-policy.js';
 import { SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS, SCREENSAVER_DATE_FORMATS, resolveScreensaverDateFormat, resolveScreensaverClockFormat, resolveScreensaverClockPosition } from '../modules/screensaver-clock.js';
-import { ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewComposite, ledLiveWriteState } from '../modules/led-color.js';
+import { ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewPayload } from '../modules/led-color.js';
 import { LED_SEQUENCE_KEY, MIN_STEP_DURATION_MS, MAX_STEP_DURATION_MS, LED_TRIGGER_STATES, parseLedSequence, serializeLedSequence, addStep, removeStep, updateStep, moveStep, toggleTriggerState } from '../modules/led-sequence.js';
 import { requestStart as ledRunRequestStart, requestStop as ledRunRequestStop, forceStop as ledRunForceStop, onRunChange as ledRunOnChange, getRunState as ledRunGetState, onMachineStateChange as ledRunOnMachineStateChange, noteStoredPalette as ledRunNoteStoredPalette } from '../modules/led-strip-runner.js';
 import { isCupWarmerOn, readCupWarmerTarget, clampCupWarmerTarget, clampPrewarmMinutes, resolvePrewarm, prewarmWarnings, prewarmShapeSignature, cupWarmerViewMode, formatCurrentMatTemp, getCupWarmerState, setCupWarmerState, patchCupWarmerState, onCupWarmerStateChange, CUP_WARMER_TARGET_KEY, PREWARM_MIN_MINUTES, PREWARM_MAX_MINUTES } from '../modules/cup-warmer.js';
@@ -3587,7 +3587,6 @@ let ledPicker = null;          // iro.ColorPicker instance
 let ledPutTimer = null;        // debounce handle for the wheel-driven flush/preview
 let ledError = false;
 let ledPreviewActive = false;  // a live colour is being previewed on the strip
-let ledPaletteDirty = false;   // cross-state edits not yet PUT (deferred to a preview-end seam)
 let ledLastLit = {};           // last lit colour per 'zoneKey:state', restored on power-on
 // Which tab of the Lighting page is showing. The page holds two things with
 // different commitment models -- a palette that persists to the machine
@@ -3990,36 +3989,24 @@ function ledUpdateSwatchesDom(hex8) {
 // Every write that changes what the strip SHOWS is funnelled through ONE
 // promise chain, so writes land in enqueue order and can never interleave.
 //
-// There is no preview endpoint on this hardware (see the ledStrip block in
-// api.js). The firmware stores ONE palette and renders the bank matching the
-// machine's wake state, so every write here — previewing a colour the user is
-// dragging, and putting the strip back afterwards — is the same
-// `PUT /machine/ledStrip`, differing only in what payload it carries:
-//   * SAME-STATE edit (editing the bank the machine is rendering): PUT the
-//     working palette itself. What gets stored and what gets shown are the
-//     same thing, so there is nothing to undo — this is just a normal edit.
-//   * CROSS-STATE edit (e.g. picking the asleep colour while the machine is
-//     awake): the strip can only show it by writing it into the AWAKE bank,
-//     which is NOT where the user wants it stored. So those writes carry a
-//     composite (ledPreviewComposite → ledLiveWriteState) that shows the
-//     edited colour while leaving the other bank alone, the real edit is only
-//     marked dirty (ledPaletteDirty), and both are settled at the seams below
-//     by one PUT of the true palette.
+// Decaid exposes a live preview (POST /machine/ledStrip/preview), which lights
+// the strips without touching the four stored palette registers. So the two
+// kinds of write here are genuinely different verbs:
+//   * CHOOSING a colour -> preview. Volatile, invisible to GET /ledStrip, and
+//     the only way to show an asleep colour while the machine is awake.
+//   * SAVING -> PUT /machine/ledStrip + commit. The only thing that persists.
+// Every exit seam owes a preview/clear, or the preview stands until the next
+// sleep/wake transition.
 //
-// The seams — switching zone/state, Save, Reset, leaving the page, popstate —
-// all call ledRestoreStrip(), which is the single "put the strip back to what
-// the user actually has" write. Because a deferred cross-state edit and a live
-// preview both resolve to the SAME payload (the working palette), the seam
-// issues exactly one PUT rather than the flush-then-clear pair the old
-// preview-endpoint design needed.
+// Preview state is never read back from the machine: GET /ledStrip is
+// stored-palette-only by design, so what is lit lives in this page's state.
 //
-// NOTE: PUT persists. Every write here is a firmware write, so the coalescing
-// below is not just about flicker — it is what keeps a wheel drag from
-// becoming hundreds of stored writes.
+// Debounced, not because preview costs a stored write -- it does not -- but
+// because on firmware older than Bengle#114 the live registers are not PERM_RW
+// yet, so a drag across the wheel is a flash write per changed frame.
+
 let ledOpChain = Promise.resolve(); // serialized LED I/O; tail never rejected
 let ledPreviewQueued = false;       // a preview op is queued but not yet started
-let ledFlushQueued = false;         // a palette PUT is queued but not yet started
-let ledFlushPromise = Promise.resolve(); // the queued flush, for coalesced awaiters (Save)
 
 function ledEnqueue(op) {
     const p = ledOpChain.then(op);
@@ -4027,33 +4014,30 @@ function ledEnqueue(op) {
     return p;
 }
 
-// A colour that is NOT the stored palette is on the strip, or a queued op is
-// about to put one there — the exit seams must restore in either case or a
-// late op would latch the strip on a preview colour. A queued ledFlushPut is
-// deliberately NOT counted: it only ever carries the true palette (same-state
-// edits), so it already does what a restore would, and counting it would make
-// every seam after an ordinary edit issue a second identical firmware write.
+// A preview colour is on the strip, or a queued op is about to put one there --
+// the exit seams must clear in either case, or a late op would latch the strip
+// on a preview until the next sleep/wake transition.
 const ledPreviewPending = () => ledPreviewActive || ledPreviewQueued;
 
-// Drive the colour the user is looking at onto the strip: edited zones show
-// the bank being edited, every other zone the bank the machine is rendering.
-// Written into the machine's bank (the only bank that shows) while the other
-// bank is carried through untouched, so the half of the palette the user is
-// NOT looking at is never disturbed. Coalesced: at most one op waits in the
-// chain, and it reads the freshest palette/target state only when it runs.
+// Drive the colour the user is looking at onto the strip. Only the zones being
+// edited are named: preview leaves the stored registers alone, so every other
+// zone keeps showing the stored palette without being mentioned. Coalesced --
+// at most one op waits in the chain, and it reads the freshest state when it
+// runs.
 function ledPushPreview() {
     if (ledPreviewQueued) return;
     ledPreviewQueued = true;
     ledEnqueue(async () => {
         ledPreviewQueued = false;
         if (!ledState) return;
-        const machineBank = ledMachinePaletteState();
-        const { front, back } = ledPreviewComposite(
-            ledState, ledZoneKeys(ledSelectedZone), ledSelectedState, machineBank);
+        const payload = ledPreviewPayload(ledState, ledZoneKeys(ledSelectedZone), ledSelectedState);
+        if (!payload) return; // naming no strip is a 400
         try {
-            await setLedStrip(ledLiveWriteState(ledState, front, back, machineBank));
-            ledPreviewActive = true;
-        } catch (e) { /* preview is a nicety — non-fatal */ }
+            // false = this machine is not a Bengle. The category is already
+            // gated on that (settings-tree bengleOnly), so there is nothing to
+            // report; just stop claiming a preview is lit.
+            ledPreviewActive = await previewLedStrip(payload);
+        } catch (e) { /* preview is a nicety -- non-fatal */ }
     });
 }
 
@@ -4061,69 +4045,30 @@ function ledSchedulePut() {
     if (ledPutTimer) clearTimeout(ledPutTimer);
     ledPutTimer = setTimeout(() => {
         ledPutTimer = null;
-        // The user may leave the page inside the debounce window; a late write
-        // would land after the exit seam's clear and latch a preview colour.
+        // The user may leave the page inside the debounce window; a late
+        // preview would land after the exit seam's clear and latch a colour.
         if (activeSettingsCategory !== 'ledstrip') return;
-        if (ledSelectedState === ledMachinePaletteState()) {
-            ledFlushPut(); // same-state: the PUT itself repaints the strip correctly
-        } else {
-            ledPushPreview(); // cross-state: preview only — no PUT between moves
-        }
+        ledPushPreview();
     }, 120);
 }
 
-// Commit an edit gesture (wheel release, preset tap, power toggle).
-// Same-state: PUT the working palette now — what is stored and what is shown
-// are the same colour, so this is just the edit landing.
-// Cross-state: the edit must NOT be written to the bank the machine renders,
-// so mark it dirty and land the final wheel position as one more coalesced
-// preview write; ledRestoreStrip() at the next seam writes the real palette.
+// Commit an edit gesture (wheel release, preset tap, power toggle). The edit
+// lives in ledState and on the strip as a preview; only Save writes it to the
+// machine, which is what the Save/Reset pair on this page has always implied.
 function ledCommitEdit() {
     if (ledPutTimer) { clearTimeout(ledPutTimer); ledPutTimer = null; }
     // Same late-write guard as ledSchedulePut: with multi-touch, input:end can
     // fire AFTER an exit seam (one finger navigates while another still holds
-    // the wheel) — a late commit would re-write a preview after that seam's
-    // restore and latch it on the strip until the next navigation event.
+    // the wheel) -- a late preview would survive that seam's clear.
     if (activeSettingsCategory !== 'ledstrip') return;
-    if (ledSelectedState === ledMachinePaletteState()) {
-        ledFlushPut();
-    } else {
-        ledPaletteDirty = true;
-        ledPushPreview();
-    }
+    ledPushPreview();
 }
 
-// PUT the working palette. Same-state edit path: the payload IS what the strip
-// should show, so there is nothing to chase it with. Returns a promise that
-// resolves once the write has landed (Save awaits it).
-function ledFlushPut() {
-    if (ledPutTimer) { clearTimeout(ledPutTimer); ledPutTimer = null; }
-    if (!ledState) return Promise.resolve();
-    if (ledFlushQueued) return ledFlushPromise; // the queued op reads fresh state when it runs
-    ledFlushQueued = true;
-    ledFlushPromise = ledEnqueue(async () => {
-        ledFlushQueued = false;
-        if (!ledState) return;
-        ledPaletteDirty = false; // this PUT carries the full current palette
-        ledPreviewActive = false; // ...and it carries it to BOTH banks: nothing is overridden
-        // The front-switch LED can't be set independently — it mirrors the front strip.
-        ledState.frontSwitch = { awake: ledState.frontStrip.awake, sleeping: ledState.frontStrip.sleeping };
-        ledRunNoteStoredPalette(ledState); // a running sequence must restore THIS, not the pre-edit palette
-        try { await setLedStrip(ledState); } catch (e) { /* non-fatal */ }
-    });
-    return ledFlushPromise;
-}
-
-// PUT the working palette, unconditionally. The seam write and the pre-save
-// write are the same operation: whatever the strip is currently showing, this
-// puts the user's real palette (both banks) back on it.
 function ledPutPalette() {
     if (ledPutTimer) { clearTimeout(ledPutTimer); ledPutTimer = null; }
-    if (!ledState) { ledPaletteDirty = false; return Promise.resolve(); }
+    if (!ledState) return Promise.resolve();
     return ledEnqueue(() => {
         if (!ledState) return;
-        ledPaletteDirty = false;
-        ledPreviewActive = false;
         // The front-switch LED can't be set independently — it mirrors the front strip.
         ledState.frontSwitch = { awake: ledState.frontStrip.awake, sleeping: ledState.frontStrip.sleeping };
         ledRunNoteStoredPalette(ledState);
@@ -4131,15 +4076,15 @@ function ledPutPalette() {
     });
 }
 
-// The single exit-seam write: put the strip back to the palette the user
-// actually has. Covers both things a seam has to settle — a deferred
-// cross-state edit and a live preview override — because both resolve to the
-// same payload, so one PUT does the work the old flush-then-clear pair did.
-// No-op when nothing is pending, so calling it at every seam is safe.
+// The single exit seam: end the preview so the strip shows what is actually
+// stored. Unsaved edits stay in ledState -- leaving the picker is not a save,
+// and with a real preview endpoint nothing was written to the machine to undo.
+// No-op when nothing is lit, so calling it at every seam is safe.
 function ledRestoreStrip() {
-    if (!ledPaletteDirty && !ledPreviewPending()) return;
+    if (!ledPreviewPending()) return;
     ledPreviewActive = false;
-    ledPutPalette();
+    if (ledPutTimer) { clearTimeout(ledPutTimer); ledPutTimer = null; }
+    ledEnqueue(() => clearLedStripPreview().catch(() => { /* non-fatal */ }));
 }
 
 // Browser/OS back navigation exits settings through the router's popstate
@@ -4303,32 +4248,33 @@ window.ledSelectTab = function(tabId) {
     if (activeSettingsCategory === 'ledstrip') updateSettingsContentArea('ledstrip');
 };
 window.ledSave = async function() {
-    // One PUT of the working palette (which also clears any preview override),
-    // then the contract's persist verb. The PUT is what actually persists --
-    // commitLedStrip is a documented no-op today (see api.js) and is kept only
-    // so the call site still reads as "save" if commit ever regains meaning.
+    // The one write that persists: PUT the working palette, then the contract's
+    // persist verb. Clearing the preview afterwards is what makes the strip show
+    // what was actually stored -- a cross-state edit (an asleep colour picked
+    // while awake) must stop being lit at that point, not linger until the next
+    // sleep/wake transition.
     try {
         await ledPutPalette();
         await commitLedStrip();
+        ledRestoreStrip();
         ledCommitted = JSON.stringify(ledState);
         ui.showToast(getTranslation('Lighting saved'), 2000, 'success');
     } catch (e) { ui.showToast(getTranslation('Failed to save lighting'), 3000, 'error'); }
 };
-// Revert to the palette as it was at the last load or Save, and write it back.
+// Revert to the palette as it was at the last load or Save.
+//
+// Nothing has to be written to get there: choosing a colour only previews, so
+// the machine still holds exactly this palette. Clearing the preview is the
+// whole job -- the strip goes back to the stored colours on its own.
 //
 // This deliberately does NOT use `POST /machine/ledStrip/reset`. That endpoint
-// re-READS the firmware registers; it is not a rollback, and the firmware
-// cannot undo a persisted write (see api.js). Since every edit here is written
-// through immediately, re-reading would just hand back the edits the user is
-// trying to discard -- or, mid-preview, promote a preview colour to "saved".
-// `ledCommitted` is the honest revert target: it is the palette this page
-// loaded from the machine, refreshed on every successful Save.
+// re-READS the firmware registers; it is not a rollback. `ledCommitted` is the
+// honest revert target: the palette this page loaded, refreshed on every Save.
 window.ledReset = function() {
     if (!ledCommitted) return;
     try {
         ledState = ledNormalize(JSON.parse(ledCommitted));
-        ledPaletteDirty = false; // deferred edits are discarded with the rest
-        ledPutPalette();
+        ledRestoreStrip();
         if (activeSettingsCategory === 'ledstrip') updateSettingsContentArea('ledstrip');
         ui.showToast(getTranslation('Lighting reset'), 2000, 'success');
     } catch (e) { ui.showToast(getTranslation('Failed to reset lighting'), 3000, 'error'); }

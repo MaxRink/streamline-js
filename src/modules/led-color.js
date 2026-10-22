@@ -89,3 +89,33 @@ export const ledLiveWriteState = (basePalette, front, back, machineBank) => {
         frontSwitch: { awake: frontStrip.awake, sleeping: frontStrip.sleeping },
     };
 };
+
+/**
+ * Which colours to POST to `/machine/ledStrip/preview` so the strip shows what
+ * the user is editing.
+ *
+ * Unlike `ledLiveWriteState`, this never has to carry the half of the palette
+ * the user is not touching: preview writes the firmware's *live* registers and
+ * leaves the four stored ones alone, so naming only the edited zones leaves the
+ * rest showing the stored palette. Naming no zone at all is a 400, so an empty
+ * selection returns null and the caller sends nothing.
+ *
+ * `frontSwitch` is not a strip the endpoint knows about -- the firmware derives
+ * the HV switch colours from the front strip -- so editing the switch zone
+ * previews on `frontStrip`, which is what the user is looking at anyway.
+ *
+ * @param {object} palette  LedStripState-shaped map to read the colour from
+ * @param {string[]} editedZoneKeys  zone keys being edited (e.g. ['frontStrip'])
+ * @param {'awake'|'sleeping'} editedBank  palette bank being edited
+ * @returns {{frontStrip?:string, backStrip?:string}|null}
+ */
+export const ledPreviewPayload = (palette, editedZoneKeys, editedBank) => {
+    const bank = editedBank === 'sleeping' ? 'sleeping' : 'awake';
+    const colour = (zoneKey) => palette?.[zoneKey]?.[bank] || '000000000000';
+    const payload = {};
+    for (const zoneKey of editedZoneKeys || []) {
+        if (zoneKey === 'frontStrip' || zoneKey === 'frontSwitch') payload.frontStrip = colour(zoneKey === 'frontSwitch' ? 'frontStrip' : zoneKey);
+        else if (zoneKey === 'backStrip') payload.backStrip = colour(zoneKey);
+    }
+    return Object.keys(payload).length ? payload : null;
+};

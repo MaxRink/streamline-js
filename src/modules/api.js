@@ -2104,6 +2104,44 @@ export async function commitLedStrip() {
     return true;
 }
 
+// Bengle live preview: lights the strips at a colour WITHOUT storing it. The
+// four stored palette registers are untouched, so GET /machine/ledStrip never
+// reports a preview back -- preview state belongs to the page, not the machine.
+// It is also the only way to show an asleep colour on an awake machine, since
+// firmware applies a stored colour only when the machine is already in that
+// state.
+//
+// 404 means the connected machine is not a Bengle. That is a capability answer,
+// not a failure, so it comes back as false for the caller to hide the control
+// rather than as a thrown error.
+//
+// Each colour is exactly 12 hex characters (16-bit RRRRGGGGBBBB); anything else
+// is rejected with 400 before a machine-write slot is taken. Callers debounce:
+// on firmware older than Bengle#114 the live registers are not yet PERM_RW, so
+// every changed frame is a flash write.
+export async function previewLedStrip(colours) {
+    const response = await fetch(`${API_BASE_URL}/machine/ledStrip/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(colours),
+    });
+    if (response.status === 404) return false;
+    if (!response.ok) throw new Error(`Failed to preview LED strip (status ${response.status})`);
+    return true;
+}
+
+// End the preview and put the stored palette back. Without this a preview
+// stands until the next sleep/wake transition, so every exit seam owes one.
+// 503 is Decaid saying it could not read the stored palette back; there is
+// nothing to retry from here and the next transition settles it, so it is
+// reported as false rather than thrown.
+export async function clearLedStripPreview() {
+    const response = await fetch(`${API_BASE_URL}/machine/ledStrip/preview/clear`, { method: 'POST' });
+    if (response.status === 404 || response.status === 503) return false;
+    if (!response.ok) throw new Error(`Failed to clear LED strip preview (status ${response.status})`);
+    return true;
+}
+
 export async function resetLedStrip() {
     const response = await fetch(`${API_BASE_URL}/machine/ledStrip/reset`, { method: 'POST' });
     if (!response.ok) throw new Error(`Failed to reset LED strip (status ${response.status})`);
