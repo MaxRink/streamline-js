@@ -483,7 +483,15 @@ function showProfileContextMenu(key, profileRecord, anchorEl) {
                 const targetDoseWeight = meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT;
                 const yieldVal = meta.targetYield ?? parseFloat(pr.profile.target_weight);
                 const grind    = meta.grinderSetting ?? lastGrinderSetting();
-                try {
+                // ...and the same mid-shot guard, for the same reason: this is a
+                // profile switch, so it would rewrite the frames of a running
+                // shot (profile-send-gate.js). Hold it for the end of the shot.
+                if (profileSendBlocked(currentMachineState)) {
+                    // The assignment itself already landed, so only the switch is
+                    // held -- fall through to the "assigned" toast below.
+                    setPendingProfileSend(pr);
+                    showToast(getTranslation('The machine is brewing — this profile loads when the shot ends.'), 4000, 'info');
+                } else try {
                     // Assigning from here switches the machine to the profile, so it
                     // owes the same saved overrides as the other two ways in: the
                     // brew temp folded onto the profile, and steam pushed after.
