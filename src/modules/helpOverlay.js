@@ -28,6 +28,7 @@ const PAGES = {
         { sel: '#profile-edit-btn', title: 'Edit profile', tip: 'Tap to open the current profile in the editor.' },
         { sel: '#dose-label', title: 'Adjust a value', tip: 'Tap +/- to step. Tap the number to type an exact value.' },
         { sel: '#temp-presets', title: 'Presets', tip: 'Tap to apply. Long-press to edit, save the current value, or reset.' },
+        { sel: '#steam-label', title: 'Steam settings', tip: 'Tap to open the steam settings page.' },
         { sel: '#steam-mode-toggle', title: 'Mode switch', tip: 'Tap to switch between Time and Flow, Hot water Temperature and Volume.' },
         { sel: '#hot-water-mode-toggle', ringOnly: true },
         // Explains this release's rename/behavior change rather than a gesture —

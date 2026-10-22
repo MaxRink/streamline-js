@@ -287,7 +287,7 @@ async function flushPendingChanges() {
         if (isNum(steam.flow)) persistSharedValue(STEAM_FLOW_LAST_VALUE_KEY, steam.flow);
         // Enabled temperatures only: 0 is the heater switched off, and the main
         // page reads this key to decide what to switch back ON to when steam is
-        // re-armed -- see api.setTargetSteamDuration.
+        // switched back on -- see api.setSteamHeaterEnabled.
         if (steam.targetTemperature > 0) persistSharedValue(STEAM_TEMP_LAST_VALUE_KEY, steam.targetTemperature);
         // Armed targets only: 0 means the stop was switched off, not a
         // temperature worth remembering -- see api.setStopAtTemperature.
@@ -5079,8 +5079,17 @@ export function renderCalibVoltageSettings() {
 }
 
 
+// Target temperature to switch the steam heater back on to. Captured when the
+// toggle goes off (the workflow then holds 0), so the stepper keeps showing a
+// real temperature and switching on returns to it.
+let lastEnabledSteamCalibTemp = null;
+
 export function renderCalibSteamSettings() {
-    const targetTemp = settingsCache.workflow?.steamSettings?.targetTemperature ?? 155;
+    const workflowTemp = settingsCache.workflow?.steamSettings?.targetTemperature ?? 155;
+    const heaterOn = workflowTemp > 0;
+    const targetTemp = heaterOn ? workflowTemp : (lastEnabledSteamCalibTemp ?? 150);
+    const dim = heaterOn ? '' : 'opacity-40 cursor-not-allowed';
+    const dis = heaterOn ? '' : 'disabled';
     return `
         <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">
             <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
@@ -5089,15 +5098,15 @@ export function renderCalibSteamSettings() {
 
             <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
 
-            <div class="content-stretch flex flex-col items-center relative w-full">
-                <div class="border border-[var(--border-primary)] border-solid content-stretch flex flex-col gap-[20px] items-center px-[60px] py-[20px] relative shrink-0 w-[590px]">
+            <div class="content-stretch flex flex-col items-center gap-[20px] relative w-full">
+                <div class="border border-[var(--border-primary)] border-solid content-stretch flex flex-col gap-[20px] items-center px-[60px] py-[20px] relative shrink-0 w-[590px] ${dim}">
                     <div class="content-stretch flex items-center relative shrink-0">
                         <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.2] not-italic relative shrink-0 text-[var(--text-primary)] text-[30px]" data-i18n-key="Steam temperature">
                             Steam temperature
                         </p>
                     </div>
                     <div class="content-stretch flex gap-[20px] h-[72px] items-center justify-center relative shrink-0 w-full">
-                        <button id="steam-temp-minus" class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
+                        <button id="steam-temp-minus" ${dis} class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
                                 onclick="window.flashPlusMinusButton(this); window.adjustSteamCalibTemp(-1);">
                             <svg width="36" height="36" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg">
                                 <path d="M10.416 25H39.5827" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -5105,13 +5114,13 @@ export function renderCalibSteamSettings() {
                         </button>
                         <div class="text-center text-[var(--text-primary)] text-[24px] font-bold bg-transparent border-none flex items-center justify-center"
                              style="width: 130px;">
-                            <input type="text" inputmode="numeric" pattern="[0-9]*" id="steamCalibTempInput" class="text-center text-[var(--text-primary)] text-[24px] font-bold bg-transparent border-none w-full"
+                            <input type="text" inputmode="numeric" pattern="[0-9]*" id="steamCalibTempInput" ${dis} class="text-center text-[var(--text-primary)] text-[24px] font-bold bg-transparent border-none w-full"
                                    value="${tempInputValue(targetTemp)}"
                                    step="1" min="${tempInputValue(135)}" max="${tempInputValue(170)}"
                                    onchange="window.updateSteamSetting('targetTemperature', Math.round(window.tempInputToCelsius(this.value)))">
                             <span class="ml-2 text-nowrap">${tempUnitLabel()}</span>
                         </div>
-                        <button id="steam-temp-plus" class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
+                        <button id="steam-temp-plus" ${dis} class="w-[69px] h-[69px] bg-[var(--button-grey)] rounded-[10px] flex items-center justify-center"
                                 onclick="window.flashPlusMinusButton(this); window.adjustSteamCalibTemp(1);">
                             <svg width="36" height="36" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg">
                                 <path d="M24.9993 10.4165V39.5832M10.416 24.9998H39.5827" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -5121,6 +5130,15 @@ export function renderCalibSteamSettings() {
                     <p class="font-['Inter:Regular',sans-serif] font-normal leading-[1.4] not-italic relative text-[var(--text-primary)] text-[24px] w-full text-center" data-i18n-key="Set steam temperature (135-170°C)">
                         Set steam temperature (135-170°C)
                     </p>
+                </div>
+                <div class="flex items-center justify-between gap-[20px] w-[590px]">
+                    <p class="font-bold text-[var(--text-primary)] text-[24px] leading-[1.2]" data-i18n-key="Steam heater">Steam heater</p>
+                    <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
+                        <input type="checkbox" class="sr-only peer" id="steamHeaterToggle" ${heaterOn ? 'checked' : ''}
+                               onchange="window.setSteamHeaterOn(this.checked)">
+                        <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
+                        <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
+                    </label>
                 </div>
             </div>
         </div>
@@ -9213,6 +9231,22 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
             input.value = newValue;
             input.dispatchEvent(new Event('change'));
         }
+    };
+
+    // Heater switch for Settings > Calibration > Steam. Staged like the
+    // temperature input beside it (Save writes it, flushPendingChanges
+    // remembers enabled values) -- api.setSteamHeaterEnabled writes at once and
+    // would fight this page's Save model.
+    window.setSteamHeaterOn = function(on) {
+        const current = settingsCache.workflow?.steamSettings?.targetTemperature ?? 0;
+        let value = 0;
+        if (on) {
+            value = lastEnabledSteamCalibTemp ?? (current > 0 ? current : 150);
+        } else if (current > 0) {
+            lastEnabledSteamCalibTemp = current;
+        }
+        updateSteamSetting('targetTemperature', value);
+        if (activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory);
     };
 
     // 0 is off, 135-165 is the enabled range (rest_v1.yml SteamSettings), and

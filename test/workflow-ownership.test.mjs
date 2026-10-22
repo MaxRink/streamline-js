@@ -149,6 +149,13 @@ test('an undeclared field is named, and the writer must be known', () => {
     assert.equal(assertDeclaredFields('tiles.grind', { context: { grinderSetting: 5 } }), true);
 });
 
+test('the duration-only steam patch (0 = no timer) is accepted by its writer', () => {
+    assert.equal(assertDeclaredFields('api.steamDuration', { steamSettings: { duration: 0 } }), true);
+    assert.throws(
+        () => assertDeclaredFields('api.steamDuration', { steamSettings: { duration: 0, targetTemperature: 0 } }),
+        /sent undeclared field\(s\) steamSettings\.targetTemperature/);
+});
+
 test('the whole-document write the contract exists to stop is rejected', () => {
     // This is what dyeStrip used to do: GET the workflow, mutate it, PUT it all
     // back -- carrying every field it did not own over a newer value.

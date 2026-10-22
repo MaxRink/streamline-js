@@ -949,15 +949,12 @@ export function setMilkProbePresent(present) {
     updateSteamPresetDisplay();
 }
 
-// 0s reads as "Off" -- duration 0 already sends the steam-off command
-// (steamHeaterFor in api.js zeroes targetTemperature alongside it), so the
-// tile should say so rather than show a number that looks like a very short
-// steam time.
+// 0s means no steam timer: steam runs until the user stops it (subject to the
+// machine safety timeout). The heater is a separate setting, so "off" would be
+// wrong here -- show the open-ended symbol rather than a number that looks like
+// a very short steam time.
 export function formatSteamDuration(v) {
-    // Lowercase 'off' (not 'OFF') is the exact CSV key: the translation sheet
-    // carries both, and case-insensitive lookup would resolve to whichever one
-    // parses last (see i18n-parser.js keyIndex), which is not this one.
-    return v === 0 ? getTranslation('off') : `${v}s`;
+    return v === 0 ? '∞' : `${v}s`;
 }
 
 export function updateSteamDisplay(data) {

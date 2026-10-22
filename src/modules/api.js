@@ -1860,14 +1860,15 @@ export async function setTargetSteamTemp(temp) {
     return updateWorkflow({ steamSettings: { targetTemperature: value } }, 'api.steamTemp');
 }
 
-// The heater half of a steam-duration change.
+// The steam-heater switch behind setSteamHeaterEnabled.
 //
-// Duration 0 is the dashboard's "steam off", but duration alone does not touch
-// the heater -- rest_v1.yml, SteamSettings.duration: "This does not control
-// steam-heater preheating." Only targetTemperature 0 does (same rule the DE1
+// The heater is switched off only by targetTemperature 0 (same rule the DE1
 // firmware path has always had: de1app binary.tcl zeroes the target below
-// 135C). So the duration setter carries the heater with it: off at 0, and back
-// to the last enabled temperature when the user re-arms steam.
+// 135C). Steam duration is a separate setting -- rest_v1.yml,
+// SteamSettings.duration: "This does not control steam-heater preheating" --
+// and 0 there means "no timer", so setTargetSteamDuration never calls this.
+// Off (argument 0) remembers the current temperature; on (anything else)
+// returns to it.
 //
 // The temperature to come back to is read from the workflow at the moment we
 // switch off -- one GET, only on that transition. With no remembered value the
@@ -1906,7 +1907,7 @@ async function steamHeaterFor(duration) {
 export async function setTargetSteamDuration(duration) {
     if (isAutoSteamActive()) throw new Error('Use a pitcher preset in Auto mode, or switch to Flow or Time.');
     const value = parseFloat(duration);
-    return pushRemembered(STEAM_DURATION_LAST_VALUE_KEY, value, async () => updateWorkflow({ steamSettings: { duration: value, ...(await steamHeaterFor(value)) } }, 'api.steamDuration'));
+    return pushRemembered(STEAM_DURATION_LAST_VALUE_KEY, value, async () => updateWorkflow({ steamSettings: { duration: value } }, 'api.steamDuration'));
 }
 
 export function isAutoSteamActive() {
@@ -1918,7 +1919,7 @@ export async function writeAutoSteamSettings(steam) {
 }
 
 // Steam-heater switch for procedures that must not run against a hot steam
-// boiler (descaling). Same remember/restore rule as setTargetSteamDuration:
+// boiler (descaling) and for the Settings > Calibration > Steam toggle:
 // switching off stores the current target, switching back on returns to it.
 // The duration is deliberately untouched, so the user's steam time survives.
 export async function setSteamHeaterEnabled(enabled) {

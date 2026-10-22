@@ -12,6 +12,7 @@ import * as shotData from './shotData.js';
 import * as profileManager from './profileManager.js';
 import * as api from './api.js';
 import { loadPage, initRouter, isSubPage, prefetchSettingsPage } from './router.js';
+import { writeSettingsLocation } from '../settings/settings-location.js';
 import { initWaterTankSocket } from './waterTank.js';
 import { logger } from './logger.js';
 import { deriveScreensaverAction, isMachineAsleep, isScreensaverSuppressed } from './screensaver-policy.js';
@@ -139,11 +140,10 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                             window.app.ui.updateTemperatureValue(tempC);
                         } else if (type === 'steam-duration') {
                             // The numpad blanks a bare "0" to '' — treat empty/NaN as 0.
-                            // 0 = steam off. Duration alone does NOT touch the heater
-                            // (rest_v1.yml: SteamSettings.duration "does not control
-                            // steam-heater preheating") — api.setTargetSteamDuration
-                            // sends targetTemperature 0 alongside it, and restores the
-                            // remembered temperature when steam is re-armed.
+                            // 0 = steam timer off: steam runs until the user stops it.
+                            // Duration does NOT touch the heater (rest_v1.yml:
+                            // SteamSettings.duration "does not control steam-heater
+                            // preheating"); that is Settings > Calibration > Steam.
                             const v = (newVal === '' || isNaN(parseFloat(newVal))) ? 0 : parseFloat(newVal);
                             window.app.ui.updateSteamDisplay({ targetSteamDuration: v });
                             window.app.ui.pushSteamSetting('duration', window.app.api.setTargetSteamDuration(v));
@@ -2605,6 +2605,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             }, { once: true });
             settingsBtn.addEventListener('click', () => {
                 loadPage('src/settings/settings.html');
+            });
+        }
+
+        // The "Steam" label deep-links to Settings > Calibration > Steam. The
+        // settings shell restores the saved location on mount, so writing it
+        // before loadPage is the whole mechanism.
+        const steamLabel = document.getElementById('steam-label');
+        if (steamLabel) {
+            const openSteamSettings = () => {
+                writeSettingsLocation('calibration', 'calib_steam');
+                loadPage('src/settings/settings.html');
+            };
+            steamLabel.addEventListener('pointerdown', () => {
+                prefetchSettingsPage().catch(() => {});
+            }, { once: true });
+            steamLabel.addEventListener('click', openSteamSettings);
+            steamLabel.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                openSteamSettings();
             });
         }
     } catch (error) {

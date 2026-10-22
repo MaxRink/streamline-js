@@ -402,11 +402,12 @@ blocked until one is connected — from the Coffee button and the keyboard short
 
 **Steam.** Set the value in the left column (tap the mode text below *Steam* to switch between
 temperature, duration and flow). Start from the GHC or the **Steam** button. Steam stops on its
-duration limit, or when you stop it.
+duration limit, or when you stop it — with the duration at 0 (shown as ∞) there is no timer and steam
+runs until you stop it. Tap the *Steam* label to open Settings → Calibration → Steam.
 
 When the Auto Steam Calculator plugin is available, the same mode control also offers **Auto**.
 In saved-calibration mode, use **−** / **+** to cycle the available calibrations; the selected milk
-target appears beside the active pitcher and briefly replaces the `0s` display after each change. In
+target appears beside the active pitcher and briefly replaces the duration display after each change. In
 interpolation mode, the same buttons adjust flow in 0.1 ml/s steps within the calibrated range. Tap a
 configured pitcher to calculate and arm the steam time. While Auto waits for a calculation or the next
 pitcher, it keeps the normal steam-heater target but sets the duration and milk-temperature stop to Off.
@@ -609,7 +610,7 @@ Each known device shows its ID, a **Preferred** toggle, its availability, and **
 behind the blocked-start behaviour described in §8.
 
 ### 3. Calibration
-Sub-pages for **Default load settings**, **Refill Kit**, **Voltage**, **Fan**, **Steam** and — on
+Sub-pages for **Default load settings**, **Refill Kit**, **Voltage**, **Fan**, **Steam** (steam-heater on/off toggle and temperature) and — on
 Bengle machines only — **Load Cells**, which walks through a load-cell calibration with a reference
 weight. Some values here are read from the machine but not saveable, depending on what the firmware
 API supports.
