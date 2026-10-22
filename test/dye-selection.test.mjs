@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
     parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp, recipeStripCells, favStripCells,
+    recipeIdPatch,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -195,4 +196,35 @@ test('favStripCells does not back-fill from beyond max, and handles short or emp
     assert.equal(favStripCells([{ id: 'a' }, { id: 'b' }]).length, 2);
     assert.deepEqual(favStripCells([]), []);
     assert.deepEqual(favStripCells(null), []);
+});
+
+
+// --- the recipe being dialled in (dye2#36) --------------------------------
+// It rides in the workflow itself; DYE2 derives its selection from it, so
+// there is no POST and a write that forgets to null it leaves a stale recipe
+// highlighted and records the next shot's dial-in onto the wrong one.
+
+test('claiming a recipe tags the patch the way the plugin expects', () => {
+    assert.deepEqual(recipeIdPatch('r1'), { extras: { dye: { v: 1, recipeId: 'r1' } } });
+    // The plugin stores the id as a string; a numeric id must not arrive as one.
+    assert.deepEqual(recipeIdPatch(7), { extras: { dye: { v: 1, recipeId: '7' } } });
+    assert.equal(typeof recipeIdPatch(7).extras.dye.recipeId, 'string');
+});
+
+test('releasing is an explicit null, never an omission', () => {
+    // Omitting the key would leave the previous recipe claimed, because
+    // PUT /workflow deep-merges: absent means "unchanged", not "cleared".
+    for (const id of [null, undefined]) {
+        assert.deepEqual(recipeIdPatch(id), { extras: { dye: { v: 1, recipeId: null } } });
+        assert.ok('recipeId' in recipeIdPatch(id).extras.dye);
+    }
+});
+
+test('the patch carries nothing but the claim', () => {
+    // Only the delta: the other extras keys (rpm, note) survive the deep merge
+    // on their own and must not be re-sent by a writer that does not own them.
+    const patch = recipeIdPatch('r1');
+    assert.deepEqual(Object.keys(patch), ['extras']);
+    assert.deepEqual(Object.keys(patch.extras), ['dye']);
+    assert.deepEqual(Object.keys(patch.extras.dye).sort(), ['recipeId', 'v']);
 });

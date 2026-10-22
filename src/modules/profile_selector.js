@@ -5,6 +5,7 @@ import { logger } from './logger.js';
 import { initResizablePanels, showToast, initFullscreenHandler, updateProfileName, setupPressAndHold, flashIconButton } from './ui.js';
 import { sendProfile, getWorkflow, updateWorkflow, deleteProfile, updateProfileVisibility, getProfileLineage } from './api.js';
 import { profileSendBlocked, setPendingProfileSend } from './profile-send-gate.js';
+import { recipeIdPatch } from './dye-selection.js';
 import { currentMachineState } from './api.js';
 import { initChart, plotProfile } from './chart.js';
 import { translatePage, getTranslation } from './i18n.js';
@@ -332,14 +333,16 @@ async function handleConfirm() {
                 context: {
                     targetDoseWeight,
                     targetYield: effectiveYield,
-                    ...grindContext
+                    ...grindContext,
+                    // Profile change: release the recipe (dye2#36).
+                    ...recipeIdPatch(null)
                 }
             };
 
             sentworkflow = await updateWorkflow(workflowUpdate, 'profile.send');
         } else {
             const displayYield = isNaN(effectiveYield) ? 0 : effectiveYield;
-            sentworkflow = await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield: displayYield, ...grindContext } }, 'profile.send');
+            sentworkflow = await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield: displayYield, ...grindContext, ...recipeIdPatch(null) } }, 'profile.send');
         }
 
         const verified = sentworkflow.profile.title === profile.title;
@@ -495,7 +498,7 @@ function showProfileContextMenu(key, profileRecord, anchorEl) {
                     // Assigning from here switches the machine to the profile, so it
                     // owes the same saved overrides as the other two ways in: the
                     // brew temp folded onto the profile, and steam pushed after.
-                    await updateWorkflow({ profile: withSavedBrewTemp(pr.profile, meta), context: { targetDoseWeight, targetYield: isNaN(yieldVal) ? 0 : yieldVal, grinderSetting: grind } }, 'profile.send');
+                    await updateWorkflow({ profile: withSavedBrewTemp(pr.profile, meta), context: { targetDoseWeight, targetYield: isNaN(yieldVal) ? 0 : yieldVal, grinderSetting: grind, ...recipeIdPatch(null) } }, 'profile.send');
                     await applySavedSteamSettings(meta);
                     setActiveProfile(key);
                     updateProfileName(pr.profile.title);

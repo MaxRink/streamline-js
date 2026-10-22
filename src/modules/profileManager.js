@@ -10,6 +10,7 @@ import { resolveProfileKeyByTitle } from './active-profile.js';
 import { planAssignmentsLoad, mayPersistAutoPopulate } from './favorites-load.js';
 import { loadProfileOverrides, saveProfileOverride, clearProfileOverride, applyOverridesToRecords } from './profile-overrides.js';
 import { applyFlowCalibrationForProfile } from './flow-calibration.js';
+import { recipeIdPatch } from './dye-selection.js';
 import { profileSendBlocked, setPendingProfileSend, clearPendingProfileSend } from './profile-send-gate.js';
 import { profileAtBrewTemp } from './brew-temp.js';
 import { profileFingerprint } from './dye-selection.js';
@@ -709,6 +710,9 @@ export async function sendProfileRecordToMachine(record) {
                 targetDoseWeight: meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT,
                 targetYield,
                 grinderSetting: meta.grinderSetting ?? lastGrinderSetting() ?? null,
+                // The profile changed, so the recipe being dialled in is no
+                // longer this one (dye2#36).
+                ...recipeIdPatch(null),
             },
         }, 'profile.send');
     } catch (err) {
@@ -827,7 +831,7 @@ export async function loadProfileForWake(profileId) {
     const profileToSend = withSavedBrewTemp(
         targetYield > 0 ? { ...profile, target_weight: targetYield } : profile, meta);
     try {
-        await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield, grinderSetting } }, 'profile.wake');
+        await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield, grinderSetting, ...recipeIdPatch(null) } }, 'profile.wake');
         setActiveProfile(profileId);
         // Steam rides its own setters, not the workflow context.
         await applySavedSteamSettings(meta);
@@ -880,7 +884,7 @@ export async function resetActiveProfileToDefaults() {
     const targetYield = isNaN(parsedYield) ? 0 : parsedYield;
     let sentWorkflow;
     try {
-        sentWorkflow = await updateWorkflow({ profile, context: { targetDoseWeight, targetYield, grinderSetting: null } }, 'profile.resetDefaults');
+        sentWorkflow = await updateWorkflow({ profile, context: { targetDoseWeight, targetYield, grinderSetting: null, ...recipeIdPatch(null) } }, 'profile.resetDefaults');
     } catch (error) {
         logger.error('Failed to re-apply profile defaults to workflow:', error);
         return false;
@@ -1066,7 +1070,7 @@ async function handleProfileClick(index) {
             ? await getWorkflow()
             : await updateWorkflow({
                 profile: profileToSend,
-                context: { targetDoseWeight, targetYield: displayYield, ...grindContext }
+                context: { targetDoseWeight, targetYield: displayYield, ...grindContext, ...recipeIdPatch(null) }
             }, 'profile.send');
         // Paint the tiles from the workflow Rea echoed back rather than from the
         // numbers we meant to send, so what the user reads is what the machine

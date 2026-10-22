@@ -107,9 +107,9 @@ export const WORKFLOW_WRITERS = {
 
     // --- skin: profile switches --------------------------------------------
     // A profile change nulls recipeId: the recipe's identity IS its profile.
-    'profile.send': ['profile', 'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting'],
-    'profile.wake': ['context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting'],
-    'profile.resetDefaults': ['profile', 'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting'],
+    'profile.send': ['profile', 'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting', 'context.extras.dye'],
+    'profile.wake': ['context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting', 'context.extras.dye'],
+    'profile.resetDefaults': ['profile', 'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting', 'context.extras.dye'],
 
     // --- skin: bean identity -----------------------------------------------
     // Persistent across shots; nothing clears them (#164).

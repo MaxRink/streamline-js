@@ -17,7 +17,9 @@ function loadHarness(dependencies) {
             // Defaulted so the existing cases stay as they were: an idle machine
             // that never blocks. The brewing case overrides them.
             profileSendBlocked = () => false, setPendingProfileSend = () => {},
-            currentMachineState = 'idle'
+            currentMachineState = 'idle',
+            // A profile change releases the recipe being dialled in (dye2#36).
+            recipeIdPatch = () => ({ extras: { dye: { v: 1, recipeId: null } } })
         } = dependencies;
         let selectedProfileKey = null;
         const FAV_COUNT = 5;

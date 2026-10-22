@@ -76,13 +76,14 @@ function canonicalSend({ state = 'idle', lastGrind = null, lastDose = null, fail
     const deps = { currentMachineState: state };
     const fn = new Function('deps', 'profileSendBlocked', 'setPendingProfileSend', 'clearPendingProfileSend',
         'withSavedBrewTemp', 'updateWorkflow', 'setActiveProfile', 'lastGrinderSetting',
-        'lastTargetDoseWeight', 'DEFAULT_DOSE_WEIGHT', 'logger',
+        'lastTargetDoseWeight', 'DEFAULT_DOSE_WEIGHT', 'logger', 'recipeIdPatch',
         `${sendSource}\nreturn sendProfileRecordToMachine;`)(
         deps, profileSendBlocked, setPendingProfileSend, clearPendingProfileSend,
         (p, meta) => (Number.isFinite(meta?.brewTemperature) ? { ...p, _temp: meta.brewTemperature } : p),
         async w => { if (fail) throw new Error('offline'); sent.push(w); },
         id => bound.push(id), () => lastGrind, () => lastDose, 18,
-        { warn: (...a) => warned.push(a) });
+        { warn: (...a) => warned.push(a) },
+        () => ({ extras: { dye: { v: 1, recipeId: null } } }));
     return { fn, sent, bound, warned };
 }
 
@@ -107,7 +108,10 @@ test('the canonical send holds mid-shot and sends otherwise', async () => {
 test('the send folds the saved dose, yield, grind and brew temp', async () => {
     const full = canonicalSend();
     await full.fn(record({ metadata: { targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5, brewTemperature: 92 } }));
-    assert.deepEqual(full.sent[0].context, { targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5 });
+    assert.deepEqual(full.sent[0].context, {
+        targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5,
+        extras: { dye: { v: 1, recipeId: null } },   // a profile change releases the recipe
+    });
     assert.equal(full.sent[0].profile._temp, 92);
     // A non-autonomous machine stops on profile.target_weight, so a metadata
     // yield has to reach the profile copy too or the shot runs past it.
@@ -115,12 +119,17 @@ test('the send folds the saved dose, yield, grind and brew temp', async () => {
 
     const bare = canonicalSend({ lastGrind: 5, lastDose: 19 });
     await bare.fn(record());
-    assert.deepEqual(bare.sent[0].context, { targetDoseWeight: 19, targetYield: 36, grinderSetting: 5 });
+    assert.deepEqual(bare.sent[0].context, {
+        targetDoseWeight: 19, targetYield: 36, grinderSetting: 5,
+        extras: { dye: { v: 1, recipeId: null } },
+    });
 
     const none = canonicalSend();
     await none.fn(record({ profile: { title: 'x', target_weight: 'n/a' } }));
-    assert.deepEqual(none.sent[0].context, { targetDoseWeight: 18, targetYield: 0, grinderSetting: null },
-        'an unparsable target weight must send 0, never NaN');
+    assert.deepEqual(none.sent[0].context, {
+        targetDoseWeight: 18, targetYield: 0, grinderSetting: null,
+        extras: { dye: { v: 1, recipeId: null } },
+    }, 'an unparsable target weight must send 0, never NaN');
     assert.equal(none.sent[0].profile.target_weight, 'n/a', 'and must not be written back onto the profile');
 });
 

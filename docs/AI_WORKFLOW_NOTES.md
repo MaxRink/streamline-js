@@ -39,6 +39,9 @@ Two rules that the table below cannot express on its own:
    you just read. The deep merge preserves the siblings for you.
 2. **Never send a document you read more than one operation ago.** Build a
    patch; do not `GET` the workflow, mutate it and `PUT` it back.
+3. **Clearing is an explicit `null`, not an omission.** The merge treats a
+   missing key as "unchanged", so a writer that means to release something —
+   `context.extras.dye.recipeId` above — has to say so.
 
 `test/workflow-ownership.test.mjs` enforces all of this: it scans `src/` for
 every call site, fails on an undeclared or unknown writer, and snapshots each
@@ -49,7 +52,7 @@ change.
 
 | Field group | May write | Notes |
 |---|---|---|
-| `context.extras.dye.recipeId` | DYE2 apply / Save to recipes only | Any other apply must write `null` explicitly. A profile change also nulls it. |
+| `context.extras.dye.recipeId` | DYE2 recipe apply / Save to recipes, and every writer that replaces the profile | Since dye2#36 the plugin **derives** its selection from this field — there is no `POST /selection` for it. A recipe apply sets it; a favourite or recent apply, and a profile change from any source, must write `null` **explicitly**, because the deep merge reads an absent key as "unchanged". A tile edit leaves it alone: that is the `*`. |
 | `context.coffeeName`, `context.coffeeRoaster`, `context.beanBatchId` | DYE2 bean picker, skin bean picker | Persistent across shots; nothing clears them (#164). |
 | `context.grinderSetting`, `context.targetDoseWeight`, `context.targetYield` | skin tiles, recipe apply | The contested group — #153 and #155 live here. |
 | `profile.target_weight` | dose/yield tiles, profile switches | A non-autonomous machine stops on this, not on `context.targetYield`, so the tiles fold the yield into it — alone, never with the rest of the profile. |

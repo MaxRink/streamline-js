@@ -26,7 +26,7 @@ import { fitTextToBox, getTranslation } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode, showToast } from './ui.js';
-import { SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, recipeStripCells, favStripCells } from './dye-selection.js';
+import { recipeIdPatch, SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, recipeStripCells, favStripCells } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
 const RECIPES_KEY = 'recipes';
@@ -314,6 +314,9 @@ export async function applyFavourite(fav) {
     const patch = fav.workflow
         ? await applyStoredWorkflow(fav.workflow)
         : await applyFavLegacy(fav); // snapshot + copyMask
+    // A favourite is not a recipe: release whatever recipe was being dialled in,
+    // or the next shot records onto it (dye2#36).
+    mergeContext(patch, recipeIdPatch(null));
     const seq = ++applySeq;
     await withAutoSaveSuppressed(() => updateWorkflow(patch, 'dye.applyFavourite'));
     if (seq !== applySeq) return; // a newer tap owns the arming
@@ -349,6 +352,8 @@ export async function applyRecipe(recipe) {
     // Steam / hot-water / flush are NOT in the stored workflow — add them here.
     const dv = recipe.dashboardVariables || {};
     Object.assign(patch, await mergeRecipeLiveSettings(dv));
+    // This recipe is now the one being dialled in (dye2#36).
+    mergeContext(patch, recipeIdPatch(recipe.id));
     const seq = ++applySeq;
     await withAutoSaveSuppressed(() => updateWorkflow(patch, 'dye.applyRecipe'));
     if (seq !== applySeq) return; // a newer tap owns the arming
@@ -408,6 +413,19 @@ async function resolveFullProfile(stub) {
 // The profile is resolved to its full record as a backstop regardless of what
 // shape was actually stored (older KV items may still carry the legacy thin
 // { id, title } stub — see resolveFullProfile).
+// Fold a context fragment into a patch, keeping `extras` a merge rather than a
+// replace: the legacy paths may already have put rpm or note there.
+function mergeContext(patch, fragment) {
+    const ctx = patch.context || {};
+    patch.context = {
+        ...ctx, ...fragment,
+        ...(ctx.extras || fragment.extras
+            ? { extras: { ...(ctx.extras || {}), ...(fragment.extras || {}) } }
+            : {}),
+    };
+    return patch;
+}
+
 async function applyStoredWorkflow(workflow) {
     const patch = {};
     if (workflow.context) patch.context = { ...workflow.context };

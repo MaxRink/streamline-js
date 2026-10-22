@@ -242,3 +242,28 @@ export function keepPreviousOnFailure(previous, next) {
 export function resolveRecordsDialIn(previous, plugins, derive) {
     return plugins == null ? previous : derive(plugins);
 }
+
+/**
+ * The patch that claims, or releases, the recipe being dialled in.
+ *
+ * The recipe rides in the workflow itself (`context.extras.dye.recipeId`,
+ * dye2#36) and DYE2 derives its selection from it -- there is no POST for this.
+ * The governing rule is that **a recipe's identity is its profile**, which
+ * produces the whole table:
+ *
+ *   apply a recipe                  -> set
+ *   apply a favourite or a recent   -> null
+ *   profile change, from any source -> null
+ *   skin tile edit (dose/yield/grind) -> leave alone; that is the `*`
+ *   machine-originated change       -> leave alone
+ *
+ * A write that forgets to null it leaves a stale recipe highlighted and records
+ * the next shot's dial-in onto the wrong recipe -- #153/#155 in a new field.
+ *
+ * Returns only the delta: PUT /workflow deep-merges, so the other `extras` keys
+ * (rpm, note) survive without being re-sent. Mirrors the plugin's own
+ * setRecipeId, including the `v: 1` tag.
+ */
+export function recipeIdPatch(id) {
+    return { extras: { dye: { v: 1, recipeId: id == null ? null : String(id) } } };
+}

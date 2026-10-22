@@ -91,9 +91,9 @@ const SNAPSHOT = {
     'dye.applyFavourite': 'context.baristaName context.basket context.beanBatchId context.coffeeName context.coffeeRoaster context.drinkerName context.extras.dye context.extras.rpm context.grinderSetting context.targetDoseWeight context.targetYield profile',
     'dye.applyRecipe': 'context.baristaName context.basket context.beanBatchId context.coffeeName context.coffeeRoaster context.drinkerName context.extras.dye context.extras.rpm context.grinderSetting context.targetDoseWeight context.targetYield hotWaterData.duration hotWaterData.flow hotWaterData.targetTemperature hotWaterData.volume profile rinseData steamSettings.duration steamSettings.flow steamSettings.targetTemperature',
     'dye.clearOnDisable': 'context.baristaName context.basket context.beanBatchId context.coffeeName context.coffeeRoaster context.drinkerName context.extras.dye context.extras.rpm',
-    'profile.resetDefaults': 'context.grinderSetting context.targetDoseWeight context.targetYield profile',
-    'profile.send': 'context.grinderSetting context.targetDoseWeight context.targetYield profile',
-    'profile.wake': 'context.grinderSetting context.targetDoseWeight context.targetYield',
+    'profile.resetDefaults': 'context.extras.dye context.grinderSetting context.targetDoseWeight context.targetYield profile',
+    'profile.send': 'context.extras.dye context.grinderSetting context.targetDoseWeight context.targetYield profile',
+    'profile.wake': 'context.extras.dye context.grinderSetting context.targetDoseWeight context.targetYield',
     'settings.hotWater': 'hotWaterData.duration hotWaterData.flow hotWaterData.targetTemperature hotWaterData.volume',
     'settings.rinse': 'rinseData',
     'settings.steam': 'steamSettings.duration steamSettings.flow steamSettings.stopAtTemperature steamSettings.targetTemperature',
@@ -189,5 +189,76 @@ test('the docs precedence table names the same fields the code declares', () => 
     for (const writer of Object.keys(WORKFLOW_WRITERS)) {
         const prefix = writer.split('.')[0];
         assert.ok(doc.includes(`\`${prefix}.*\``), `docs do not describe the '${prefix}.*' writers`);
+    }
+});
+
+// --- the recipe claim on the apply paths (dye2#36) ------------------------
+// mergeContext is what keeps the claim from flattening the extras the legacy
+// paths already put in the patch (rpm, note). Lifted from dyeStrip.js, which
+// touches the DOM at module load.
+const dyeSource = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+const mergeContext = new Function(
+    `${dyeSource.match(/function mergeContext\(patch, fragment\)[\s\S]*?\n\}/)[0]}\nreturn mergeContext;`)();
+
+test('claiming a recipe does not flatten the extras already in the patch', () => {
+    // The legacy favourite/recipe paths put rpm and note in extras before the
+    // claim is folded in; replacing extras wholesale would drop them.
+    const patch = { context: { targetYield: 36, extras: { rpm: 900, note: 'hi' } } };
+    mergeContext(patch, { extras: { dye: { v: 1, recipeId: 'r1' } } });
+    assert.deepEqual(patch.context, {
+        targetYield: 36,
+        extras: { rpm: 900, note: 'hi', dye: { v: 1, recipeId: 'r1' } },
+    });
+
+    // And it works on a patch that has no context at all yet.
+    const empty = {};
+    mergeContext(empty, { extras: { dye: { v: 1, recipeId: null } } });
+    assert.deepEqual(empty.context, { extras: { dye: { v: 1, recipeId: null } } });
+});
+
+test('every apply path and every profile switch settles the recipe claim', () => {
+    // A write that forgets this leaves a stale recipe highlighted and records
+    // the next shot's dial-in onto it -- #153/#155 in a new field.
+    for (const fn of ['applyFavourite', 'applyRecipe']) {
+        const body = dyeSource.match(new RegExp('export async function ' + fn + '\\([\\s\\S]*?\\n\\}'))[0];
+        assert.match(body, /mergeContext\(patch, recipeIdPatch\(/, `${fn} must settle the claim`);
+    }
+    // A favourite releases; a recipe claims itself.
+    assert.match(dyeSource.match(/export async function applyFavourite\([\s\S]*?\n\}/)[0],
+        /recipeIdPatch\(null\)/);
+    assert.match(dyeSource.match(/export async function applyRecipe\([\s\S]*?\n\}/)[0],
+        /recipeIdPatch\(recipe\.id\)/);
+
+    // A profile change nulls it from any source: the recipe's identity is its
+    // profile. Every writer that sends one must declare and send the release.
+    for (const writer of ['profile.send', 'profile.wake', 'profile.resetDefaults']) {
+        assert.ok(WORKFLOW_WRITERS[writer].includes('context.extras.dye'),
+            `${writer} replaces the profile, so it must own the recipe claim`);
+    }
+    // The payload is sometimes a literal at the call and sometimes a variable
+    // built above it. Resolve the variable rather than searching nearby text --
+    // a neighbouring call's release must not vouch for this one.
+    for (const file of ['../src/modules/profileManager.js', '../src/modules/profile_selector.js']) {
+        const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+        const calls = updateWorkflowCalls(source)
+            .filter(a => /'profile\.(send|wake|resetDefaults)'/.test(a));
+        assert.ok(calls.length, `${file} should contain profile writes`);
+        for (const args of calls) {
+            const payload = topLevelArgs(args)[0].trim();
+            let text = payload;
+            if (/^[A-Za-z_$][\w$]*$/.test(payload)) {
+                const decl = source.match(new RegExp('(?:const|let|var)\\s+' + payload + '\\s*=\\s*\\{'));
+                assert.ok(decl, `cannot find where ${payload} is built in ${file}`);
+                let i = decl.index + decl[0].length - 1, depth = 0;
+                const from = i;
+                for (; i < source.length; i++) {
+                    if (source[i] === '{') depth++;
+                    else if (source[i] === '}' && !--depth) { i++; break; }
+                }
+                text = source.slice(from, i);
+            }
+            assert.match(text, /recipeIdPatch\(null\)/,
+                `a profile write in ${file} does not release the recipe: ${payload.slice(0, 60)}`);
+        }
     }
 });
