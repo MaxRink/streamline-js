@@ -430,3 +430,84 @@ test('the tail is a percentage, so it tracks the scrollbar gutter rather than as
     // scrollbar-gutter reserves the vertical bar, leaving a 1875 content box.
     assert.match(cardRowTailTrack(6), /^ calc\(100% - \d+px\)$/);
 });
+
+// --- sending a saved profile to the machine -------------------------------
+// Lifted the same way as pushChannel above; the two dynamic imports become an
+// injected `deps` so the browser-only module graph is never loaded.
+const pushMatch = source.match(/async function pushSavedProfileToMachine\([\s\S]*?\r?\n\}/);
+assert.ok(pushMatch, 'pushSavedProfileToMachine not found in profile_editor.js');
+const pushSource = pushMatch[0]
+    .replace("await import('./api.js')", 'deps.api')
+    .replace("await import('./profileManager.js')", 'deps.pm');
+
+function machinePush({ activeId = 'A', lastGrind = null, lastDose = null, fail = false } = {}) {
+    const sent = [], bound = [], warned = [];
+    const deps = {
+        api: { updateWorkflow: async w => { if (fail) throw new Error('offline'); sent.push(w); } },
+        pm: {
+            withSavedBrewTemp: (profile, meta) =>
+                Number.isFinite(meta?.brewTemperature) ? { ...profile, _temp: meta.brewTemperature } : profile,
+            setActiveProfile: id => bound.push(id),
+            lastGrinderSetting: () => lastGrind,
+            lastTargetDoseWeight: () => lastDose,
+            DEFAULT_DOSE_WEIGHT: 18,
+        },
+    };
+    const fn = new Function('deps', 'isActiveProfile', 'console',
+        `${pushSource}\nreturn pushSavedProfileToMachine;`)(
+        deps, id => !!id && id === activeId, { warn: (...a) => warned.push(a) });
+    return { fn, sent, bound, warned };
+}
+
+const record = (over = {}) => ({
+    id: 'A', profile: { title: 'Londinium', target_weight: '36' }, metadata: {}, ...over,
+});
+
+test('a saved profile reaches the machine only when it is the one loaded', async () => {
+    const other = machinePush({ activeId: 'A' });
+    await other.fn('B', record({ id: 'B' }));
+    assert.deepEqual(other.sent, [], 'saving another library profile must not swap what is brewing');
+
+    const active = machinePush({ activeId: 'A' });
+    await active.fn('A', record());
+    assert.equal(active.sent.length, 1);
+    assert.equal(active.sent[0].profile.title, 'Londinium');
+
+    // Nothing to send without a record, and no throw either.
+    const empty = machinePush({ activeId: 'A' });
+    await empty.fn('A', null);
+    await empty.fn('A', { id: 'A' });
+    assert.deepEqual(empty.sent, []);
+});
+
+test('the workflow push carries dose, yield and grind, with the selector fallbacks', async () => {
+    const saved = machinePush({ activeId: 'A' });
+    await saved.fn('A', record({ metadata: { targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5, brewTemperature: 92 } }));
+    assert.deepEqual(saved.sent[0].context, { targetDoseWeight: 20, targetYield: 42, grinderSetting: 7.5 });
+    assert.equal(saved.sent[0].profile._temp, 92, 'a saved brew temp must be folded in, as the favourites do');
+
+    // No overrides: dose falls back to the last one set anywhere, then the
+    // default; yield comes off the profile; grind stays null rather than absent.
+    const bare = machinePush({ activeId: 'A', lastGrind: 5, lastDose: 19 });
+    await bare.fn('A', record());
+    assert.deepEqual(bare.sent[0].context, { targetDoseWeight: 19, targetYield: 36, grinderSetting: 5 });
+
+    const none = machinePush({ activeId: 'A' });
+    await none.fn('A', record({ profile: { title: 'x', target_weight: 'n/a' } }));
+    assert.deepEqual(none.sent[0].context, { targetDoseWeight: 18, targetYield: 0, grinderSetting: null },
+        'an unparsable target weight must send 0, never NaN');
+});
+
+test('a fork rebinds the active profile, and a failed send never fails the save', async () => {
+    const fork = machinePush({ activeId: 'old' });
+    await fork.fn('old', record({ id: 'new' }));
+    assert.deepEqual(fork.bound, ['new'], 'tile edits would otherwise write to the retired id');
+
+    const inPlace = machinePush({ activeId: 'A' });
+    await inPlace.fn('A', record());
+    assert.deepEqual(inPlace.bound, [], 'same id, nothing to rebind');
+
+    const offline = machinePush({ activeId: 'A', fail: true });
+    await offline.fn('A', record());   // must not reject
+    assert.equal(offline.warned.length, 1);
+});

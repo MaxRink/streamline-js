@@ -2897,6 +2897,46 @@ function finishSaveSuccess(id) {
     setTimeout(() => { loadPage(_returnUrl); }, 1000);
 }
 
+// A save writes to /profiles, which is the library. The machine keeps running
+// whatever updateWorkflow last sent it, so an edit to the profile currently
+// loaded stayed invisible on the machine until the user re-picked it in the
+// selector. Push it here instead.
+//
+// Only when it IS the loaded one -- saving some other profile from the library
+// must not swap what the machine is brewing. isActiveProfile compares the id
+// directly rather than through availableProfiles, so it still answers for an id
+// this very save just minted.
+async function pushSavedProfileToMachine(previousId, saved) {
+    if (!saved?.profile || !isActiveProfile(previousId)) return;
+    try {
+        const { updateWorkflow } = await import('./api.js');
+        const { withSavedBrewTemp, setActiveProfile, lastGrinderSetting,
+                lastTargetDoseWeight, DEFAULT_DOSE_WEIGHT } = await import('./profileManager.js');
+        const meta = saved.metadata || {};
+        // Same fallback chains as the selector's Confirm and the favourite
+        // buttons (profile_selector.js, profileManager applyProfileToMachine) --
+        // keep the three in step. Dropping the context would reset the dose,
+        // yield and grind the user set for this profile.
+        const targetYield = meta.targetYield ?? parseFloat(saved.profile.target_weight);
+        await updateWorkflow({
+            profile: withSavedBrewTemp(saved.profile, meta),
+            context: {
+                targetDoseWeight: meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT,
+                targetYield: Number.isFinite(targetYield) ? targetYield : 0,
+                grinderSetting: meta.grinderSetting ?? lastGrinderSetting() ?? null,
+            },
+        });
+        // A fork mints a new id. Without rebinding, the machine runs the saved
+        // profile while tile edits still write to the old record's overrides.
+        if (saved.id !== previousId) setActiveProfile(saved.id);
+    } catch (err) {
+        // The save itself succeeded. Leaving the machine on the previous profile
+        // is exactly what happened before this existed, so report and carry on
+        // rather than turning a good save into a failed one.
+        console.warn('Profile saved but not sent to the machine:', err);
+    }
+}
+
 // Save routing for a profile opened from a local-only draft (see
 // profileManager.js duplicateProfileAsDraft / createOrUpdateDraft). Never
 // throws — called from saveProfile without an await, so an escaped rejection
@@ -2931,6 +2971,7 @@ async function saveDraftEdit(draftRecord) {
             });
             editorState.sourceProfileRecord = updated;
             _baselineProfileJson = JSON.stringify(editorState.profile);
+            await pushSavedProfileToMachine(draftRecord.id, updated);
             finishSaveSuccess(updated.id);
             return;
         }
@@ -2975,6 +3016,7 @@ async function saveDraftEdit(draftRecord) {
         editorState.sourceProfileId = saved.id;
         _baselineProfileJson = JSON.stringify(editorState.profile);
 
+        await pushSavedProfileToMachine(draftRecord.id, saved);
         finishSaveSuccess(saved.id);
     } catch (err) {
         console.error('Draft save failed:', err);
@@ -3320,6 +3362,7 @@ async function saveProfile({ asNew = false } = {}) {
         _baselineProfileJson = JSON.stringify(editorState.profile);
         updateSaveAsNewButtonState();
 
+        await pushSavedProfileToMachine(oldId, saved);
         finishSaveSuccess(saved.id);
     } catch (err) {
         console.error('Profile save failed:', err);
