@@ -2102,103 +2102,124 @@ export function renderScreenSaverSettings() {
         </p>
     `;
 
-    // Two-column grid so the whole page fits one screen without vertical scroll.
-    const toggle = (label, key, checked, handler, id = '') => `
-        <div class="flex items-center justify-between gap-[20px]">
-            <p class="font-bold text-[var(--text-primary)] text-[26px] leading-[1.2]" data-i18n-key="${key}">${label}</p>
+    // Rows share one rhythm: label left, control flush right at 260px, so every
+    // control on the panel lines up on the same edge whichever card it is in.
+    const switchControl = (checked, handler, id = '') => `
             <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
                 <input type="checkbox" class="sr-only peer" ${id ? `id="${id}"` : ''} ${checked ? 'checked' : ''}
                        onchange="${handler}(this.checked)">
                 <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)]"></div>
                 <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
-            </label>
+            </label>`;
+    const toggle = (label, key, checked, handler, id = '') => `
+        <div class="flex items-center justify-between gap-[20px]">
+            <p class="font-bold text-[var(--text-primary)] text-[24px] leading-[1.2]" data-i18n-key="${key}">${label}</p>${switchControl(checked, handler, id)}
         </div>`;
     const select = (id, label, options, current, handler) => `
         <div class="flex items-center justify-between gap-[20px]">
-            <label for="${id}" class="font-bold text-[var(--text-primary)] text-[26px]" data-i18n-key="${label}">${label}</label>
+            <label for="${id}" class="font-bold text-[var(--text-primary)] text-[24px] leading-[1.2]" data-i18n-key="${label}">${label}</label>
             <select id="${id}"
                     class="select select-bordered w-[260px] text-[20px] bg-[var(--presence-input-bg)] text-[var(--presence-input-text)] border-[var(--presence-input-border)]"
                     onchange="${handler}(this.value)">
                 ${options.map(o => `<option value="${o.value}" ${current === o.value ? 'selected' : ''} data-i18n-key="${o.label}">${o.label}</option>`).join('')}
             </select>
         </div>`;
+    // 62px and 260px overall, matching the selects rather than standing above them
+    // as a banner -- it is one control among the others, not a second page title.
     const modeSegment = (black, label) => `
-        <button type="button" class="flex-1 h-[96px] rounded-[10px] font-['Inter:Bold',sans-serif] font-bold text-[28px] flex items-center justify-center cursor-pointer transition-colors duration-200 ${blackSaver === black ? 'bg-[var(--button-primary-bg)] text-white' : 'bg-[var(--box-color)] border border-[var(--profile-button-outline-color)] text-[#b6c3d7]'}"
+        <button type="button" class="flex-1 h-[62px] rounded-[12px] font-bold text-[24px] flex items-center justify-center cursor-pointer transition-colors duration-200 ${blackSaver === black ? 'bg-[var(--button-primary-bg)] text-white' : 'bg-[var(--box-color)] border-2 border-[var(--profile-button-outline-color)] text-[var(--text-primary)]'}"
                 aria-pressed="${blackSaver === black}"
                 onclick="window.setBlackScreenSaver(${black})" data-i18n-key="${label}">${getTranslation(label)}</button>`;
-    const grid = 'display:grid;grid-template-columns:1fr 1fr;column-gap:60px;row-gap:24px;align-items:center;width:100%;';
+
+    // One card per question the panel answers. Rows are divided rather than boxed
+    // again, so the card is the only container and nesting stays one level deep.
+    const card = (titleKey, rows) => `
+        <div class="rounded-[10px] border border-[var(--border-primary)] p-6 bg-[var(--box-color)] flex flex-col w-full">
+            <p class="font-bold text-[var(--mimoja-blue-v2)] text-[26px] leading-[1.2]" style="padding-bottom:8px" data-i18n-key="${titleKey}">${getTranslation(titleKey)}</p>
+            ${rows.filter(Boolean).map((row, i) => `
+            <div class="py-[16px] ${i ? 'border-t border-[var(--border-primary)]' : ''}">${row}</div>`).join('')}
+        </div>`;
+
+    const styleRow = `
+        <div class="flex items-center justify-between gap-[20px]">
+            <p id="screensaver-style-label" class="font-bold text-[var(--text-primary)] text-[24px] leading-[1.2]" data-i18n-key="Screen saver style">Screen saver style</p>
+            <div class="flex gap-[12px] w-[220px]" role="group" aria-labelledby="screensaver-style-label">
+                ${modeSegment(false, 'Images')}
+                ${modeSegment(true, 'Black')}
+            </div>
+        </div>`;
+
+    // The switch is "set it myself"; the slider below is the setting. One row each,
+    // so the label is not competing with a second label for the same control.
+    const brightnessRows = !blackSaver && brightnessSupported ? [`
+        <div class="flex items-center justify-between gap-[20px]">
+            <p id="saver-brightness-label" class="font-bold text-[var(--text-primary)] text-[24px] leading-[1.2]" data-i18n-key="Screen saver brightness">Screen saver brightness</p>
+            <div class="flex items-center gap-[20px]">
+                <span class="font-bold text-[var(--text-secondary)] text-[22px]" data-i18n-key="Custom">Custom</span>${switchControl(customBrightness, 'window.setCustomSaverBrightness', 'saver-brightness-custom')}
+            </div>
+        </div>`, `
+        <div class="flex items-center gap-[30px] w-full">
+            <input type="range" id="saver-brightness-slider" min="0" max="100" step="1" value="${saverBrightness}"
+                   class="brightness-slider flex-grow" ${customBrightness ? '' : 'disabled'}
+                   aria-labelledby="saver-brightness-label"
+                   oninput="window.setSaverBrightnessLevel(this.value)">
+            <span id="saver-brightness-value" class="text-[var(--text-primary)] text-[24px] text-right" style="width:62px">${saverBrightness}%</span>
+        </div>`] : [];
+
+    const saverCard = card('Screen saver', [
+        styleRow,
+        blackSaver ? '' : toggle('Show screen saver when the machine sleeps', 'Show screen saver when the machine sleeps', enabled, 'window.setScreensaverEnabled'),
+        ...brightnessRows,
+    ]);
+
+    const clockCard = card('Clock', [
+        toggle('Show date and time', 'Show date and time', showClock, 'window.setScreensaverShowClock', 'screensaver-show-clock'),
+        showClock ? select('screensaver-clock-format', 'Clock format', SCREENSAVER_CLOCK_FORMATS, clockFormat, 'window.setScreensaverClockFormat') : '',
+        showClock ? select('screensaver-date-format', 'Date format', SCREENSAVER_DATE_FORMATS, dateFormat, 'window.setScreensaverDateFormat') : '',
+        showClock ? select('screensaver-clock-position', 'Clock position', SCREENSAVER_CLOCK_POSITIONS, clockPosition, 'window.setScreensaverClockPosition') : '',
+    ]);
+
+    // The image deck only exists under the image saver, so it is a whole card
+    // that leaves rather than rows that grey out.
+    const imagesCard = blackSaver ? '' : card('Images', [
+        imageInfo,
+        `<div class="flex items-center justify-between gap-[16px]">
+            <div class="flex items-baseline gap-[14px] font-bold ${screensaverImagesCache.length > 1 ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] opacity-50'} text-[24px]">
+                <p class="leading-[1.2]" data-i18n-key="Change image every:">Change image every:</p>
+            </div>
+            <input type="number"
+                   id="screensaver-cycle-seconds"
+                   min="2"
+                   max="600"
+                   step="1"
+                   value="${cycleSeconds}"
+                   ${screensaverImagesCache.length > 1 ? '' : 'disabled'}
+                   class="w-[140px] h-[62px] px-[20px] rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] bg-[var(--box-color)] text-[var(--text-primary)] text-[24px] text-center disabled:opacity-40 disabled:cursor-not-allowed"
+                   onchange="window.handleScreensaverCycleChange(this.value)">
+        </div>`,
+        `<div class="flex items-center justify-end gap-[16px]">${imageButtons}</div>`,
+    ]);
 
     return `
-        <div class="content-stretch flex flex-col gap-[28px] items-start relative w-full">
+        <div class="content-stretch flex flex-col gap-[40px] items-start relative w-full">
             <div class="flex flex-col font-['Inter:Semi_Bold',sans-serif] font-semibold justify-center leading-[0] min-w-full not-italic relative text-[var(--text-primary)] text-[36px] text-center w-[min-content]">
                 <p class="leading-[1.2]" data-i18n-key="Screen Saver">Screen Saver</p>
             </div>
-
-            <div class="flex items-center justify-between gap-[20px] w-full">
-                <p id="screensaver-style-label" class="font-bold text-[var(--text-primary)] text-[26px] leading-[1.2]" data-i18n-key="Screen saver style">Screen saver style</p>
-                <div class="flex gap-[16px] w-[260px]" role="group" aria-labelledby="screensaver-style-label">
-                    ${modeSegment(false, 'Images')}
-                    ${modeSegment(true, 'Black')}
-                </div>
-            </div>
-
-            <div style="${grid}">
-                ${blackSaver ? '' : toggle('Show screen saver when the machine sleeps', 'Show screen saver when the machine sleeps', enabled, 'window.setScreensaverEnabled')}
-                ${toggle('Show date and time', 'Show date and time', showClock, 'window.setScreensaverShowClock', 'screensaver-show-clock')}
-                ${showClock ? `
-                ${select('screensaver-clock-format', 'Clock format', SCREENSAVER_CLOCK_FORMATS, clockFormat, 'window.setScreensaverClockFormat')}
-                ${select('screensaver-date-format', 'Date format', SCREENSAVER_DATE_FORMATS, dateFormat, 'window.setScreensaverDateFormat')}
-                ${select('screensaver-clock-position', 'Clock position', SCREENSAVER_CLOCK_POSITIONS, clockPosition, 'window.setScreensaverClockPosition')}` : ''}
-            </div>
-
-            ${!blackSaver ? `
             <div class="h-0 relative w-full"><hr class="border-t border-[var(--border-primary)] w-full" /></div>
 
-            ${brightnessSupported ? `
-            <div class="flex flex-col gap-[16px] w-full">
-                <div class="flex items-center justify-between gap-[20px]">
-                    <label for="saver-brightness-slider" class="font-bold text-[var(--text-primary)] text-[26px] leading-[1.2]" data-i18n-key="Screen saver brightness">Screen saver brightness</label>
-                    ${toggle('Custom', 'Custom', customBrightness, 'window.setCustomSaverBrightness', 'saver-brightness-custom')}
+            <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:40px;row-gap:24px;align-items:start;width:100%;">
+                <div class="flex flex-col gap-[24px] w-full">
+                    ${saverCard}
+                    ${imagesCard}
                 </div>
-                <div class="flex items-center gap-[30px] w-full">
-                    <input type="range" id="saver-brightness-slider" min="0" max="100" step="1" value="${saverBrightness}"
-                           class="brightness-slider flex-grow" ${customBrightness ? '' : 'disabled'}
-                           oninput="window.setSaverBrightnessLevel(this.value)">
-                    <span id="saver-brightness-value" class="text-[var(--text-primary)] text-[24px]">${saverBrightness}%</span>
-                </div>
-            </div>` : ''}
-
-            <div class="w-full">
-                <div class="flex items-center justify-between gap-[16px]">
-                    <p class="font-bold text-[var(--mimoja-blue-v2)] text-[26px] leading-[1.2]">Images</p>
-                    <div class="flex items-center gap-[16px]">
-                        ${imageButtons}
-                    </div>
-                </div>
-            </div>
-            <div class="w-full">${imageInfo}</div>
-
-            <div class="w-full">
-                <div class="flex items-center justify-between gap-[16px]">
-                    <div class="flex items-baseline gap-[14px] font-bold ${screensaverImagesCache.length > 1 ? 'text-[var(--mimoja-blue-v2)]' : 'text-[var(--text-secondary)] opacity-50'} text-[26px]">
-                        <p class="leading-[1.2]" data-i18n-key="Change image every:">Change image every:</p>
-                        <span class="text-[20px] font-normal opacity-60">(2 – 600s)</span>
-                    </div>
-                    <input type="number"
-                           id="screensaver-cycle-seconds"
-                           min="2"
-                           max="600"
-                           step="1"
-                           value="${cycleSeconds}"
-                           ${screensaverImagesCache.length > 1 ? '' : 'disabled'}
-                           class="w-[140px] h-[62px] px-[20px] rounded-[12px] border-2 border-[var(--mimoja-blue-v2)] bg-[var(--box-color)] text-[var(--text-primary)] text-[24px] text-center disabled:opacity-40 disabled:cursor-not-allowed"
-                           onchange="window.handleScreensaverCycleChange(this.value)">
+                <div class="flex flex-col gap-[24px] w-full">
+                    ${clockCard}
                 </div>
             </div>
 
+            ${blackSaver ? '' : `
             <input type="file" id="screensaver-file-input" class="hidden" multiple accept="image/*"
-                   onchange="window.addScreensaverFiles(this.files)">
-            ` : ''}
+                   onchange="window.addScreensaverFiles(this.files)">`}
         </div>
     `;
 }
