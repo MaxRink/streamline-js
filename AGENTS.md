@@ -39,6 +39,7 @@ Start with [`docs/AI_REPO_MAP.md`](docs/AI_REPO_MAP.md). Open only the topic not
 - [Repository map](docs/AI_REPO_MAP.md)
 - [Runtime and routing](docs/AI_RUNTIME_NOTES.md)
 - [Decaid API and WebSockets](docs/AI_API_NOTES.md)
+- [Workflow ownership](docs/AI_WORKFLOW_NOTES.md)
 - [UI, styling, i18n, and WebView behavior](docs/AI_UI_NOTES.md)
 - [Settings architecture](docs/AI_SETTINGS_NOTES.md)
 - [Charts](docs/AI_CHART_NOTES.md)

@@ -10,6 +10,7 @@ import { buildCalibrateBody, classifyCalState } from './loadcell-cal.js';
 import { deriveDisplayAction, isScreensaverSuppressed } from './screensaver-policy.js';
 import { splitNdjson, advanceFirmwareState, initialFirmwareState } from './firmware-progress.js';
 import { parseSse } from './derek-stream.js';
+import { assertDeclaredFields } from './workflow-fields.js';
 import { selectedRecipeSteamTemp } from './dye-selection.js';
 import {
     SAVER_BRIGHTNESS_KEY, SAVER_BRIGHTNESS_CUSTOM_KEY,
@@ -1529,7 +1530,7 @@ export async function sendProfile(profileJson) {
     if (!isValidProfile(profileJson)) {
         throw new Error('Profile validation failed. Not sending to REA.');
     }
-    return updateWorkflow({ profile: profileJson });
+    return updateWorkflow({ profile: profileJson }, 'api.sendProfile');
 }
 
 export async function getWorkflow() {
@@ -1558,7 +1559,12 @@ export function getScaleReading() { return scaleReading; }
 let espressoEndedAt = null;
 export function getEspressoEndedAt() { return espressoEndedAt; }
 
-export async function updateWorkflow(data) {
+// Every write to the live workflow goes through here, and every caller says
+// which writer it is. The workflow deep-merges whatever it is given and has no
+// revision, so a writer that sends a field it does not own silently overwrites
+// a newer value -- see workflow-fields.js for the ownership table.
+export async function updateWorkflow(data, writer) {
+    assertDeclaredFields(writer, data);
     workflowWritesInFlight += 1;
     try {
         return await putWorkflow(data);
@@ -1830,12 +1836,12 @@ async function pushRemembered(key, value, send) {
 
 export async function setTargetHotWaterVolume(volume) {
     const value = parseFloat(volume);
-    return pushRemembered(HOT_WATER_VOLUME_LAST_VALUE_KEY, value, () => updateWorkflow({ hotWaterData: { volume: value } }));
+    return pushRemembered(HOT_WATER_VOLUME_LAST_VALUE_KEY, value, () => updateWorkflow({ hotWaterData: { volume: value } }, 'api.hotWater'));
 }
 
 export async function setTargetHotWaterTemp(temp) {
     const value = parseFloat(temp);
-    return pushRemembered(HOT_WATER_TEMP_LAST_VALUE_KEY, value, () => updateWorkflow({ hotWaterData: { targetTemperature: value } }));
+    return pushRemembered(HOT_WATER_TEMP_LAST_VALUE_KEY, value, () => updateWorkflow({ hotWaterData: { targetTemperature: value } }, 'api.hotWater'));
 }
 
 export async function setTargetHotWaterDuration(duration) {
@@ -1843,7 +1849,7 @@ export async function setTargetHotWaterDuration(duration) {
         hotWaterData: {
             duration: parseFloat(duration)
         }
-    });
+    }, 'api.hotWater');
 }
 
 export async function setTargetSteamTemp(temp) {
@@ -1851,7 +1857,7 @@ export async function setTargetSteamTemp(temp) {
     // (Bengle); Decaid also reads anything below that range as off.
     const value = Math.round(parseFloat(temp));
     if (value > 0) await persistSharedValue(STEAM_TEMP_LAST_VALUE_KEY, value);
-    return updateWorkflow({ steamSettings: { targetTemperature: value } });
+    return updateWorkflow({ steamSettings: { targetTemperature: value } }, 'api.steamTemp');
 }
 
 // The heater half of a steam-duration change.
@@ -1900,7 +1906,7 @@ async function steamHeaterFor(duration) {
 export async function setTargetSteamDuration(duration) {
     if (isAutoSteamActive()) throw new Error('Use a pitcher preset in Auto mode, or switch to Flow or Time.');
     const value = parseFloat(duration);
-    return pushRemembered(STEAM_DURATION_LAST_VALUE_KEY, value, async () => updateWorkflow({ steamSettings: { duration: value, ...(await steamHeaterFor(value)) } }));
+    return pushRemembered(STEAM_DURATION_LAST_VALUE_KEY, value, async () => updateWorkflow({ steamSettings: { duration: value, ...(await steamHeaterFor(value)) } }, 'api.steamDuration'));
 }
 
 export function isAutoSteamActive() {
@@ -1908,7 +1914,7 @@ export function isAutoSteamActive() {
 }
 
 export async function writeAutoSteamSettings(steam) {
-    return updateWorkflow({ steamSettings: clampAutoSteamSettings(steam) });
+    return updateWorkflow({ steamSettings: clampAutoSteamSettings(steam) }, 'api.autoSteam');
 }
 
 // Steam-heater switch for procedures that must not run against a hot steam
@@ -1916,13 +1922,13 @@ export async function writeAutoSteamSettings(steam) {
 // switching off stores the current target, switching back on returns to it.
 // The duration is deliberately untouched, so the user's steam time survives.
 export async function setSteamHeaterEnabled(enabled) {
-    return updateWorkflow({ steamSettings: await steamHeaterFor(enabled ? 1 : 0) });
+    return updateWorkflow({ steamSettings: await steamHeaterFor(enabled ? 1 : 0) }, 'api.steamHeater');
 }
 
 export async function setTargetSteamFlow(flow) {
     if (isAutoSteamActive()) throw new Error('Use a pitcher preset in Auto mode, or switch to Flow or Time.');
     const value = parseFloat(flow);
-    return pushRemembered(STEAM_FLOW_LAST_VALUE_KEY, value, () => updateWorkflow({ steamSettings: { flow: value } }));
+    return pushRemembered(STEAM_FLOW_LAST_VALUE_KEY, value, () => updateWorkflow({ steamSettings: { flow: value } }, 'api.steamFlow'));
 }
 
 // Re-push the remembered steam values wherever Rea's workflow record disagrees
@@ -1956,7 +1962,7 @@ export async function setStopAtTemperature(celsius) {
     // persisting it would erase the temperature they tuned; the armed/off
     // state itself is skin-local (streamline.steamStopMode), not a KV value.
     // KV first, machine second, for the same reason as setTargetSteamDuration.
-    const send = () => updateWorkflow({ steamSettings: { stopAtTemperature: value } });
+    const send = () => updateWorkflow({ steamSettings: { stopAtTemperature: value } }, 'api.steamStopAt');
     return value > 0 ? pushRemembered(MILK_STOP_LAST_VALUE_KEY, value, send) : send();
 }
 

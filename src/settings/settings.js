@@ -282,7 +282,7 @@ async function flushPendingChanges() {
     // over whatever was just saved here, on the next load.
     if (pendingChanges.workflow.steamSettings) {
         const steam = pendingChanges.workflow.steamSettings;
-        tasks.push(updateWorkflow({ steamSettings: steam }));
+        tasks.push(updateWorkflow({ steamSettings: steam }, 'settings.steam'));
         if (isNum(steam.duration)) persistSharedValue(STEAM_DURATION_LAST_VALUE_KEY, steam.duration);
         if (isNum(steam.flow)) persistSharedValue(STEAM_FLOW_LAST_VALUE_KEY, steam.flow);
         // Enabled temperatures only: 0 is the heater switched off, and the main
@@ -295,7 +295,7 @@ async function flushPendingChanges() {
     }
     if (pendingChanges.workflow.hotWaterData) {
         const water = pendingChanges.workflow.hotWaterData;
-        tasks.push(updateWorkflow({ hotWaterData: water }));
+        tasks.push(updateWorkflow({ hotWaterData: water }, 'settings.hotWater'));
         if (isNum(water.volume)) persistSharedValue(HOT_WATER_VOLUME_LAST_VALUE_KEY, water.volume);
         if (isNum(water.targetTemperature)) persistSharedValue(HOT_WATER_TEMP_LAST_VALUE_KEY, water.targetTemperature);
     }

@@ -336,10 +336,10 @@ async function handleConfirm() {
                 }
             };
 
-            sentworkflow = await updateWorkflow(workflowUpdate);
+            sentworkflow = await updateWorkflow(workflowUpdate, 'profile.send');
         } else {
             const displayYield = isNaN(effectiveYield) ? 0 : effectiveYield;
-            sentworkflow = await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield: displayYield, ...grindContext } });
+            sentworkflow = await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield: displayYield, ...grindContext } }, 'profile.send');
         }
 
         const verified = sentworkflow.profile.title === profile.title;
@@ -495,7 +495,7 @@ function showProfileContextMenu(key, profileRecord, anchorEl) {
                     // Assigning from here switches the machine to the profile, so it
                     // owes the same saved overrides as the other two ways in: the
                     // brew temp folded onto the profile, and steam pushed after.
-                    await updateWorkflow({ profile: withSavedBrewTemp(pr.profile, meta), context: { targetDoseWeight, targetYield: isNaN(yieldVal) ? 0 : yieldVal, grinderSetting: grind } });
+                    await updateWorkflow({ profile: withSavedBrewTemp(pr.profile, meta), context: { targetDoseWeight, targetYield: isNaN(yieldVal) ? 0 : yieldVal, grinderSetting: grind } }, 'profile.send');
                     await applySavedSteamSettings(meta);
                     setActiveProfile(key);
                     updateProfileName(pr.profile.title);

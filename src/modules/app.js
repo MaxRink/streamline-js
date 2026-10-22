@@ -1441,7 +1441,7 @@ function handleShotStateEvent(frame) {
             // the context persists on purpose (see workflow-note.js).
             getWorkflow().then(live => {
                 const clear = noteClearContext(live?.context);
-                return clear && api.updateWorkflow({ context: clear });
+                return clear && api.updateWorkflow({ context: clear }, 'shot.clearNote');
             }).catch(error => logger.warn('Could not clear the shot note:', error));
             break;
         // advance frames: chart already tracks step changes via profileFrame

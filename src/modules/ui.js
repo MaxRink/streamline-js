@@ -281,7 +281,7 @@ function updateDoseValue(type, newValue) {
     // fold the yield into the sent profile so the stop matches the UI number.
     return profileWithTargetWeight(targetYield).then(profile => {
         if (profile) payload.profile = profile;
-        return updateWorkflow(payload);
+        return updateWorkflow(payload, 'tiles.doseYield');
     }).then(() => {
         logger.debug(`Dose ${type} value updated via workflow:`, newValue);
         if (type === 'in') {
@@ -316,7 +316,7 @@ export function updateDoseAndDrinkOutValue(newDoseIn, newDrinkOut) {
     // Keep the machine stop-at-weight (profile.target_weight) in sync with the yield.
     profileWithTargetWeight(newDrinkOut).then(profile => {
         if (profile) payload.profile = profile;
-        return updateWorkflow(payload);
+        return updateWorkflow(payload, 'tiles.doseYield');
     }).then(() => {
         logger.debug(`Dose In and Drink Out values updated via workflow: ${newDoseIn}g : ${newDrinkOut}g`);
         // Same per-profile save the +/- buttons and the numpad do — without it a
@@ -363,7 +363,7 @@ export function updateTemperatureValue(newValue) {
         if (patch) {
             // Only the steps go out: Decaid merges the rest of the profile, so a stale
             // target_weight or title from this read cannot revert a concurrent write.
-            return updateWorkflow({ profile: patch }).then(() => {
+            return updateWorkflow({ profile: patch }, 'tiles.brewTemp').then(() => {
                 logger.debug('Temperature updated via workflow:', newValue);
                 // Save it as a per-profile override, same as dose/yield/grind.
                 // The live workflow alone survives an app restart but NOT a
@@ -476,7 +476,7 @@ export function updateGrindValue(newValue) {
     };
     // Override saved only once Decaid accepted the value: a refused write must
     // not become the profile's remembered grind.
-    const done = updateWorkflow(workflowUpdate).then(() => {
+    const done = updateWorkflow(workflowUpdate, 'tiles.grind').then(() => {
         logger.debug('Grind value updated successfully:', newValue);
         window.app?.saveGrindToActiveProfile?.(parseFloat(newValue).toFixed(2));
     }).catch(error => {
@@ -504,7 +504,7 @@ export function updateFlushValue(newValue) {
         }
     };
 
-    updateWorkflow(workflowUpdate).then(() => {
+    updateWorkflow(workflowUpdate, 'tiles.flush').then(() => {
         logger.debug('Rinse value updated successfully:', workflowUpdate.rinseData);
         persistSharedValue(FLUSH_DURATION_LAST_VALUE_KEY, workflowUpdate.rinseData.duration);
     }).catch(error => {

@@ -710,7 +710,7 @@ export async function sendProfileRecordToMachine(record) {
                 targetYield,
                 grinderSetting: meta.grinderSetting ?? lastGrinderSetting() ?? null,
             },
-        });
+        }, 'profile.send');
     } catch (err) {
         logger.warn('Could not send profile to the machine:', err);
         return 'failed';
@@ -827,7 +827,7 @@ export async function loadProfileForWake(profileId) {
     const profileToSend = withSavedBrewTemp(
         targetYield > 0 ? { ...profile, target_weight: targetYield } : profile, meta);
     try {
-        await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield, grinderSetting } });
+        await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield, grinderSetting } }, 'profile.wake');
         setActiveProfile(profileId);
         // Steam rides its own setters, not the workflow context.
         await applySavedSteamSettings(meta);
@@ -880,7 +880,7 @@ export async function resetActiveProfileToDefaults() {
     const targetYield = isNaN(parsedYield) ? 0 : parsedYield;
     let sentWorkflow;
     try {
-        sentWorkflow = await updateWorkflow({ profile, context: { targetDoseWeight, targetYield, grinderSetting: null } });
+        sentWorkflow = await updateWorkflow({ profile, context: { targetDoseWeight, targetYield, grinderSetting: null } }, 'profile.resetDefaults');
     } catch (error) {
         logger.error('Failed to re-apply profile defaults to workflow:', error);
         return false;
@@ -1067,7 +1067,7 @@ async function handleProfileClick(index) {
             : await updateWorkflow({
                 profile: profileToSend,
                 context: { targetDoseWeight, targetYield: displayYield, ...grindContext }
-            });
+            }, 'profile.send');
         // Paint the tiles from the workflow Rea echoed back rather than from the
         // numbers we meant to send, so what the user reads is what the machine
         // will actually brew with -- no guessing whether a value stuck.

@@ -311,13 +311,11 @@ async function armSelection(kind, id, seq) {
 export async function applyFavourite(fav) {
     if (!fav) return;
     const live = (await getWorkflow()) || {};
-    if (fav.workflow) {
-        await applyStoredWorkflow(live, fav.workflow);
-    } else {
-        await applyFavLegacy(live, fav); // snapshot + copyMask
-    }
+    const patch = fav.workflow
+        ? await applyStoredWorkflow(fav.workflow)
+        : await applyFavLegacy(fav); // snapshot + copyMask
     const seq = ++applySeq;
-    await withAutoSaveSuppressed(() => updateWorkflow(live));
+    await withAutoSaveSuppressed(() => updateWorkflow(patch, 'dye.applyFavourite'));
     if (seq !== applySeq) return; // a newer tap owns the arming
     // Arm the item the dial-in belongs to, after the PUT lands so a failed apply never
     // arms anything on a stale item. DYE2 always hears about it: it records off the
@@ -336,7 +334,7 @@ export async function applyFavourite(fav) {
             kind: 'favourite',
             id: fav.id,
             profileId: fav.workflow?.profile?.id ?? fav.snapshot?.profileId ?? null,
-            profileFingerprint: profileFingerprint(live.profile),
+            profileFingerprint: profileFingerprint(patch.profile ?? live.profile),
         };
     }
     await refreshAfterApply();
@@ -345,16 +343,14 @@ export async function applyFavourite(fav) {
 export async function applyRecipe(recipe) {
     if (!recipe) return;
     const live = (await getWorkflow()) || {};
-    if (recipe.workflow) {
-        await applyStoredWorkflow(live, recipe.workflow);
-    } else {
-        await applyRecipeLegacy(live, recipe); // dashboardVariables + top-level fields
-    }
-    // Steam / hot-water / flush are NOT in the stored workflow — live-merge them.
+    const patch = recipe.workflow
+        ? await applyStoredWorkflow(recipe.workflow)
+        : await applyRecipeLegacy(recipe); // dashboardVariables + top-level fields
+    // Steam / hot-water / flush are NOT in the stored workflow — add them here.
     const dv = recipe.dashboardVariables || {};
-    await mergeRecipeLiveSettings(live, dv);
+    Object.assign(patch, await mergeRecipeLiveSettings(dv));
     const seq = ++applySeq;
-    await withAutoSaveSuppressed(() => updateWorkflow(live));
+    await withAutoSaveSuppressed(() => updateWorkflow(patch, 'dye.applyRecipe'));
     if (seq !== applySeq) return; // a newer tap owns the arming
     // Arm this recipe for the dial-in that follows — see applyFavourite for why it
     // happens after the PUT, is always posted, and why only the legacy path needs the
@@ -368,7 +364,7 @@ export async function applyRecipe(recipe) {
             kind: 'recipe',
             id: recipe.id,
             profileId: recipe.profileId ?? recipe.workflow?.profile?.id ?? null,
-            profileFingerprint: profileFingerprint(live.profile),
+            profileFingerprint: profileFingerprint(patch.profile ?? live.profile),
         };
     }
     // Pass the recipe's own mode along so the tile's bold sub-value matches
@@ -412,20 +408,25 @@ async function resolveFullProfile(stub) {
 // The profile is resolved to its full record as a backstop regardless of what
 // shape was actually stored (older KV items may still carry the legacy thin
 // { id, title } stub — see resolveFullProfile).
-async function applyStoredWorkflow(live, workflow) {
-    live.context = { ...(live.context || {}), ...(workflow.context || {}) };
+async function applyStoredWorkflow(workflow) {
+    const patch = {};
+    if (workflow.context) patch.context = { ...workflow.context };
     if (workflow.profile) {
-        live.profile = (await resolveFullProfile(workflow.profile)) || workflow.profile;
+        patch.profile = (await resolveFullProfile(workflow.profile)) || workflow.profile;
     }
+    return patch;
 }
 
 // Legacy favourite (no `workflow`): copyMask-gated snapshot → context. Mirrors
 // dashboard.ts applyAutoFavourite. Absent mask key ⇒ on.
-async function applyFavLegacy(live, fav) {
+async function applyFavLegacy(fav) {
     const snp = fav.snapshot || {};
     const mask = fav.copyMask || {};
     const on = k => mask[k] !== false;
-    const ctx = { ...(live.context || {}) };
+    // Seeded empty, not from the live context: PUT deep-merges, so carrying the
+    // live values forward only re-sends fields this favourite does not own --
+    // which is how a stale number overwrote a newer one (#165).
+    const ctx = {};
     if (on('dose') && snp.dose != null) ctx.targetDoseWeight = snp.dose;
     if (on('drink') && snp.drink != null) ctx.targetYield = snp.drink;
     if (on('grindSetting')) {
@@ -445,22 +446,23 @@ async function applyFavLegacy(live, fav) {
     if (on('barista') && snp.barista) ctx.baristaName = snp.barista;
     if (on('drinker') && snp.drinker) ctx.drinkerName = snp.drinker;
     if (on('note') && snp.note) ctx.extras = { ...(ctx.extras || {}), note: snp.note };
-    live.context = ctx;
+    const patch = Object.keys(ctx).length ? { context: ctx } : {};
     if (on('profile') && (snp.profileId || snp.profileTitle)) {
         if (snp.profileSnapshot && Array.isArray(snp.profileSnapshot.steps)) {
-            live.profile = snp.profileSnapshot;
+            patch.profile = snp.profileSnapshot;
         } else {
             const full = snp.profileId ? await resolveFullProfile(snp.profileId) : null;
-            live.profile = full || { id: snp.profileId, title: snp.profileTitle };
+            patch.profile = full || { id: snp.profileId, title: snp.profileTitle };
         }
     }
+    return patch;
 }
 
 // Legacy recipe (no `workflow`): dashboardVariables → context. Mirrors dashboard.ts
 // applyRecipe (context portion; steam/hw/flush handled by mergeRecipeLiveSettings).
-async function applyRecipeLegacy(live, recipe) {
+async function applyRecipeLegacy(recipe) {
     const dv = recipe.dashboardVariables || {};
-    const ctx = { ...(live.context || {}) };
+    const ctx = {}; // see applyFavLegacy: deep-merge means only what changed
     if (dv.dose != null) ctx.targetDoseWeight = dv.dose;
     if (dv.drink != null) ctx.targetYield = dv.drink;
     else if (dv.ratio != null && dv.dose != null) ctx.targetYield = Math.round(dv.dose * dv.ratio * 10) / 10;
@@ -469,15 +471,16 @@ async function applyRecipeLegacy(live, recipe) {
     if (dv.grinderId) ctx.grinderId = dv.grinderId;
     if (recipe.barista) ctx.baristaName = recipe.barista;
     if (recipe.drinker) ctx.drinkerName = recipe.drinker;
-    live.context = ctx;
+    const patch = Object.keys(ctx).length ? { context: ctx } : {};
     if (recipe.profileId || recipe.profileTitle) {
         if (recipe.profileSnapshot && Array.isArray(recipe.profileSnapshot.steps)) {
-            live.profile = recipe.profileSnapshot;
+            patch.profile = recipe.profileSnapshot;
         } else {
             const full = recipe.profileId ? await resolveFullProfile(recipe.profileId) : null;
-            live.profile = full || { id: recipe.profileId, title: recipe.profileTitle };
+            patch.profile = full || { id: recipe.profileId, title: recipe.profileTitle };
         }
     }
+    return patch;
 }
 
 // Override only the recipe's steam/hot-water/flush fields on the LIVE sub-objects
@@ -493,35 +496,35 @@ async function applyRecipeLegacy(live, recipe) {
 // right after applying the recipe sees the new value as *drift* from the old
 // remembered one and immediately pushes the OLD value back over both the
 // workflow and the live machine — silently reverting the recipe's own change.
-async function mergeRecipeLiveSettings(wf, dv) {
-    if (wf.steamSettings && (dv.steamTimeS != null || dv.steamFlowMls != null)) {
-        const ss = { ...wf.steamSettings };
-        if (dv.steamMode === 'time' && dv.steamTimeS != null) {
-            ss.duration = dv.steamTimeS;
-            await persistSharedValue(STEAM_DURATION_LAST_VALUE_KEY, dv.steamTimeS);
-        }
-        if (dv.steamMode === 'flow' && dv.steamFlowMls != null) {
-            ss.flow = dv.steamFlowMls;
-            await persistSharedValue(STEAM_FLOW_LAST_VALUE_KEY, dv.steamFlowMls);
-        }
-        wf.steamSettings = ss;
+async function mergeRecipeLiveSettings(dv) {
+    const patch = {};
+    const steam = {};
+    if (dv.steamMode === 'time' && dv.steamTimeS != null) {
+        steam.duration = dv.steamTimeS;
+        await persistSharedValue(STEAM_DURATION_LAST_VALUE_KEY, dv.steamTimeS);
     }
-    if (wf.hotWaterData && (dv.hotWaterMl != null || dv.hotWaterTempC != null)) {
-        const hw = { ...wf.hotWaterData };
-        if (dv.hotWaterMode === 'vol' && dv.hotWaterMl != null) {
-            hw.volume = dv.hotWaterMl;
-            await persistSharedValue(HOT_WATER_VOLUME_LAST_VALUE_KEY, dv.hotWaterMl);
-        }
-        if (dv.hotWaterMode === 'temp' && dv.hotWaterTempC != null) {
-            hw.targetTemperature = dv.hotWaterTempC;
-            await persistSharedValue(HOT_WATER_TEMP_LAST_VALUE_KEY, dv.hotWaterTempC);
-        }
-        wf.hotWaterData = hw;
+    if (dv.steamMode === 'flow' && dv.steamFlowMls != null) {
+        steam.flow = dv.steamFlowMls;
+        await persistSharedValue(STEAM_FLOW_LAST_VALUE_KEY, dv.steamFlowMls);
     }
-    if (wf.rinseData && dv.flushS != null) {
-        wf.rinseData = { ...wf.rinseData, duration: dv.flushS };
+    if (Object.keys(steam).length) patch.steamSettings = steam;
+
+    const water = {};
+    if (dv.hotWaterMode === 'vol' && dv.hotWaterMl != null) {
+        water.volume = dv.hotWaterMl;
+        await persistSharedValue(HOT_WATER_VOLUME_LAST_VALUE_KEY, dv.hotWaterMl);
+    }
+    if (dv.hotWaterMode === 'temp' && dv.hotWaterTempC != null) {
+        water.targetTemperature = dv.hotWaterTempC;
+        await persistSharedValue(HOT_WATER_TEMP_LAST_VALUE_KEY, dv.hotWaterTempC);
+    }
+    if (Object.keys(water).length) patch.hotWaterData = water;
+
+    if (dv.flushS != null) {
+        patch.rinseData = { duration: dv.flushS };
         await persistSharedValue(FLUSH_DURATION_LAST_VALUE_KEY, dv.flushS);
     }
+    return patch;
 }
 
 // Re-pull the workflow and update the left-rail controls — the same path used on
@@ -1154,7 +1157,7 @@ export async function clearDye2ContextOnDisable() {
         const set = Object.keys(DYE2_OWNED_CONTEXT).some(k => k !== 'extras' && context[k] != null)
             || Object.keys(DYE2_OWNED_CONTEXT.extras).some(k => extras[k] != null);
         if (!set) return false;
-        await updateWorkflow({ context: DYE2_OWNED_CONTEXT });
+        await updateWorkflow({ context: DYE2_OWNED_CONTEXT }, 'dye.clearOnDisable');
         logger.info('dyeStrip: cleared DYE2 workflow context');
         return true;
     } catch (err) {

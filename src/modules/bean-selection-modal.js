@@ -59,7 +59,7 @@ export async function openBeanSelectionModal({ onSaved } = {}) {
         batchSelect.disabled = true;
         status.textContent = getTranslation('Saving coffee for next shot…');
         try {
-            await updateWorkflow({ context });
+            await updateWorkflow({ context }, 'beans.select');
             if (token.active) { onSaved?.(context); dialog.close(); }
         } catch (_) { if (token.active) { save.disabled = false; beanSelect.disabled = false; batchSelect.disabled = false; status.textContent = getTranslation('Could not save coffee for next shot'); } }
     });
