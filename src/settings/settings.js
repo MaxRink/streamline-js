@@ -2143,7 +2143,7 @@ export function renderScreenSaverSettings() {
             </div>
 
             <div style="${grid}">
-                ${toggle('Show screen saver when the machine sleeps', 'Show screen saver when the machine sleeps', enabled && !blackSaver, 'window.setScreensaverEnabled')}
+                ${blackSaver ? '' : toggle('Show screen saver when the machine sleeps', 'Show screen saver when the machine sleeps', enabled, 'window.setScreensaverEnabled')}
                 ${select('screensaver-clock-format', 'Clock format', SCREENSAVER_CLOCK_FORMATS, clockFormat, 'window.setScreensaverClockFormat')}
                 ${toggle('Show date and time', 'Show date and time', showClock, 'window.setScreensaverShowClock', 'screensaver-show-clock')}
                 ${select('screensaver-date-format', 'Date format', SCREENSAVER_DATE_FORMATS, dateFormat, 'window.setScreensaverDateFormat')}
@@ -8238,6 +8238,10 @@ export async function initializeSettings({ initialMainCategory = null, initialCa
     };
 
     window.setBlackScreenSaver = function(enabled) {
+        // The Images|Black segment calls this on every tap, including a tap on the
+        // segment already selected. Writing screensaverEnabled below on a no-op tap
+        // would silently switch the saver back on for someone who had turned it off.
+        if (isBlackScreenSaver() === !!enabled) return;
         apiSetBlackScreenSaver(enabled);
         // Either/or: a black cover IS the screen saver, so switching it on turns
         // the image saver off. Switching it off hands the image saver back.

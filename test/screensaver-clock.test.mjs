@@ -190,8 +190,14 @@ test('saver style defaults to Images and Black keeps clock/date controls only', 
     assert.match(images, /id="saver-brightness-slider"/);
     assert.doesNotMatch(images, /id="brightness-(slider|number)"/);
 
+    // The enable toggle writes blackScreenSaver too, so leaving it on the Black
+    // panel gives two controls for the style: it renders off while a black saver
+    // is showing, and turning it on switches back to Images.
+    assert.match(images, /window\.setScreensaverEnabled/);
+
     const black = renderSaverSettings({}, { black: true });
     assert.match(black, /aria-pressed="true"\s+onclick="window.setBlackScreenSaver\(true\)"/);
+    assert.doesNotMatch(black, /window\.setScreensaverEnabled/);
     assert.doesNotMatch(black, /id="(?:screensaver-file-input|screensaver-cycle-seconds|saver-brightness-custom|saver-brightness-slider)"/);
     assert.doesNotMatch(black, /Choose Images|No custom images/);
     for (const id of ['screensaver-show-clock', 'screensaver-clock-format', 'screensaver-date-format', 'screensaver-clock-position']) {
@@ -214,6 +220,16 @@ test('custom saver brightness preserves zero and opt-out shows the effective def
     assert.match(automaticSlider, new RegExp(`value="${SAVER_BRIGHTNESS_DEFAULT}"`));
     assert.match(automaticSlider, /disabled/);
     assert.match(automatic, new RegExp(`id="saver-brightness-value"[^>]*>${SAVER_BRIGHTNESS_DEFAULT}%`));
+});
+
+test('the style segment ignores a tap on the mode already selected', () => {
+    // Every tap calls window.setBlackScreenSaver, so without this guard a tap on
+    // the selected segment rewrites screensaverEnabled and turns a saver the user
+    // had switched off back on.
+    const source = readFileSync(new URL('../src/settings/settings.js', import.meta.url), 'utf8');
+    const handler = source.match(/window\.setBlackScreenSaver = function[\s\S]*?\n    \};/)[0];
+    assert.match(handler, /if \(isBlackScreenSaver\(\) === !!enabled\) return;/);
+    assert.ok(handler.indexOf('return;') < handler.indexOf("localStorage.setItem('screensaverEnabled'"));
 });
 
 test('date format presets are locale-independent and fall back to the long form', () => {
