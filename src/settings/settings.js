@@ -3969,7 +3969,7 @@ function initLedPicker() {
         const c16 = ledRgbToColor16(color.rgb);
         ledZoneKeys(ledSelectedZone).forEach((k) => { if (ledState[k]) ledState[k][ledSelectedState] = c16; });
         ledUpdateSwatchesDom(color.hexString);
-        ledSchedulePut();
+        ledSchedulePreview();
     });
     ledPicker.on('input:end', () => ledCommitEdit());
 }
@@ -4041,7 +4041,7 @@ function ledPushPreview() {
     });
 }
 
-function ledSchedulePut() {
+function ledSchedulePreview() {
     if (ledPutTimer) clearTimeout(ledPutTimer);
     ledPutTimer = setTimeout(() => {
         ledPutTimer = null;
@@ -4057,7 +4057,7 @@ function ledSchedulePut() {
 // machine, which is what the Save/Reset pair on this page has always implied.
 function ledCommitEdit() {
     if (ledPutTimer) { clearTimeout(ledPutTimer); ledPutTimer = null; }
-    // Same late-write guard as ledSchedulePut: with multi-touch, input:end can
+    // Same late-write guard as ledSchedulePreview: with multi-touch, input:end can
     // fire AFTER an exit seam (one finger navigates while another still holds
     // the wheel) -- a late preview would survive that seam's clear.
     if (activeSettingsCategory !== 'ledstrip') return;
@@ -4094,7 +4094,7 @@ function ledRestoreStrip() {
 // Same restore as the Cancel/Save seams; it is a no-op when nothing is
 // pending, so firing on every popstate is safe. The settings DOM is being
 // torn down, so no category is active any more — dropping
-// activeSettingsCategory also disarms the late-write guards (ledSchedulePut,
+// activeSettingsCategory also disarms the late-write guards (ledSchedulePreview,
 // ledCommitEdit) and lets the cup-warmer poll self-stop on its next tick.
 // Module-level: registered once, not per initializeSettings call.
 window.addEventListener('popstate', () => {
