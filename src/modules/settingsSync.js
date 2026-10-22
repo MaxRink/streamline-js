@@ -13,6 +13,7 @@
 // push the key up. No new read API, no call-site changes.
 
 import { logger } from './logger.js';
+import { SAVER_BRIGHTNESS_KEY, SAVER_BRIGHTNESS_CUSTOM_KEY } from './saver-brightness.js';
 
 // Own namespace. NOT 'streamline' — profileManager treats that one as a
 // migration source and deletes keys out of it once they are imported.
@@ -44,6 +45,8 @@ export const SYNCED_KEYS = [
     'streamlineHelpHidden',
     'streamlineHelpLaunches',
     'screensaverEnabled',
+    SAVER_BRIGHTNESS_KEY,
+    SAVER_BRIGHTNESS_CUSTOM_KEY,
     'screensaverCycleSeconds',
     'screensaverClockFormat',
     'screensaverClockPosition',

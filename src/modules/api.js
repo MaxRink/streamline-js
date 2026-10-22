@@ -11,6 +11,11 @@ import { deriveDisplayAction, isScreensaverSuppressed } from './screensaver-poli
 import { splitNdjson, advanceFirmwareState, initialFirmwareState } from './firmware-progress.js';
 import { parseSse } from './derek-stream.js';
 import { selectedRecipeSteamTemp } from './dye-selection.js';
+import {
+    SAVER_BRIGHTNESS_KEY, SAVER_BRIGHTNESS_CUSTOM_KEY,
+    resolveSaverBrightness, parseSaverBrightnessSetting,
+} from './saver-brightness.js';
+export { SAVER_BRIGHTNESS_DEFAULT } from './saver-brightness.js';
 
 export let reaHostname = localStorage.getItem('reaHostname') || window.location.hostname;
 export const REA_PORT = 8080;
@@ -2802,10 +2807,6 @@ export async function getDisplayState() {
     }
 }
 
-/** Brightness used while the machine sleeps when "screen off" is switched off.
- *  Dim enough to read as asleep, bright enough to see the screensaver. */
-const SAVER_BRIGHTNESS_DEFAULT = 10;
-
 /** Black screen saver: a full black cover at brightness 0 instead of the image
  *  screensaver. Mutually exclusive with it -- the settings toggles enforce that --
  *  and OFF by default, so the image saver stays the out-of-box behaviour.
@@ -2823,8 +2824,27 @@ export function setBlackScreenSaver(enabled) {
     return !!enabled;
 }
 
+export function isCustomSaverBrightness() {
+    return localStorage.getItem(SAVER_BRIGHTNESS_CUSTOM_KEY) === 'true';
+}
+
+export function setCustomSaverBrightnessEnabled(enabled) {
+    localStorage.setItem(SAVER_BRIGHTNESS_CUSTOM_KEY, enabled ? 'true' : 'false');
+    return !!enabled;
+}
+
+export function setSaverBrightness(value) {
+    const level = resolveSaverBrightness({ custom: true, stored: value });
+    localStorage.setItem(SAVER_BRIGHTNESS_KEY, String(level));
+    return level;
+}
+
 export function getSaverBrightness() {
-    return isBlackScreenSaver() ? 0 : SAVER_BRIGHTNESS_DEFAULT;
+    if (isBlackScreenSaver()) return 0;
+    return resolveSaverBrightness(parseSaverBrightnessSetting(
+        localStorage.getItem(SAVER_BRIGHTNESS_CUSTOM_KEY),
+        localStorage.getItem(SAVER_BRIGHTNESS_KEY),
+    ));
 }
 
 export function dimDisplay() {
