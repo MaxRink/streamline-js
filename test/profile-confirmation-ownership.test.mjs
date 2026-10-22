@@ -13,7 +13,11 @@ function loadHarness(dependencies) {
             availableProfiles, logger, alert, showToast, sessionStorage,
             assignProfile, getTranslation, updateWorkflow, setActiveProfile,
             applyWorkflowToMainPageUI, loadPage, withSavedBrewTemp,
-            lastGrinderSetting, lastTargetDoseWeight, applySavedSteamSettings
+            lastGrinderSetting, lastTargetDoseWeight, applySavedSteamSettings,
+            // Defaulted so the existing cases stay as they were: an idle machine
+            // that never blocks. The brewing case overrides them.
+            profileSendBlocked = () => false, setPendingProfileSend = () => {},
+            currentMachineState = 'idle'
         } = dependencies;
         let selectedProfileKey = null;
         const FAV_COUNT = 5;
@@ -210,4 +214,33 @@ test('dose and grind fall back to the last ones set, yield to the recipe', async
     assert.deepEqual(steamApplied,
         [{}, { grinderSetting: '1.2', targetDoseWeight: 15 }, { targetDoseWeight: 0 }],
         'every confirm offers the profile metadata to the steam applier');
+});
+
+test('Confirm holds the switch instead of writing frames into a running shot', async () => {
+    const record = { profile: { title: 'A', target_weight: '36' } };
+    const held = [], toasts = [];
+    let sent = 0;
+    const harness = loadHarness({
+        availableProfiles: { a: record },
+        logger: { info() {}, error() {}, warn() {} },
+        alert() { throw new Error('must not alert'); },
+        showToast: m => toasts.push(m),
+        sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        assignProfile: async () => 'assigned',
+        getTranslation: k => k,
+        updateWorkflow: async () => { sent++; return { profile: { title: 'A' } }; },
+        setActiveProfile() {}, applyWorkflowToMainPageUI() {}, loadPage() {},
+        withSavedBrewTemp: p => p,
+        lastGrinderSetting: () => null, lastTargetDoseWeight: () => null,
+        applySavedSteamSettings: async () => {},
+        profileSendBlocked: state => state === 'espresso',
+        setPendingProfileSend: r => held.push(r),
+        currentMachineState: 'espresso',
+    });
+    harness.select('a');
+    await harness.handleConfirm();
+
+    assert.equal(sent, 0, 'Decaid writes the frame table on any workflow profile change');
+    assert.deepEqual(held, [record], 'the switch must be held, not dropped');
+    assert.equal(toasts.length, 1);
 });

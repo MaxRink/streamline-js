@@ -2902,47 +2902,19 @@ function finishSaveSuccess(id) {
 // loaded stayed invisible on the machine until the user re-picked it in the
 // selector. Push it here instead: saving loads the profile.
 //
-// Never during an espresso. Decaid's WorkflowDeviceSync listens on the workflow
-// controller and calls De1.setProfile the moment the profile changes, with no
-// machine-state check of its own (workflow_device_sync.dart _onChange/_drain),
-// and setProfile rewrites the header, every step frame and the tail
-// (unified_de1.profile.dart _sendProfile). Mid-shot that replaces the frames the
-// machine is executing. An unknown state does not block: it means the snapshot
-// socket is down, which is also a machine we cannot be writing a shot to.
+// sendProfileRecordToMachine holds it instead of sending when the machine is
+// mid-shot -- see profile-send-gate.js for why writing then is unsafe -- and
+// app.js sends what was held once the shot ends.
 async function pushSavedProfileToMachine(saved) {
     if (!saved?.profile) return;
-    try {
-        const { updateWorkflow, currentMachineState, MachineState } = await import('./api.js');
-        if (currentMachineState === MachineState.ESPRESSO) {
-            showToast(getTranslation('Saved. The machine is brewing, so it keeps the loaded profile.'), 4000, 'info');
-            return;
-        }
-        const { withSavedBrewTemp, setActiveProfile, lastGrinderSetting,
-                lastTargetDoseWeight, DEFAULT_DOSE_WEIGHT } = await import('./profileManager.js');
-        const meta = saved.metadata || {};
-        // Same fallback chains as the selector's Confirm and the favourite
-        // buttons (profile_selector.js, profileManager applyProfileToMachine) --
-        // keep the three in step. Dropping the context would reset the dose,
-        // yield and grind the user set for this profile.
-        const targetYield = meta.targetYield ?? parseFloat(saved.profile.target_weight);
-        await updateWorkflow({
-            profile: withSavedBrewTemp(saved.profile, meta),
-            context: {
-                targetDoseWeight: meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT,
-                targetYield: Number.isFinite(targetYield) ? targetYield : 0,
-                grinderSetting: meta.grinderSetting ?? lastGrinderSetting() ?? null,
-            },
-        });
-        // The machine now runs this record, so tile edits belong to its id --
-        // a fork mints a new one, and without this they would keep writing to
-        // the retired record's overrides.
-        setActiveProfile(saved.id);
-    } catch (err) {
-        // The save itself succeeded. Leaving the machine on the previous profile
-        // is exactly what happened before this existed, so report and carry on
-        // rather than turning a good save into a failed one.
-        console.warn('Profile saved but not sent to the machine:', err);
+    const { sendProfileRecordToMachine } = await import('./profileManager.js');
+    const result = await sendProfileRecordToMachine(saved);
+    if (result === 'deferred') {
+        showToast(getTranslation('The machine is brewing — this profile loads when the shot ends.'), 4000, 'info');
     }
+    // 'failed' is logged by the send itself. The save succeeded and the machine
+    // simply stays on the previous profile, which is what happened before this
+    // existed -- not worth turning a good save into a failed one.
 }
 
 // Save routing for a profile opened from a local-only draft (see

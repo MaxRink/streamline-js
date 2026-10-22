@@ -541,7 +541,12 @@ export function connectWebSocket(onData, onReconnect) {
             
             previousMachineState = currentMachineState;
             currentMachineState = stateValue;
-            if (previousMachineState === 'espresso' && stateValue !== 'espresso') espressoEndedAt = Date.now();
+            if (previousMachineState === 'espresso' && stateValue !== 'espresso') {
+                espressoEndedAt = Date.now();
+                // A profile switch asked for during the shot was held rather than
+                // written into the frames the machine was running. It can go out now.
+                document.dispatchEvent(new Event('streamline:espresso-end'));
+            }
             // Plugin overlays that asked for it close when a shot starts (see `closeOnShot`).
             if (stateValue === 'espresso' && previousMachineState !== 'espresso') document.dispatchEvent(new Event('streamline:espresso-start'));
             // Keep the last frame so pages that need a live reading (the

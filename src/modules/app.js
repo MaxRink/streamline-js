@@ -2167,6 +2167,20 @@ async function initializeDe1Connection() {
     }
 }
 
+// A profile switch asked for during a shot is held rather than written into the
+// frames the machine is running (profile-send-gate.js). Send it when the shot
+// ends. Bound once: initMainPageOnce is the only caller.
+let pendingProfileSendBound = false;
+function bindPendingProfileSendFlush() {
+    if (pendingProfileSendBound) return;
+    pendingProfileSendBound = true;
+    document.addEventListener('streamline:espresso-end', () => {
+        import('./profileManager.js')
+            .then(m => m.flushPendingProfileSend())
+            .catch(err => logger.warn('Could not send the held profile:', err));
+    });
+}
+
 // One-time removal of the Visualizer login the skin used to keep in
 // localStorage. Guarded by an IndexedDB flag so it runs once per device; the
 // flag is set only after the removals, so a failure retries on the next boot.
@@ -2217,6 +2231,7 @@ async function initMainPageOnce() {
         initMilkProbeSensorPolling();
         connectShotSettingsWebSocket(handleShotSettingsData);
         void purgeLegacyVisualizerCredentials().catch(() => {});
+        bindPendingProfileSendFlush();
         // Plugin-declared dashboard surfaces; a no-op when no plugin answers `skin`.
         import('./plugin-surfaces-ui.js').then(m => m.initPluginSurfaces())
             .catch(error => logger.warn('Plugin surfaces failed to start:', error));

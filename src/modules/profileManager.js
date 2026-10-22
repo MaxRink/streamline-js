@@ -10,6 +10,7 @@ import { resolveProfileKeyByTitle } from './active-profile.js';
 import { planAssignmentsLoad, mayPersistAutoPopulate } from './favorites-load.js';
 import { loadProfileOverrides, saveProfileOverride, clearProfileOverride, applyOverridesToRecords } from './profile-overrides.js';
 import { applyFlowCalibrationForProfile } from './flow-calibration.js';
+import { profileSendBlocked, setPendingProfileSend, clearPendingProfileSend } from './profile-send-gate.js';
 import { profileAtBrewTemp } from './brew-temp.js';
 import { profileFingerprint } from './dye-selection.js';
 
@@ -679,6 +680,60 @@ export function lastTargetDoseWeight() {
     } catch { return null; }
 }
 
+// The one way a profile record reaches the machine. Every entry point -- the
+// favourite buttons, the selector's Confirm, the editor's SAVE -- goes through
+// here so the mid-shot guard and the saved dose/yield/grind/brew-temp folds
+// cannot drift apart again (they were three copies, see the stale
+// "applyProfileToMachine" comments this replaces).
+//
+// Returns 'sent', 'deferred' (held until the shot ends) or 'failed'.
+export async function sendProfileRecordToMachine(record) {
+    if (!record?.profile) return 'failed';
+    const { currentMachineState } = await import('./api.js');
+    if (profileSendBlocked(currentMachineState)) {
+        setPendingProfileSend(record);
+        return 'deferred';
+    }
+    const meta = record.metadata || {};
+    const parsedYield = meta.targetYield ?? parseFloat(record.profile.target_weight);
+    const targetYield = Number.isFinite(parsedYield) ? parsedYield : 0;
+    // The UI yield override lives in metadata, but a non-autonomous machine
+    // stops on profile.target_weight -- fold it into a copy so the sent profile
+    // matches the number the user set, and fold a saved brew temp the same way.
+    const profile = withSavedBrewTemp(
+        targetYield > 0 ? { ...record.profile, target_weight: targetYield } : record.profile, meta);
+    try {
+        await updateWorkflow({
+            profile,
+            context: {
+                targetDoseWeight: meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT,
+                targetYield,
+                grinderSetting: meta.grinderSetting ?? lastGrinderSetting() ?? null,
+            },
+        });
+    } catch (err) {
+        logger.warn('Could not send profile to the machine:', err);
+        return 'failed';
+    }
+    // The machine runs this record now, so tile edits belong to its id.
+    clearPendingProfileSend();
+    setActiveProfile(record.id);
+    return 'sent';
+}
+
+// Called when the machine leaves espresso. Sends whatever the user asked for
+// during the shot; nothing held means nothing to do.
+export async function flushPendingProfileSend() {
+    const { takePendingProfileSend } = await import('./profile-send-gate.js');
+    const held = takePendingProfileSend();
+    if (!held) return 'idle';
+    const result = await sendProfileRecordToMachine(held);
+    if (result === 'sent') {
+        showToast(`${getTranslation('Profile Set')}: ${translateProfileTitle(held.profile.title)}`, 3000, 'success');
+    }
+    return result;
+}
+
 export async function saveContextToActiveProfile(fields) {
     // Before the active-profile guard below: a number the user typed is worth
     // remembering as the fallback even on the path where there is no profile to
@@ -766,7 +821,7 @@ export async function loadProfileForWake(profileId) {
     const grinderSetting = meta.grinderSetting ?? lastGrinderSetting();
     const parsedYield = parseFloat(meta.targetYield ?? profile.target_weight);
     const targetYield = isNaN(parsedYield) ? 0 : parsedYield;
-    // Same fold as applyProfileToMachine: a non-autonomous machine stops on
+    // Same fold as sendProfileRecordToMachine: a non-autonomous machine stops on
     // profile.target_weight, so a yield override has to reach the sent profile,
     // and a saved brew temp has to survive the wake.
     const profileToSend = withSavedBrewTemp(
@@ -941,6 +996,15 @@ async function handleProfileClick(index) {
         logger.info(`Tap on unassigned favorite button ${index}. Navigating to profile selector.`);
         sessionStorage.setItem('pendingAssignmentIndex', index);
         loadPage('src/profiles/profile_selector.html');
+        return;
+    }
+
+    // Never write profile frames into a shot the machine is running -- see
+    // profile-send-gate.js. Hold the switch; app.js sends it when the shot ends.
+    const { currentMachineState } = await import('./api.js');
+    if (profileSendBlocked(currentMachineState)) {
+        setPendingProfileSend(availableProfiles[favoriteAssignments[index]]);
+        showToast(getTranslation('The machine is brewing — this profile loads when the shot ends.'), 4000, 'info');
         return;
     }
 
