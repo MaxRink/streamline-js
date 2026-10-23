@@ -348,11 +348,10 @@ function lift(module, patterns) {
 }
 
 // ── Recipe-cell long-press → DYE2 recipe-edit deep link (dyeStrip.js) ───────
-// Long-pressing a recipe cell should land the user directly on that recipe in
-// DYE2, not DYE2's dashboard root -- recipe-edit.ts reads the same
-// 'dye_editRecipeIdx' sessionStorage key dashboard.ts writes before its own
-// "Recipes" settings entry, and recipe ids are the fixed slots '1'..'5', so
-// id-1 is the reliable index (not the cell's filtered/sorted position).
+// Current DYE2 recipe-edit opens a recipe by its opaque id ('dye_editRecipeId').
+// Older builds read 'dye_editRecipeIdx' (ids '1'..'5', index = id - 1), which is
+// still set when the id has that shape. A blank cell clears the id key so
+// recipe-edit starts a new recipe.
 {
     const body = lift('dyeStrip.js', [
         /function editRecipe\(recipe\) \{[\s\S]*?\r?\n\}/,
@@ -363,29 +362,35 @@ function lift(module, patterns) {
         const opened = [];
         const fn = new Function('sessionStorage', 'openPluginOverlay', `${body}\nreturn editRecipe;`);
         const editRecipe = fn(
-            { setItem: (k, v) => { store[k] = v; } },
+            { setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } },
             (page) => opened.push(page),
         );
         return { editRecipe, store, opened };
     };
 
-    test('recipe id is the slot index plus one -- id "1" maps to index 0', () => {
+    test('an opaque id is passed through and sets no legacy index', () => {
         const { editRecipe, store, opened } = build();
-        editRecipe({ id: '1' });
-        assert.equal(store.dye_editRecipeIdx, '0');
+        editRecipe({ id: 'rcp_ab12' });
+        assert.equal(store.dye_editRecipeId, 'rcp_ab12');
+        assert.equal(store.dye_editRecipeIdx, undefined);
         assert.deepEqual(opened, ['recipe-edit']);
     });
 
-    test('recipe id "5" maps to index 4', () => {
+    test('a legacy id "1" also sets index 0 and "5" index 4 for an older DYE2', () => {
         const { editRecipe, store } = build();
+        editRecipe({ id: '1' });
+        assert.equal(store.dye_editRecipeId, '1');
+        assert.equal(store.dye_editRecipeIdx, '0');
         editRecipe({ id: '5' });
         assert.equal(store.dye_editRecipeIdx, '4');
     });
 
-    test('a missing or non-numeric id falls back to index 0, never negative', () => {
+    test('a blank cell clears the id (new recipe) and keeps the slot index for an older DYE2', () => {
         const { editRecipe, store } = build();
-        editRecipe({});
-        assert.equal(store.dye_editRecipeIdx, '0');
+        store.dye_editRecipeId = 'stale';
+        editRecipe({ id: '3', blank: true });
+        assert.equal(store.dye_editRecipeId, undefined);
+        assert.equal(store.dye_editRecipeIdx, '2');
     });
 }
 

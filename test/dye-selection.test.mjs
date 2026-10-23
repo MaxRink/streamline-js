@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
     parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp, recipeStripCells, favStripCells,
-    recipeIdPatch,
+    recipeIdPatch, selectionModified, recipeCellState,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -170,6 +170,63 @@ test('recipeStripCells puts an out-of-range id into the first blank, and a dupli
     const dup = recipeStripCells([{ id: '2', title: 'first' }, { id: '2', title: 'second' }]);
     assert.equal(dup[1].recipe.title, 'first');
     assert.equal(dup.filter(c => c.recipe).length, 1, 'the duplicate is dropped, not placed twice');
+});
+
+test('recipeStripCells places opaque-id recipes by stripSlot and leaves blanks', () => {
+    const cells = recipeStripCells([
+        { id: 'rcp_b', stripSlot: 4 }, { id: 'rcp_a', stripSlot: 1 }, { id: 'rcp_c', stripSlot: 4 },
+    ]);
+    assert.deepEqual(recipeIds(cells), ['rcp_a', null, null, 'rcp_b', null]);
+});
+
+test('recipeStripCells keeps a null-stripSlot row off the strip and does not back-fill it', () => {
+    const cells = recipeStripCells([{ id: 'x', stripSlot: null }, { id: 'y', stripSlot: 2 }, { id: 'z' , stripSlot: 9 }]);
+    assert.deepEqual(recipeIds(cells), [null, 'y', null, null, null]);
+});
+
+test('recipeStripCells: hidden stays a blank under stripSlot', () => {
+    const cells = recipeStripCells([{ id: 'a', stripSlot: 1, showOnStreamlineDashboard: false }, { id: 'b', stripSlot: 2 }]);
+    assert.deepEqual(recipeIds(cells), [null, 'b', null, null, null]);
+});
+
+test('recipeStripCells falls back to ids only when no row carries a stripSlot key', () => {
+    assert.deepEqual(recipeIds(recipeStripCells([{ id: '2' }, { id: '5' }])), [null, '2', null, null, '5']);
+    // one row with the key (even null) means a stripSlot-aware DYE2: ids mean nothing
+    assert.deepEqual(recipeIds(recipeStripCells([{ id: '2', stripSlot: null }, { id: '3' }])), [null, null, null, null, null]);
+    assert.deepEqual(recipeIds(recipeStripCells([{ id: '2', stripSlot: 4 }, { id: '3' }])), [null, null, null, '2', null]);
+});
+
+test('a suggested recipe is placed by stripSlot and marked as a proposal', () => {
+    const cells = recipeStripCells([{ id: 's', stripSlot: 3, suggested: true }]);
+    assert.equal(cells[2].recipe.id, 's');
+    assert.deepEqual(recipeCellState(cells[2].recipe, null, false), { active: false, suggested: true, marker: '' });
+    assert.equal(recipeCellState({ id: 'p', stripSlot: 1 }, null, false).suggested, false);
+    assert.equal(recipeCellState({ id: 's', suggested: false }, null, false).suggested, false);
+});
+
+test('modified puts a * on the highlighted recipe cell only', () => {
+    const recipes = [{ id: 'a', stripSlot: 1 }, { id: 'b', stripSlot: 2 }];
+    const sel = { kind: 'recipe', id: 'a', modified: true };
+    const modified = selectionModified(sel, { recipes });
+    assert.equal(modified, true);
+    assert.equal(recipeCellState(recipes[0], 'a', modified).marker, '*');
+    assert.equal(recipeCellState(recipes[0], 'a', modified).active, true);
+    assert.equal(recipeCellState(recipes[1], 'a', modified).marker, '');
+    assert.equal(recipeCellState(recipes[0], 'a', false).marker, '');
+});
+
+test('selectionModified ignores favourites, unflagged, unknown and null selections', () => {
+    const recipes = [{ id: 'a' }];
+    assert.equal(selectionModified({ kind: 'recipe', id: 'a', modified: false }, { recipes }), false);
+    assert.equal(selectionModified({ kind: 'favourite', id: 'a', modified: true }, { recipes }), false);
+    assert.equal(selectionModified({ kind: 'recipe', id: 'gone', modified: true }, { recipes }), false);
+    assert.equal(selectionModified(null, { recipes }), false);
+});
+
+test('a derived recent (kind favourite, auto: true) highlights its favourites-strip cell like a saved favourite', () => {
+    const favs = [{ id: 'f1', favSlot: 0 }, { id: 'r1', auto: true, favSlot: 1 }];
+    assert.equal(armedSelectionId({ kind: 'favourite', id: 'r1', auto: true, modified: false }, { recipes: [], favs }), 'r1');
+    assert.equal(favStripCells(favs).find(c => c.fav.id === 'r1').fav.id, 'r1');
 });
 
 test('favStripCells sorts by favSlot then capturedAt', () => {

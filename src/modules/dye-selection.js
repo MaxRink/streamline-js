@@ -182,22 +182,38 @@ export function selectedRecipeSteamTemp(sel, recipes) {
 }
 
 /**
- * The R strip as fixed positional slots, like the profile strip: recipe ids are the
- * slots '1'..'5' (DYE2 KV_CONTRACT), so a recipe sits at its own id's position and
- * clearing one (showOnStreamlineDashboard:false) leaves a blank in place instead of
- * shifting the others left. Visible recipes with an id outside 1..5 (legacy data)
- * fill the remaining blanks in order. Returns [{ slot: '1'..'5', recipe: obj|null }].
+ * The R strip as fixed positional slots, like the profile strip. DYE2 recipe ids are
+ * opaque; a recipe's position is its `stripSlot` (1..5, KV_CONTRACT `recipes[]`), and a
+ * row whose stripSlot is null/absent/out of range is saved in the library only and stays
+ * off the strip. A cleared recipe (showOnStreamlineDashboard:false) leaves a blank in
+ * place; nothing shifts left. The first row for a slot wins. There is no "strays fill
+ * the blanks" step in this mode: DYE2 guarantees one recipe per slot, and a null slot
+ * means "not on the strip", so back-filling would put library rows on it.
+ *
+ * Compat: a DYE2 older than stripSlot writes no `stripSlot` key on any row and uses
+ * ids '1'..'5' as the slots. When no row carries the key at all, the old id-based
+ * placement (strays fill remaining blanks) applies, so a mid-upgrade tablet is not blank.
+ * (Key absent, not "no numeric value": a new DYE2 with every slot cleared writes nulls and
+ * must show five blanks, not fall back to ids.)
+ * Returns [{ slot: '1'..'5', recipe: obj|null }].
  */
 export function recipeStripCells(recipes, count = 5) {
     const cells = Array.from({ length: count }, (_, i) => ({ slot: String(i + 1), recipe: null }));
-    const visible = (Array.isArray(recipes) ? recipes : [])
-        .filter(r => r && typeof r === 'object' && r.showOnStreamlineDashboard !== false);
+    const rows = (Array.isArray(recipes) ? recipes : []).filter(r => r && typeof r === 'object');
+    const visible = rows.filter(r => r.showOnStreamlineDashboard !== false);
+    const legacy = !rows.some(r => r.stripSlot !== undefined);
     const strays = [];
     for (const recipe of visible) {
-        const n = parseInt(recipe.id, 10);
-        const cell = String(recipe.id) === String(n) ? cells[n - 1] : undefined;
-        if (!cell) strays.push(recipe);
-        else if (!cell.recipe) cell.recipe = recipe;
+        let cell;
+        if (legacy) {
+            const n = parseInt(recipe.id, 10);
+            cell = String(recipe.id) === String(n) ? cells[n - 1] : undefined;
+            if (!cell) { strays.push(recipe); continue; }
+        } else {
+            const n = typeof recipe.stripSlot === 'number' ? recipe.stripSlot : NaN;
+            cell = Number.isInteger(n) ? cells[n - 1] : undefined;
+        }
+        if (cell && !cell.recipe) cell.recipe = recipe;
     }
     for (const recipe of strays) {
         const blank = cells.find(c => !c.recipe);
@@ -205,6 +221,26 @@ export function recipeStripCells(recipes, count = 5) {
         blank.recipe = recipe;
     }
     return cells;
+}
+
+/**
+ * Does the mirrored DYE2 selection say the highlighted recipe has drifted from its
+ * stored values (`modified: true`, dye2#36)? Only a recipe can be modified -- a
+ * favourite or recent that drifts is deselected by DYE2 -- and only while the
+ * selection still names a row we hold.
+ */
+export function selectionModified(sel, { recipes }) {
+    if (!sel || sel.kind !== 'recipe' || sel.modified !== true) return false;
+    return armedSelectionId(sel, { recipes, favs: [] }) != null;
+}
+
+/**
+ * What a recipe cell shows: highlighted or not, a DYE2 proposal (`suggested: true`, not
+ * yet a saved recipe), and the `*` marker -- on the highlighted cell only, when modified.
+ */
+export function recipeCellState(recipe, activeId, modified) {
+    const active = recipe?.id != null && recipe.id === activeId;
+    return { active, suggested: recipe?.suggested === true, marker: active && modified ? '*' : '' };
 }
 
 /** Favourites in strip order: favSlot first, then capturedAt. Hidden ones included. */
