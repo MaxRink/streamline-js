@@ -124,7 +124,7 @@ function buildSave({ status = 200, json = { saved: true }, updated = false } = {
     const saveBody = lift([/async function saveChanges\([\s\S]*?\r?\n\}/]);
     const api = new Function(
         'PLUGIN_BASE', 'fetch', 'logger', 'showToast', 'recipeLabel', 'favLabel', 'loadDyeStripData', 'renderStrip', 'currentMode', 'updateDye2Now',
-        `${saveBody}\nreturn { saveChanges };`
+        `let activeModified = true;\n${saveBody}\nreturn { saveChanges, modified: () => activeModified };`
     )(
         '/p',
         async (url, opts) => { state.posts.push({ url, opts }); return { status, ok: status >= 200 && status < 300, json: async () => json }; },
@@ -146,6 +146,7 @@ test('saveChanges reloads the caches and re-renders when DYE2 saved something', 
     assert.equal(state.loads, 1);
     assert.deepEqual(state.renders, ['R']);
     assert.equal(state.toasts[0].msg, 'A updated');
+    assert.equal(api.modified(), false, 'the stale * is cleared after a save');
 });
 
 test('saveChanges with saved:false leaves the caches alone', async () => {
@@ -154,6 +155,7 @@ test('saveChanges with saved:false leaves the caches alone', async () => {
     assert.equal(state.loads, 0);
     assert.deepEqual(state.renders, []);
     assert.equal(state.toasts[0].msg, 'No changes to save');
+    assert.equal(api.modified(), true, 'nothing was written, so the * stays');
 });
 
 test('saveChanges on a DYE2 without /record asks for an update', async () => {

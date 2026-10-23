@@ -157,6 +157,11 @@ async function saveChanges(kind, item, retried = false) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await res.json().catch(() => null);
         if (body && body.saved) {
+            // DYE2 wrote the dial-in onto the item, so it now matches the live workflow: the
+            // `*` is stale. Cleared locally rather than re-read from DYE2's selection route
+            // (no extra round trip, and that route may not have caught up yet). Only on
+            // saved:true -- saved:false means nothing moved and the drift is still real.
+            activeModified = false;
             // The caches still hold the pre-save values; reapplying a cell would use them.
             await loadDyeStripData().catch(e => logger.warn('dyeStrip: reload after save failed', e));
             if (currentMode !== 'P') renderStrip(currentMode);
@@ -644,8 +649,15 @@ function isSameOrigin(url) {
     }
 }
 
-export function openPluginOverlay(page) {
+// `params` adds query params (e.g. { id }) next to `return`. They travel in the URL because
+// sessionStorage is per-origin: in the cross-origin fallback below DYE2 cannot see ours.
+export function openPluginOverlay(page, params) {
     const pluginUrl = `${PLUGIN_BASE}/${page}`;
+    const query = (returnTo) => {
+        const q = new URLSearchParams({ return: returnTo });
+        for (const [k, v] of Object.entries(params || {})) q.set(k, String(v));
+        return q.toString();
+    };
     const ret = sentinelReturnUrl();
 
     // Cross-origin (dev): iframe would be blocked → full-page navigation instead.
@@ -658,7 +670,7 @@ export function openPluginOverlay(page) {
             if (parked) sessionStorage.setItem(SELECTION_KEY, parked);
             else sessionStorage.removeItem(SELECTION_KEY);
         } catch (e) { /* private mode: selection simply does not survive */ }
-        window.location.href = `${pluginUrl}?return=${encodeURIComponent(window.location.href)}`;
+        window.location.href = `${pluginUrl}?${query(window.location.href)}`;
         return;
     }
 
@@ -691,7 +703,7 @@ export function openPluginOverlay(page) {
         document.body.appendChild(overlay);
     }
     const frame = document.getElementById('dye-plugin-frame');
-    frame.src = `${pluginUrl}?return=${encodeURIComponent(ret)}`;
+    frame.src = `${pluginUrl}?${query(ret)}`;
     overlay.style.display = 'flex';
 }
 
@@ -710,8 +722,9 @@ function closePluginOverlay(refresh) {
 // a blank cell has no row, so the key is cleared and recipe-edit starts a new recipe
 // (its header tabs pick the slot). Older DYE2 builds read `dye_editRecipeIdx`, the
 // position of the recipe in a list of ids '1'..'5', so that key is still set when the
-// id has that shape (harmless to a newer DYE2). Same-origin only: in the cross-origin
-// dev fallback these keys live on a different origin than recipe-edit.
+// id has that shape (harmless to a newer DYE2). The sessionStorage keys only reach DYE2
+// when it shares our origin; the page is normally opened on the bridge origin, so the
+// real handoff is the URL: `?id=<recipeId>` opens that recipe, `?new=1` starts a blank one.
 function editRecipe(recipe) {
     try {
         if (recipe.blank) sessionStorage.removeItem('dye_editRecipeId');
@@ -720,7 +733,7 @@ function editRecipe(recipe) {
         if (String(recipe.id) === String(n) && n >= 1 && n <= 5) sessionStorage.setItem('dye_editRecipeIdx', String(n - 1));
         else sessionStorage.removeItem('dye_editRecipeIdx');
     } catch (e) { /* private mode */ }
-    openPluginOverlay('recipe-edit');
+    openPluginOverlay('recipe-edit', recipe.blank ? { new: 1 } : { id: recipe.id });
 }
 
 // Same idea for a favourite: jump to DYE2's own auto-fav-edit screen, which has
