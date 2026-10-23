@@ -133,6 +133,9 @@ function openCellMenu(btn, edit, kind, item) {
     openContextMenu(btn, [
         { label: getTranslation('Edit in DYE2'), onSelect: edit },
         ...(selected ? [{ label: getTranslation('Save changes'), onSelect: () => saveChanges(kind, item) }] : []),
+        // Saves the live workflow as a new recipe, independent of the selection. R strip only: a
+        // new recipe is invisible from the F strip.
+        ...(kind === 'recipe' ? [{ label: getTranslation('Save to recipes'), onSelect: () => saveToRecipes() }] : []),
         { divider: true },
         { label: getTranslation('Clear button'), danger: true, onSelect: () => clearCell(kind, item) },
     ]);
@@ -163,6 +166,35 @@ async function saveChanges(kind, item, retried = false) {
     } catch (e) {
         logger.error('dyeStrip: save changes failed', e);
         showToast(`Could not save to ${label}`, 2400, 'error');
+    }
+}
+
+// Save what is on the machine now as a new recipe. DYE2 picks the name and the lowest free
+// slot (POST save-recipe, empty body); it answers 409 when all five slots are taken.
+async function saveToRecipes(retried = false) {
+    try {
+        const res = await fetch(`${PLUGIN_BASE}/save-recipe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        if (res.status === 404) { // an older DYE2 has no such endpoint
+            if (!retried && await updateDye2Now()) return saveToRecipes(true);
+            showToast('Update DYE2 to save recipes', 2400, 'info');
+            return;
+        }
+        if (res.status === 409) {
+            showToast('All recipe slots are full. Clear a recipe first', 3000, 'info');
+            return;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json().catch(() => null);
+        await loadDyeStripData().catch(e => logger.warn('dyeStrip: reload after save failed', e));
+        if (currentMode !== 'P') renderStrip(currentMode);
+        showToast(body && body.name ? `Saved as ${body.name}` : 'Saved as a recipe', 2000, 'info');
+    } catch (e) {
+        logger.error('dyeStrip: save to recipes failed', e);
+        showToast('Could not save recipe', 2400, 'error');
     }
 }
 
@@ -238,7 +270,8 @@ export function renderStrip(mode) {
         // place, and a tap on a blank opens DYE2's recipe editor.
         recipeStripCells(recipeCache).forEach(({ slot, recipe }) => {
             if (!recipe) {
-                strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true })));
+                strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true }),
+                    btn => openContextMenu(btn, [{ label: getTranslation('Save to recipes'), onSelect: () => saveToRecipes() }])));
                 return;
             }
             const { active, marker } = recipeCellState(recipe, activeItemId, activeModified);

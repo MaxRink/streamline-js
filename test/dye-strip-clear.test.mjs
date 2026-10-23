@@ -172,6 +172,70 @@ test('saveChanges retries once after DYE2 auto-updated', async () => {
     assert.equal(state.posts.length, 2, 'one retry, no loop');
 });
 
+test('Save to recipes is in the recipe cell menu, between Save changes and the divider, and on blank R cells', () => {
+    const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const menu = source.slice(source.indexOf('function openCellMenu('));
+    const body = menu.slice(0, menu.indexOf('\n}\n'));
+    assert.ok(/kind === 'recipe' \? \[\{ label: getTranslation\('Save to recipes'\)/.test(body), 'recipe cells only, translated');
+    assert.ok(body.indexOf("'Save changes'") < body.indexOf("'Save to recipes'") && body.indexOf("'Save to recipes'") < body.indexOf('divider'),
+        'after Save changes, before the divider');
+    assert.ok(!/Save to recipes[\s\S]*dye2RecordsDialIn/.test(body), 'not gated on dial-in recording');
+    assert.ok(/makeCell\('', CELL_IDLE, \(\) => editRecipe\(\{ id: slot, blank: true \}\),\s*btn => openContextMenu\(btn, \[\{ label: getTranslation\('Save to recipes'\)/.test(source),
+        'a blank R cell offers it too');
+});
+
+function buildSaveRecipe({ status = 200, json = { id: 'r1', name: 'Turbo Ristretto' }, updated = false } = {}) {
+    const state = { toasts: [], loads: 0, renders: [], posts: [], updates: 0 };
+    const fnBody = lift([/async function saveToRecipes\([\s\S]*?\r?\n\}/]);
+    const api = new Function(
+        'PLUGIN_BASE', 'fetch', 'logger', 'showToast', 'loadDyeStripData', 'renderStrip', 'currentMode', 'updateDye2Now',
+        `${fnBody}\nreturn { saveToRecipes };`
+    )(
+        '/p',
+        async (url, opts) => { state.posts.push({ url, opts }); return { status, ok: status >= 200 && status < 300, json: async () => json }; },
+        { info() {}, error() {}, warn() {} },
+        (msg, _d, type) => state.toasts.push({ msg, type }),
+        async () => { state.loads++; },
+        (m) => state.renders.push(m),
+        'R',
+        async () => { state.updates++; return updated; },
+    );
+    return { api, state };
+}
+
+test('saveToRecipes posts an empty body, reloads, re-renders and toasts the returned name', async () => {
+    const { api, state } = buildSaveRecipe();
+    await api.saveToRecipes();
+    assert.equal(state.posts[0].url, '/p/save-recipe');
+    assert.equal(state.posts[0].opts.method, 'POST');
+    assert.deepEqual(JSON.parse(state.posts[0].opts.body), {});
+    assert.equal(state.loads, 1);
+    assert.deepEqual(state.renders, ['R']);
+    assert.equal(state.toasts[0].msg, 'Saved as Turbo Ristretto');
+});
+
+test('saveToRecipes 409 says the slots are full and changes nothing', async () => {
+    const { api, state } = buildSaveRecipe({ status: 409, json: { error: 'full', taken: [1, 2, 3, 4, 5] } });
+    await api.saveToRecipes();
+    assert.match(state.toasts[0].msg, /slots are full/);
+    assert.equal(state.loads, 0);
+    assert.deepEqual(state.renders, []);
+});
+
+test('saveToRecipes 404 tries an update once, then asks for one; other failures toast an error', async () => {
+    let r = buildSaveRecipe({ status: 404 });
+    await r.api.saveToRecipes();
+    assert.equal(r.state.updates, 1);
+    assert.equal(r.state.posts.length, 1);
+    assert.equal(r.state.toasts[0].msg, 'Update DYE2 to save recipes');
+    r = buildSaveRecipe({ status: 404, updated: true });
+    await r.api.saveToRecipes();
+    assert.equal(r.state.posts.length, 2, 'one retry, no loop');
+    r = buildSaveRecipe({ status: 502 });
+    await r.api.saveToRecipes();
+    assert.equal(r.state.toasts[0].type, 'error');
+});
+
 // Legacy auto-save suppression: a depth counter, so overlapping applies keep the echo of the
 // newest one from being written onto the previous item.
 const suppressBody = lift([
