@@ -121,12 +121,21 @@ export const WORKFLOW_WRITERS = {
 
     // --- DYE2 ---------------------------------------------------------------
     // extras.dye.recipeId is DYE2's alone: any other apply writes null.
+    // applyStoredWorkflow copies the WHOLE stored context, so every key DYE2 puts in a
+    // recipe's or favourite's `workflow.context` has to be declared here or
+    // assertDeclaredFields throws before the PUT and the apply silently does nothing
+    // (dye2 bug 5: a recipe carrying a grinder applied neither workflow nor variables).
+    // The set below is what dev-api.ts buildRecipeWorkflow / buildFavouriteWorkflow write.
+    // `context.basket` is kept for legacy rows; DYE2 itself writes extras.basketId/Name.
     'dye.applyFavourite': [
         'profile',
         'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting',
         'context.extras.rpm', 'context.extras.dye',
         'context.coffeeName', 'context.coffeeRoaster', 'context.beanBatchId',
         'context.baristaName', 'context.drinkerName', 'context.basket',
+        'context.grinderId', 'context.grinderModel',
+        'context.extras.basketId', 'context.extras.basketName',
+        'context.roastDate', 'context.extras.note',
     ],
     'dye.applyRecipe': [
         'profile',
@@ -134,6 +143,8 @@ export const WORKFLOW_WRITERS = {
         'context.extras.rpm', 'context.extras.dye',
         'context.coffeeName', 'context.coffeeRoaster', 'context.beanBatchId',
         'context.baristaName', 'context.drinkerName', 'context.basket',
+        'context.grinderId', 'context.grinderModel',
+        'context.extras.basketId', 'context.extras.basketName',
         'steamSettings.targetTemperature', 'steamSettings.duration', 'steamSettings.flow',
         'hotWaterData.targetTemperature', 'hotWaterData.volume', 'hotWaterData.duration', 'hotWaterData.flow',
         'rinseData',
