@@ -255,14 +255,31 @@ export function sortFavs(favs) {
 }
 
 /**
- * The F strip as fixed positions: the first `max` favourites (hidden ones included)
- * define the cells, and a favourite cleared off the strip (alwaysOnDashboard:false)
- * stays a gap rather than letting later ones shift left or back-fill from beyond max.
+ * The F strip as fixed positions, placed by `favSlot` the way recipeStripCells places by
+ * `stripSlot`: a favourite goes in cell `favSlot` (1..max), a slot nobody holds is blank, and
+ * a hidden row (alwaysOnDashboard:false) leaves its cell blank. Nothing shifts. A row with no
+ * slot or one outside 1..max does not appear. If two rows share a slot (DYE2 keeps them
+ * exclusive, but older data may not) a shown row beats a hidden one, otherwise the first in
+ * sort order wins.
+ *
+ * Compat: if NO row carries a usable favSlot (an older DYE2), fall back to sorting and taking
+ * the first `max`, with a hidden one left as a gap.
  * Returns [{ fav: visible fav | null, hidden: the hidden fav of a gap | null }].
  */
 export function favStripCells(favs, max = 4) {
-    return sortFavs(favs).slice(0, max).map(f =>
-        f.alwaysOnDashboard === false ? { fav: null, hidden: f } : { fav: f, hidden: null });
+    const sorted = sortFavs(favs);
+    const slotOf = f => (Number.isInteger(f.favSlot) && f.favSlot >= 1 && f.favSlot <= max ? f.favSlot : null);
+    const cellOf = f => (f.alwaysOnDashboard === false ? { fav: null, hidden: f } : { fav: f, hidden: null });
+    if (!sorted.some(f => slotOf(f) != null)) return sorted.slice(0, max).map(cellOf);
+    const cells = Array.from({ length: max }, () => ({ fav: null, hidden: null }));
+    for (const f of sorted) {
+        const n = slotOf(f);
+        if (n == null) continue;
+        const cur = cells[n - 1];
+        if (cur.fav || (cur.hidden && f.alwaysOnDashboard === false)) continue;
+        cells[n - 1] = cellOf(f);
+    }
+    return cells;
 }
 
 // A failed DYE2 KV read (getDye2KvArray -> null) or plugin-list read must not

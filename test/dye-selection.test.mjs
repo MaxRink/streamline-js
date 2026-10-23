@@ -228,30 +228,42 @@ test('a derived recent (kind favourite, auto: true) highlights its favourites-st
     assert.equal(favStripCells(favs).find(c => c.fav.id === 'r1').fav.id, 'r1');
 });
 
-test('favStripCells sorts by favSlot then capturedAt', () => {
-    const cells = favStripCells([
-        { id: 'c', capturedAt: '2' },
-        { id: 'b', capturedAt: '1' },
-        { id: 'a', favSlot: 1, capturedAt: '9' },
-    ]);
-    assert.deepEqual(cells.map(c => c.fav.id), ['a', 'b', 'c']);
+test('favStripCells places by favSlot: a hidden row is a blank cell and nothing shifts', () => {
+    const favs = [1, 2, 3, 4, 5].map(n => ({ id: 'f' + n, favSlot: n, alwaysOnDashboard: n === 2 ? false : undefined }));
+    const cells = favStripCells(favs);
+    assert.equal(cells.length, 4);
+    assert.deepEqual(cells.map(c => c.fav && c.fav.id), ['f1', null, 'f3', 'f4']);
+    assert.equal(cells[1].hidden.id, 'f2');
+});
+
+test('favStripCells leaves an empty slot blank and drops rows with no or out-of-range slots', () => {
+    const cells = favStripCells([{ id: 'b', favSlot: 2 }, { id: 'd', favSlot: 4 }, { id: 'none', favSlot: null }, { id: 'five', favSlot: 5 }, { id: 'zero', favSlot: 0 }]);
+    assert.deepEqual(cells.map(c => c.fav && c.fav.id), [null, 'b', null, 'd']);
     assert.ok(cells.every(c => c.hidden === null));
 });
 
-test('favStripCells keeps a hidden favourite as a gap and shifts nothing', () => {
-    const favs = ['a', 'b', 'c', 'd', 'e'].map((id, i) => ({ id, favSlot: i, alwaysOnDashboard: id === 'b' ? false : undefined }));
-    const cells = favStripCells(favs);
-    assert.equal(cells.length, 4);
-    assert.deepEqual(cells.map(c => c.fav && c.fav.id), ['a', null, 'c', 'd']);
-    assert.equal(cells[1].hidden.id, 'b');
+test('favStripCells: two rows on slot 1, one hidden -- the visible one lands in cell 1 and nothing shifts', () => {
+    const favs = [
+        { id: 'ssssss', favSlot: 1, alwaysOnDashboard: false, capturedAt: '1' },
+        { id: 'jailbreak', favSlot: 1, alwaysOnDashboard: true, capturedAt: '2' },
+        { id: 'red', favSlot: 2, alwaysOnDashboard: true },
+        { id: 'lr', favSlot: 3, alwaysOnDashboard: true },
+        { id: 'old', favSlot: 4, alwaysOnDashboard: true },
+    ];
+    assert.deepEqual(favStripCells(favs).map(c => c.fav && c.fav.id), ['jailbreak', 'red', 'lr', 'old']);
+    assert.deepEqual(favStripCells(favs.slice().reverse()).map(c => c.fav && c.fav.id), ['jailbreak', 'red', 'lr', 'old'], 'order of the rows does not matter');
 });
 
-test('favStripCells does not back-fill from beyond max, and handles short or empty lists', () => {
-    const favs = [{ id: 'a', favSlot: 0, alwaysOnDashboard: false }, { id: 'b', favSlot: 1 }, { id: 'c', favSlot: 2 }, { id: 'd', favSlot: 3 }, { id: 'e', favSlot: 4 }];
-    assert.deepEqual(favStripCells(favs).map(c => c.fav && c.fav.id), [null, 'b', 'c', 'd']);
+test('favStripCells compat: with no usable favSlot anywhere it sorts and takes the first max', () => {
+    const cells = favStripCells([{ id: 'c', capturedAt: '3' }, { id: 'b', capturedAt: '2', alwaysOnDashboard: false }, { id: 'a', capturedAt: '1', favSlot: null }, { id: 'd', capturedAt: '4' }, { id: 'e', capturedAt: '5' }]);
+    assert.deepEqual(cells.map(c => c.fav && c.fav.id), ['a', null, 'c', 'd']);
     assert.equal(favStripCells([{ id: 'a' }, { id: 'b' }]).length, 2);
     assert.deepEqual(favStripCells([]), []);
     assert.deepEqual(favStripCells(null), []);
+});
+
+test('favStripCells honours max', () => {
+    assert.deepEqual(favStripCells([{ id: 'a', favSlot: 1 }, { id: 'c', favSlot: 3 }], 2).map(c => c.fav && c.fav.id), ['a', null]);
 });
 
 
