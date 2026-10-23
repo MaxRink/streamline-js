@@ -393,11 +393,16 @@ function lift(module, patterns) {
         assert.equal(store.dye_editRecipeIdx, '2');
     });
 
-    test('a blank cell asks for a new recipe in the URL; a recipe passes its id in the URL', () => {
+    test('a blank cell asks for a new recipe on that slot; a recipe passes its id in the URL', () => {
         const { editRecipe, opened } = build();
         editRecipe({ id: '3', blank: true });
         editRecipe({ id: 'rcp_x' });
-        assert.deepEqual(opened, [['recipe-edit', { new: 1 }], ['recipe-edit', { id: 'rcp_x' }]]);
+        // ?slot is the cell that was tapped: without it DYE2 starts with no slot targeted and
+        // SAVE files the recipe in the library, leaving the cell blank. An older DYE2 ignores it.
+        assert.deepEqual(opened, [
+            ['recipe-edit', { new: 1, slot: '3' }],
+            ['recipe-edit', { id: 'rcp_x' }],
+        ]);
     });
 }
 

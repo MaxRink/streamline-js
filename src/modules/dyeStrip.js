@@ -481,7 +481,11 @@ async function resolveFullProfile(stub) {
     if (!stub) return null;
     const id = typeof stub === 'string' ? stub : stub.id;
     if (!id) return null;
-    if (typeof stub === 'object' && Array.isArray(stub.steps)) return stub; // already full
+    // steps.length, not just Array.isArray: older DYE2 rows store the profile as
+    // { id, title, steps: [] }, and treating that as full PUTs a profile with no steps --
+    // the live curve keeps running under the recipe's name, which reads as "the recipe did
+    // not load". An empty array means the steps were never captured, so resolve by id.
+    if (typeof stub === 'object' && Array.isArray(stub.steps) && stub.steps.length) return stub; // already full
     try {
         const records = await getProfiles();
         const record = Array.isArray(records) ? records.find(r => r && r.id === id) : null;
@@ -759,8 +763,9 @@ function closePluginOverlay(refresh) {
 
 // Jump straight to DYE2's own recipe-edit screen for one recipe, instead of the
 // dashboard root. Current DYE2 opens a recipe by its opaque id (`dye_editRecipeId`);
-// a blank cell has no row, so the key is cleared and recipe-edit starts a new recipe
-// (its header tabs pick the slot). Older DYE2 builds read `dye_editRecipeIdx`, the
+// a blank cell has no row, so the key is cleared and recipe-edit starts a new recipe on
+// the slot that cell stands for (`?slot=`, honoured since DYE2 0.1.25 — an older build
+// ignores it and the recipe is saved to the library, as before). Older DYE2 builds read `dye_editRecipeIdx`, the
 // position of the recipe in a list of ids '1'..'5', so that key is still set when the
 // id has that shape (harmless to a newer DYE2). The sessionStorage keys only reach DYE2
 // when it shares our origin; the page is normally opened on the bridge origin, so the
@@ -773,7 +778,7 @@ function editRecipe(recipe) {
         if (String(recipe.id) === String(n) && n >= 1 && n <= 5) sessionStorage.setItem('dye_editRecipeIdx', String(n - 1));
         else sessionStorage.removeItem('dye_editRecipeIdx');
     } catch (e) { /* private mode */ }
-    openPluginOverlay('recipe-edit', recipe.blank ? { new: 1 } : { id: recipe.id });
+    openPluginOverlay('recipe-edit', recipe.blank ? { new: 1, slot: recipe.id } : { id: recipe.id });
 }
 
 // Same idea for a favourite: jump to DYE2's own auto-fav-edit screen, which has
