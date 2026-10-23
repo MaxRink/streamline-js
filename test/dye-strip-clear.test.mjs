@@ -123,7 +123,7 @@ function buildSave({ status = 200, json = { saved: true }, updated = false } = {
     const state = { toasts: [], loads: 0, renders: [], posts: [], updates: 0 };
     const saveBody = lift([/async function saveChanges\([\s\S]*?\r?\n\}/]);
     const api = new Function(
-        'PLUGIN_BASE', 'fetch', 'logger', 'showToast', 'recipeLabel', 'favLabel', 'loadDyeStripData', 'renderStrip', 'currentMode', 'updateDye2Now',
+        'PLUGIN_BASE', 'fetch', 'logger', 'showToast', 'recipeLabel', 'favLabel', 'loadDyeStripData', 'renderStrip', 'currentMode', 'updateDye2Now', 'syncSelection',
         `let activeModified = true;\n${saveBody}\nreturn { saveChanges, modified: () => activeModified };`
     )(
         '/p',
@@ -135,6 +135,7 @@ function buildSave({ status = 200, json = { saved: true }, updated = false } = {
         (m) => state.renders.push(m),
         'R',
         async () => { state.updates++; return updated; },
+        async () => { state.syncs = (state.syncs || 0) + 1; return false; }, // DYE2's answer is covered in dye-strip-star.test.mjs
     );
     return { api, state };
 }
@@ -152,10 +153,10 @@ test('saveChanges reloads the caches and re-renders when DYE2 saved something', 
 test('saveChanges with saved:false leaves the caches alone', async () => {
     const { api, state } = buildSave({ json: { saved: false } });
     await api.saveChanges('recipe', { id: '1', title: 'A' });
-    assert.equal(state.loads, 0);
-    assert.deepEqual(state.renders, []);
+    assert.equal(state.loads, 0, 'nothing was written, so the caches are not reloaded');
+    assert.equal(state.syncs, 1, 'but DYE2 is asked: saved:false can mean already saved');
     assert.equal(state.toasts[0].msg, 'No changes to save');
-    assert.equal(api.modified(), true, 'nothing was written, so the * stays');
+    assert.equal(api.modified(), true, 'the local flag is only changed by DYE2 answer');
 });
 
 test('saveChanges on a DYE2 without /record asks for an update', async () => {

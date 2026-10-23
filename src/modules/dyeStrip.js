@@ -142,6 +142,38 @@ function openCellMenu(btn, edit, kind, item, slot) {
     ]);
 }
 
+// The strip's one source for "which item is selected, and has it drifted". DYE2's /selection
+// route derives that from the live workflow and the item's stored values on every call, so it
+// is correct the moment a record lands. The KV key `selection` is only a mirror, written when
+// the workflow changes: a record that rewrites the recipe without touching the workflow leaves
+// the mirror saying modified:true. So the route is read first and the mirror is a fallback
+// for a DYE2 without the route (`mirror:false` for callers that cannot afford a stale answer).
+// undefined = could not tell; null/{} = nothing selected.
+async function readSelection({ mirror = true } = {}) {
+    try {
+        const res = await fetch(`${PLUGIN_BASE}/selection`);
+        if (res.ok) return await res.json();
+    } catch (e) { /* fall through to the mirror */ }
+    if (!mirror) return undefined;
+    return getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => undefined);
+}
+
+// Refresh activeItemId and activeModified TOGETHER from DYE2, so the highlight and the `*`
+// can never describe two different selections. A no-op while the skin's own legacy auto-save
+// is armed (DYE2 is not recording then; the `*` means nothing, so it is cleared). Never over a
+// tap or apply that landed during the GET. Returns true when the state was refreshed.
+async function syncSelection(opts) {
+    if (!dye2RecordsDialIn) return false;
+    if (activeItem) { activeModified = false; return false; }
+    const before = activeItemId;
+    const seq = applySeq;
+    const sel = await readSelection(opts);
+    if (sel === undefined || activeItemId !== before || applySeq !== seq) return false;
+    activeItemId = armedSelectionId(sel, { recipes: recipeCache, favs: favCache });
+    activeModified = selectionModified(sel, { recipes: recipeCache });
+    return true;
+}
+
 // Ask DYE2 to patch the selected item with the dial-in now on the machine. DYE2 owns the diff
 // (it knows what the item held when it was applied), so this just asks; it answers saved:false
 // when nothing actually moved.
@@ -164,9 +196,17 @@ async function saveChanges(kind, item, retried = false) {
             activeModified = false;
             // The caches still hold the pre-save values; reapplying a cell would use them.
             await loadDyeStripData().catch(e => logger.warn('dyeStrip: reload after save failed', e));
+            // Then take DYE2's own answer, from the derived route only: the KV mirror may not
+            // have caught up and would bring the `*` straight back. If the route is
+            // unreachable the local clear above stands.
+            await syncSelection({ mirror: false }).catch(() => {});
             if (currentMode !== 'P') renderStrip(currentMode);
             showToast(`${label} updated`, 2000, 'info');
         } else {
+            // saved:false can mean "already saved" (an earlier save, or DYE2 itself, wrote the
+            // dial-in), so a lingering `*` is not proof of drift: take DYE2's derived answer.
+            await syncSelection({ mirror: false }).catch(() => {});
+            if (currentMode !== 'P') renderStrip(currentMode);
             showToast('No changes to save', 2000, 'info');
         }
     } catch (e) {
@@ -1043,6 +1083,8 @@ export function setStripMode(mode) {
         if (profileNav) profileNav.style.display = 'none';
         if (dyeStrip) dyeStrip.style.display = '';
         renderStrip(mode);
+        // DYE2 may have changed the selection or recorded onto it since the last redraw.
+        syncSelection().then(ok => { if (ok && currentMode === mode) renderStrip(mode); }).catch(() => {});
     }
 }
 
@@ -1120,14 +1162,7 @@ function wireOnce() {
             // DYE2 owns the arming: a selection cleared or changed inside it while this
             // page sat idle must not leave a stale highlight. Only when nothing is
             // armed here, and never over a tap that landed during the GET.
-            if (dye2RecordsDialIn && !activeItem) {
-                const before = activeItemId;
-                const seq = applySeq;
-                const sel = await getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => undefined);
-                if (sel === undefined || activeItemId !== before || applySeq !== seq) return;
-                activeItemId = armedSelectionId(sel, { recipes: recipeCache, favs: favCache });
-                activeModified = selectionModified(sel, { recipes: recipeCache });
-            }
+            await syncSelection();
             if (currentMode !== 'P') renderStrip(currentMode);
         }).catch(() => {});
     };
@@ -1462,11 +1497,7 @@ async function restoreParkedSelection() {
     try { parkedRaw = sessionStorage.getItem(SELECTION_KEY); } catch (e) { /* private mode */ }
     if (dye2RecordsDialIn && !parkedRaw) {
         stripReturnParam();
-        const before = activeItemId;
-        const sel = await getKVValue(DYE2_KV_NAMESPACE, 'selection').catch(() => null);
-        if (activeItemId !== before) return; // a tap during the GET wins
-        activeItemId = armedSelectionId(sel, { recipes: recipeCache, favs: favCache });
-        activeModified = selectionModified(sel, { recipes: recipeCache });
+        await syncSelection(); // a tap during the GET wins
         if (currentMode !== 'P') renderStrip(currentMode);
         return;
     }
