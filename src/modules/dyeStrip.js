@@ -51,9 +51,6 @@ const CELL_BASE =
     'border-2 font-semibold cursor-pointer';
 const CELL_IDLE = ' border-[var(--profile-button-outline-color)] bg-[var(--profile-button-background-color)] text-[var(--profile-button-text-color)]';
 const CELL_ACTIVE = ' border-[var(--mimoja-blue-v2)] bg-[var(--mimoja-blue-v2)] text-[var(--button-primary-text)]';
-// A DYE2 proposal (recipe `suggested: true`): the idle cell with the muted text colour the
-// empty-state hint below already uses, so it reads as not-yet-a-recipe.
-const CELL_SUGGESTED = ' border-[var(--profile-button-outline-color)] bg-[var(--profile-button-background-color)] text-[var(--low-contrast-white)]';
 const CELL_ACCENT = ' border-[var(--mimoja-blue-v2)] bg-[var(--box-color)] text-[var(--mimoja-blue-v2)]'; // VIEW ALL
 // Empty-state hint. Carries the cell height explicitly: in R mode it is the only
 // child, so without it the strip collapses to one line of text and the hint sits
@@ -244,8 +241,8 @@ export function renderStrip(mode) {
                 strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true })));
                 return;
             }
-            const { active, suggested, marker } = recipeCellState(recipe, activeItemId, activeModified);
-            const cls = active ? CELL_ACTIVE : suggested ? CELL_SUGGESTED : CELL_IDLE;
+            const { active, marker } = recipeCellState(recipe, activeItemId, activeModified);
+            const cls = active ? CELL_ACTIVE : CELL_IDLE;
             const cell = makeCell(recipeLabel(recipe) + marker, cls, () => {
                 activeItemId = recipe.id;
                 activeModified = false;

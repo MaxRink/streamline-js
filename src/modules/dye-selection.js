@@ -235,12 +235,12 @@ export function selectionModified(sel, { recipes }) {
 }
 
 /**
- * What a recipe cell shows: highlighted or not, a DYE2 proposal (`suggested: true`, not
- * yet a saved recipe), and the `*` marker -- on the highlighted cell only, when modified.
+ * What a recipe cell shows: highlighted or not, and the `*` marker -- on the highlighted
+ * cell only, when modified.
  */
 export function recipeCellState(recipe, activeId, modified) {
     const active = recipe?.id != null && recipe.id === activeId;
-    return { active, suggested: recipe?.suggested === true, marker: active && modified ? '*' : '' };
+    return { active, marker: active && modified ? '*' : '' };
 }
 
 /** Favourites in strip order: favSlot first, then capturedAt. Hidden ones included. */

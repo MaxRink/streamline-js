@@ -196,12 +196,11 @@ test('recipeStripCells falls back to ids only when no row carries a stripSlot ke
     assert.deepEqual(recipeIds(recipeStripCells([{ id: '2', stripSlot: 4 }, { id: '3' }])), [null, null, null, '2', null]);
 });
 
-test('a suggested recipe is placed by stripSlot and marked as a proposal', () => {
-    const cells = recipeStripCells([{ id: 's', stripSlot: 3, suggested: true }]);
+test('a recipe cell is idle or highlighted, nothing else', () => {
+    const cells = recipeStripCells([{ id: 's', stripSlot: 3 }]);
     assert.equal(cells[2].recipe.id, 's');
-    assert.deepEqual(recipeCellState(cells[2].recipe, null, false), { active: false, suggested: true, marker: '' });
-    assert.equal(recipeCellState({ id: 'p', stripSlot: 1 }, null, false).suggested, false);
-    assert.equal(recipeCellState({ id: 's', suggested: false }, null, false).suggested, false);
+    assert.deepEqual(recipeCellState(cells[2].recipe, null, false), { active: false, marker: '' });
+    assert.deepEqual(recipeCellState(cells[2].recipe, 's', false), { active: true, marker: '' });
 });
 
 test('modified puts a * on the highlighted recipe cell only', () => {
