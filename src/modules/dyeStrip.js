@@ -126,16 +126,17 @@ function makeCell(label, extraClass, onClick, onLongPress) {
 // dose, a stale value from another app. Applying an item now only selects it; the barista
 // decides when it becomes the recipe. Offered on the selected cell only: DYE2 records onto its
 // own selection, so on any other cell it would write to the wrong item.
-function openCellMenu(btn, edit, kind, item) {
+function openCellMenu(btn, edit, kind, item, slot) {
     // Only against a DYE2 that records dial-in, and only when no legacy auto-save item is
     // armed (a non-null activeItem means the skin is recording and DYE2's selection may differ).
     const selected = item.id != null && item.id === activeItemId && dye2RecordsDialIn && !activeItem;
     openContextMenu(btn, [
         { label: getTranslation('Edit in DYE2'), onSelect: edit },
         ...(selected ? [{ label: getTranslation('Save changes'), onSelect: () => saveChanges(kind, item) }] : []),
-        // Saves the live workflow as a new recipe, independent of the selection. R strip only: a
+        // Saves the live workflow into THIS cell's slot, independent of the selection; the label
+        // names the recipe being replaced (it drops to the library, not deleted). R strip only: a
         // new recipe is invisible from the F strip.
-        ...(kind === 'recipe' ? [{ label: getTranslation('Save to recipes'), onSelect: () => saveToRecipes() }] : []),
+        ...(kind === 'recipe' ? [{ label: `${getTranslation('Replace')} ${recipeLabel(item)}`, onSelect: () => saveToRecipes(slot) }] : []),
         { divider: true },
         { label: getTranslation('Clear button'), danger: true, onSelect: () => clearCell(kind, item) },
     ]);
@@ -169,17 +170,18 @@ async function saveChanges(kind, item, retried = false) {
     }
 }
 
-// Save what is on the machine now as a new recipe. DYE2 picks the name and the lowest free
-// slot (POST save-recipe, empty body); it answers 409 when all five slots are taken.
-async function saveToRecipes(retried = false) {
+// Save what is on the machine now as a recipe in the pressed cell's slot (POST save-recipe
+// {slot}); DYE2 picks the name and demotes the slot's previous holder to the library. The 409
+// (all slots taken) cannot happen with a slot given but the route can still answer it.
+async function saveToRecipes(slot, retried = false) {
     try {
         const res = await fetch(`${PLUGIN_BASE}/save-recipe`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: '{}',
+            body: JSON.stringify({ slot: Number(slot) }),
         });
         if (res.status === 404) { // an older DYE2 has no such endpoint
-            if (!retried && await updateDye2Now()) return saveToRecipes(true);
+            if (!retried && await updateDye2Now()) return saveToRecipes(slot, true);
             showToast('Update DYE2 to save recipes', 2400, 'info');
             return;
         }
@@ -271,7 +273,7 @@ export function renderStrip(mode) {
         recipeStripCells(recipeCache).forEach(({ slot, recipe }) => {
             if (!recipe) {
                 strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true }),
-                    btn => openContextMenu(btn, [{ label: getTranslation('Save to recipes'), onSelect: () => saveToRecipes() }])));
+                    btn => openContextMenu(btn, [{ label: `${getTranslation('Save to recipe')} ${slot}`, onSelect: () => saveToRecipes(slot) }])));
                 return;
             }
             const { active, marker } = recipeCellState(recipe, activeItemId, activeModified);
@@ -281,7 +283,7 @@ export function renderStrip(mode) {
                 activeModified = false;
                 renderStrip('R');
                 applyRecipe(recipe).catch(e => logger.error('applyRecipe failed', e));
-            }, btn => openCellMenu(btn, () => editRecipe(recipe), 'recipe', recipe));
+            }, btn => openCellMenu(btn, () => editRecipe(recipe), 'recipe', recipe, slot));
             strip.appendChild(cell);
         });
     }

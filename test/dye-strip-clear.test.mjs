@@ -172,15 +172,15 @@ test('saveChanges retries once after DYE2 auto-updated', async () => {
     assert.equal(state.posts.length, 2, 'one retry, no loop');
 });
 
-test('Save to recipes is in the recipe cell menu, between Save changes and the divider, and on blank R cells', () => {
+test('Save-to-slot is in the recipe cell menu, between Save changes and the divider, and on blank R cells', () => {
     const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
     const menu = source.slice(source.indexOf('function openCellMenu('));
     const body = menu.slice(0, menu.indexOf('\n}\n'));
-    assert.ok(/kind === 'recipe' \? \[\{ label: getTranslation\('Save to recipes'\)/.test(body), 'recipe cells only, translated');
-    assert.ok(body.indexOf("'Save changes'") < body.indexOf("'Save to recipes'") && body.indexOf("'Save to recipes'") < body.indexOf('divider'),
+    assert.ok(/kind === 'recipe' \? \[\{ label: `\$\{getTranslation\('Replace'\)\} \$\{recipeLabel\(item\)\}`, onSelect: \(\) => saveToRecipes\(slot\)/.test(body), 'recipe cells only, names the recipe replaced, passes the slot');
+    assert.ok(body.indexOf("'Save changes'") < body.indexOf("'Replace'") && body.indexOf("'Replace'") < body.indexOf('divider'),
         'after Save changes, before the divider');
-    assert.ok(!/Save to recipes[\s\S]*dye2RecordsDialIn/.test(body), 'not gated on dial-in recording');
-    assert.ok(/makeCell\('', CELL_IDLE, \(\) => editRecipe\(\{ id: slot, blank: true \}\),\s*btn => openContextMenu\(btn, \[\{ label: getTranslation\('Save to recipes'\)/.test(source),
+    assert.ok(!/'Replace'[\s\S]*dye2RecordsDialIn/.test(body), 'not gated on dial-in recording');
+    assert.ok(/makeCell\('', CELL_IDLE, \(\) => editRecipe\(\{ id: slot, blank: true \}\),\s*btn => openContextMenu\(btn, \[\{ label: `\$\{getTranslation\('Save to recipe'\)\} \$\{slot\}`, onSelect: \(\) => saveToRecipes\(slot\)/.test(source),
         'a blank R cell offers it too');
 });
 
@@ -203,12 +203,12 @@ function buildSaveRecipe({ status = 200, json = { id: 'r1', name: 'Turbo Ristret
     return { api, state };
 }
 
-test('saveToRecipes posts an empty body, reloads, re-renders and toasts the returned name', async () => {
+test('saveToRecipes posts the pressed slot, reloads, re-renders and toasts the returned name', async () => {
     const { api, state } = buildSaveRecipe();
-    await api.saveToRecipes();
+    await api.saveToRecipes('4');
     assert.equal(state.posts[0].url, '/p/save-recipe');
     assert.equal(state.posts[0].opts.method, 'POST');
-    assert.deepEqual(JSON.parse(state.posts[0].opts.body), {});
+    assert.deepEqual(JSON.parse(state.posts[0].opts.body), { slot: 4 });
     assert.equal(state.loads, 1);
     assert.deepEqual(state.renders, ['R']);
     assert.equal(state.toasts[0].msg, 'Saved as Turbo Ristretto');
@@ -216,7 +216,7 @@ test('saveToRecipes posts an empty body, reloads, re-renders and toasts the retu
 
 test('saveToRecipes 409 says the slots are full and changes nothing', async () => {
     const { api, state } = buildSaveRecipe({ status: 409, json: { error: 'full', taken: [1, 2, 3, 4, 5] } });
-    await api.saveToRecipes();
+    await api.saveToRecipes('2');
     assert.match(state.toasts[0].msg, /slots are full/);
     assert.equal(state.loads, 0);
     assert.deepEqual(state.renders, []);
@@ -224,13 +224,14 @@ test('saveToRecipes 409 says the slots are full and changes nothing', async () =
 
 test('saveToRecipes 404 tries an update once, then asks for one; other failures toast an error', async () => {
     let r = buildSaveRecipe({ status: 404 });
-    await r.api.saveToRecipes();
+    await r.api.saveToRecipes('1');
     assert.equal(r.state.updates, 1);
     assert.equal(r.state.posts.length, 1);
     assert.equal(r.state.toasts[0].msg, 'Update DYE2 to save recipes');
     r = buildSaveRecipe({ status: 404, updated: true });
-    await r.api.saveToRecipes();
+    await r.api.saveToRecipes('1');
     assert.equal(r.state.posts.length, 2, 'one retry, no loop');
+    assert.deepEqual(JSON.parse(r.state.posts[1].opts.body), { slot: 1 }, 'the retry keeps the slot');
     r = buildSaveRecipe({ status: 502 });
     await r.api.saveToRecipes();
     assert.equal(r.state.toasts[0].type, 'error');
