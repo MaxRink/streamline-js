@@ -190,6 +190,9 @@ export function selectedRecipeSteamTemp(sel, recipes) {
  * the blanks" step in this mode: DYE2 guarantees one recipe per slot, and a null slot
  * means "not on the strip", so back-filling would put library rows on it.
  *
+ * A cell a clear emptied is not a free blank even where back-filling does apply: the
+ * cleared button must stay empty, not be handed to the next recipe in line.
+ *
  * Compat: a DYE2 older than stripSlot writes no `stripSlot` key on any row and uses
  * ids '1'..'5' as the slots. When no row carries the key at all, the old id-based
  * placement (strays fill remaining blanks) applies, so a mid-upgrade tablet is not blank.
@@ -202,6 +205,15 @@ export function recipeStripCells(recipes, count = 5) {
     const rows = (Array.isArray(recipes) ? recipes : []).filter(r => r && typeof r === 'object');
     const visible = rows.filter(r => r.showOnStreamlineDashboard !== false);
     const legacy = !rows.some(r => r.stripSlot !== undefined);
+    // Legacy placement is by id, so that is where a cleared row's cell comes from. Modern
+    // placement back-fills nothing, so it needs no reservation.
+    const idCell = recipe => {
+        const n = parseInt(recipe.id, 10);
+        return String(recipe.id) === String(n) && n >= 1 && n <= count ? n - 1 : null;
+    };
+    const clearedCells = new Set(legacy
+        ? rows.filter(r => r.showOnStreamlineDashboard === false).map(idCell).filter(i => i !== null)
+        : []);
     const strays = [];
     for (const recipe of visible) {
         let cell;
@@ -216,7 +228,7 @@ export function recipeStripCells(recipes, count = 5) {
         if (cell && !cell.recipe) cell.recipe = recipe;
     }
     for (const recipe of strays) {
-        const blank = cells.find(c => !c.recipe);
+        const blank = cells.find((c, i) => !c.recipe && !clearedCells.has(i));
         if (!blank) break;
         blank.recipe = recipe;
     }

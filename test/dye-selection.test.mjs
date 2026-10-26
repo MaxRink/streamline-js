@@ -172,6 +172,23 @@ test('recipeStripCells puts an out-of-range id into the first blank, and a dupli
     assert.equal(dup.filter(c => c.recipe).length, 1, 'the duplicate is dropped, not placed twice');
 });
 
+test('recipeStripCells does not back-fill a cell a clear emptied', () => {
+    // Legacy ids, so strays DO back-fill blanks -- but not the button the user just
+    // cleared, which must stay empty instead of being handed to the next recipe.
+    const cells = recipeStripCells([
+        { id: '1' }, { id: '2' },
+        { id: '3', showOnStreamlineDashboard: false },
+        { id: '4' }, { id: 'rcp_x' },
+    ]);
+    assert.deepEqual(recipeIds(cells), ['1', '2', null, '4', 'rcp_x']);
+    // Without a clear the same stray still takes slot 3, so the reservation is the only change.
+    assert.deepEqual(recipeIds(recipeStripCells([{ id: '1' }, { id: '2' }, { id: '4' }, { id: 'rcp_x' }])),
+        ['1', '2', 'rcp_x', '4', null]);
+    // A cleared row whose id is not a slot reserves nothing.
+    assert.deepEqual(recipeIds(recipeStripCells([{ id: 'gone', showOnStreamlineDashboard: false }, { id: 'rcp_x' }])),
+        ['rcp_x', null, null, null, null]);
+});
+
 test('recipeStripCells places opaque-id recipes by stripSlot and leaves blanks', () => {
     const cells = recipeStripCells([
         { id: 'rcp_b', stripSlot: 4 }, { id: 'rcp_a', stripSlot: 1 }, { id: 'rcp_c', stripSlot: 4 },
