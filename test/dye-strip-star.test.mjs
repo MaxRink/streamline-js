@@ -135,3 +135,25 @@ test('recipeCellState stars only the highlighted cell', () => {
     assert.equal(recipeCellState({ id: '2' }, '2', true).marker, '*');
     assert.equal(recipeCellState({ id: '1' }, '2', true).marker, '');
 });
+
+// #159 acceptance 1: the highlight is derived -- a highlighted cell means the live workflow already
+// IS that item. Re-applying it would write the same values back and undo anything changed since, so
+// the tap is inert. A drifted recipe (`*`) counts as highlighted: the drift is resolved by "Save
+// changes" or in DYE2, never by a tap silently reverting the machine.
+test('tapping a highlighted cell writes nothing, on both strips', () => {
+    const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+
+    const fav = source.slice(source.indexOf('makeCell(favLabel(fav)'));
+    const favTap = fav.slice(0, fav.indexOf('applyFavourite(fav)'));
+    assert.ok(/if \(active\) return;/.test(favTap), 'favourite tap returns before applyFavourite');
+    assert.ok(favTap.indexOf('if (active) return;') < favTap.indexOf('activeItemId = fav.id'),
+        'and before any state is touched');
+
+    const rec = source.slice(source.indexOf('makeCell(recipeLabel(recipe) + marker'));
+    const recTap = rec.slice(0, rec.indexOf('applyRecipe(recipe)'));
+    assert.ok(/if \(active\) return;/.test(recTap), 'recipe tap returns before applyRecipe');
+    assert.ok(recTap.indexOf('if (active) return;') < recTap.indexOf('activeItemId = recipe.id'),
+        'and before any state is touched');
+    // `active` comes from recipeCellState, which is true for a starred cell too.
+    assert.equal(recipeCellState({ id: '1' }, '1', true).active, true, 'a drifted cell is still highlighted');
+});

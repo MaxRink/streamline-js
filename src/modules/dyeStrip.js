@@ -137,6 +137,11 @@ function openCellMenu(btn, edit, kind, item, slot) {
         // it is assigned to the button they long-pressed, replacing the recipe named in the label
         // (which drops to the library, not deleted). R strip only: the F strip holds no slots.
         ...(kind === 'recipe' ? [{ label: `${getTranslation('Replace')} ${recipeLabel(item)}`, onSelect: () => openPluginOverlay('select-recipe', { slot }) }] : []),
+        // A favourite and a recent have no save target of their own, so keeping a dial-in from one
+        // means making a recipe of it (#159 acceptance 4). Saved to the library with no slot: it
+        // shows up as a card in DYE2's recipe list, and the barista gives it a button from there.
+        // F strip only -- a recipe cell already has "Save changes" for its own dial-in.
+        ...(kind === 'favourite' ? [{ label: getTranslation('Save to recipes'), onSelect: () => saveToRecipes(null, item.beverage) }] : []),
         { divider: true },
         { label: getTranslation('Clear button'), danger: true, onSelect: () => clearCell(kind, item) },
     ]);
@@ -218,15 +223,22 @@ async function saveChanges(kind, item, retried = false) {
 // Save what is on the machine now as a recipe in the pressed cell's slot (POST save-recipe
 // {slot}); DYE2 picks the name and demotes the slot's previous holder to the library. The 409
 // (all slots taken) cannot happen with a slot given but the route can still answer it.
-async function saveToRecipes(slot, retried = false) {
+async function saveToRecipes(slot, beverage = '', retried = false) {
     try {
         const res = await fetch(`${PLUGIN_BASE}/save-recipe`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ slot: Number(slot) }),
+            // No slot for a favourite's "Save to recipes": the recipe goes to DYE2's library, where
+            // the barista picks a button for it. explicitRecipeSlot() reads a missing slot as that.
+            // The beverage is the item's own typed field, not a workflow one, so DYE2 cannot read
+            // it back from the live workflow -- it is sent, and is the only drink word in the name.
+            body: JSON.stringify({
+                ...(slot == null ? {} : { slot: Number(slot) }),
+                ...(beverage ? { beverage } : {}),
+            }),
         });
         if (res.status === 404) { // an older DYE2 has no such endpoint
-            if (!retried && await updateDye2Now()) return saveToRecipes(slot, true);
+            if (!retried && await updateDye2Now()) return saveToRecipes(slot, beverage, true);
             showToast('Update DYE2 to save recipes', 2400, 'info');
             return;
         }
@@ -237,6 +249,9 @@ async function saveToRecipes(slot, retried = false) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await res.json().catch(() => null);
         await loadDyeStripData().catch(e => logger.warn('dyeStrip: reload after save failed', e));
+        // save-recipe arms the new recipeId in the workflow, so the new cell is the selected one.
+        // From the derived route only -- the KV mirror may still name the item saved from.
+        await syncSelection({ mirror: false }).catch(() => {});
         if (currentMode !== 'P') renderStrip(currentMode);
         showToast(body && body.name ? `Saved as ${body.name}` : 'Saved as a recipe', 2000, 'info');
     } catch (e) {
@@ -296,6 +311,10 @@ export function renderStrip(mode) {
             }
             const active = fav.id != null && fav.id === activeItemId;
             const cell = makeCell(favLabel(fav), active ? CELL_ACTIVE : CELL_IDLE, () => {
+                // Highlighted means the live workflow already IS this favourite (the highlight is
+                // derived from it), so re-applying it would write the same values back and could
+                // undo an edit made since. The tap is inert instead (#159 acceptance 1).
+                if (active) return;
                 activeItemId = fav.id;
                 activeModified = false;
                 renderStrip('F');
@@ -317,13 +336,24 @@ export function renderStrip(mode) {
         // place, and a tap on a blank opens DYE2's recipe editor.
         recipeStripCells(recipeCache).forEach(({ slot, recipe }) => {
             if (!recipe) {
+                // Two ways to fill an empty button: pick an existing recipe from DYE2's library
+                // (the same assign flow a filled cell's "Replace" uses, which needs no recipe to
+                // already be there), or capture what is on the machine now as a new one. A tap
+                // still opens a blank recipe form on this slot.
                 strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true }),
-                    btn => openContextMenu(btn, [{ label: `${getTranslation('Save to recipe')} ${slot}`, onSelect: () => saveToRecipes(slot) }])));
+                    btn => openContextMenu(btn, [
+                        { label: getTranslation('Select recipe'), onSelect: () => openPluginOverlay('select-recipe', { slot }) },
+                        { label: `${getTranslation('Save to recipe')} ${slot}`, onSelect: () => saveToRecipes(slot) },
+                    ])));
                 return;
             }
             const { active, marker } = recipeCellState(recipe, activeItemId, activeModified);
             const cls = active ? CELL_ACTIVE : CELL_IDLE;
             const cell = makeCell(recipeLabel(recipe) + marker, cls, () => {
+                // Inert on the highlighted cell, `*` included: a drifted recipe is still the one
+                // being dialled in, so a tap must not revert the machine to the stored values --
+                // "Save changes" or DYE2 decides what happens to the drift (#159 acceptance 1).
+                if (active) return;
                 activeItemId = recipe.id;
                 activeModified = false;
                 renderStrip('R');

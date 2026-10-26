@@ -1834,6 +1834,8 @@ Restart the machine once the update is done.,,,,,更新完成后请重启机器�
 Clear button,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Save changes,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Edit in DYE2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Select recipe,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Save to recipes,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 At 100% the system controls screen brightness and the level actually used may differ from the slider.,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 "The screen saver dims the screen to your screen saver level. Your brightness returns when you wake the screen.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 "With the black screen saver the screen goes dark rather than dim, and tapping it restores your brightness.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

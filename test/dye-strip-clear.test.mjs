@@ -184,22 +184,39 @@ test('Replace opens the recipe picker targeted at the pressed slot; blank cells 
     const body = menu.slice(0, menu.indexOf('\n}\n'));
     assert.ok(/kind === 'recipe' \? \[\{ label: `\$\{getTranslation\('Replace'\)\} \$\{recipeLabel\(item\)\}`, onSelect: \(\) => openPluginOverlay\('select-recipe', \{ slot \}\)/.test(body),
         'recipe cells only, names the recipe replaced, sends the slot to the picker');
-    // Order-independent: the entry itself must not reach saveToRecipes at all.
+    // Order-independent: the entry itself must not reach saveToRecipes at all. Bounded by its own
+    // ternary, not by the divider -- "Save to recipes" is a later entry in the same window.
     const replaceEntry = body.slice(body.indexOf("getTranslation('Replace')"));
-    assert.ok(!replaceEntry.slice(0, replaceEntry.indexOf('divider')).includes('saveToRecipes'),
+    assert.ok(!replaceEntry.slice(0, replaceEntry.indexOf('] : [])')).includes('saveToRecipes'),
         'Replace no longer writes the live workflow over the slot');
     assert.ok(body.indexOf("'Save changes'") < body.indexOf("'Replace'") && body.indexOf("'Replace'") < body.indexOf('divider'),
         'after Save changes, before the divider');
     assert.ok(!/'Replace'[\s\S]*dye2RecordsDialIn/.test(body), 'not gated on dial-in recording');
-    assert.ok(/makeCell\('', CELL_IDLE, \(\) => editRecipe\(\{ id: slot, blank: true \}\),\s*btn => openContextMenu\(btn, \[\{ label: `\$\{getTranslation\('Save to recipe'\)\} \$\{slot\}`, onSelect: \(\) => saveToRecipes\(slot\)/.test(source),
-        'a blank R cell still saves the live workflow into its slot');
+});
+
+// An empty button can be filled two ways: from DYE2's library, or from what is on the machine.
+// "Select recipe" reuses the assign flow -- it needs no recipe to already hold the slot.
+test('a blank R cell offers Select recipe and Save to recipe, in that order', () => {
+    const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const blank = source.slice(source.indexOf("makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true })"));
+    const body = blank.slice(0, blank.indexOf('return;'));
+
+    assert.ok(/\{ label: getTranslation\('Select recipe'\), onSelect: \(\) => openPluginOverlay\('select-recipe', \{ slot \}\) \}/.test(body),
+        'Select recipe opens the picker targeted at this empty slot');
+    assert.ok(/\{ label: `\$\{getTranslation\('Save to recipe'\)\} \$\{slot\}`, onSelect: \(\) => saveToRecipes\(slot\) \}/.test(body),
+        'Save to recipe still captures the live workflow into this slot');
+    assert.ok(body.indexOf("'Select recipe'") < body.indexOf("'Save to recipe'"),
+        'picking an existing recipe is the first option');
+    assert.ok(!body.includes("'Clear button'"), 'nothing to clear on an empty cell');
+    // A tap is still the blank new-recipe form, not the picker.
+    assert.ok(body.includes('editRecipe({ id: slot, blank: true })'));
 });
 
 function buildSaveRecipe({ status = 200, json = { id: 'r1', name: 'Turbo Ristretto' }, updated = false } = {}) {
-    const state = { toasts: [], loads: 0, renders: [], posts: [], updates: 0 };
+    const state = { toasts: [], loads: 0, renders: [], posts: [], updates: 0, syncs: 0 };
     const fnBody = lift([/async function saveToRecipes\([\s\S]*?\r?\n\}/]);
     const api = new Function(
-        'PLUGIN_BASE', 'fetch', 'logger', 'showToast', 'loadDyeStripData', 'renderStrip', 'currentMode', 'updateDye2Now',
+        'PLUGIN_BASE', 'fetch', 'logger', 'showToast', 'loadDyeStripData', 'renderStrip', 'currentMode', 'updateDye2Now', 'syncSelection',
         `${fnBody}\nreturn { saveToRecipes };`
     )(
         '/p',
@@ -210,6 +227,7 @@ function buildSaveRecipe({ status = 200, json = { id: 'r1', name: 'Turbo Ristret
         (m) => state.renders.push(m),
         'R',
         async () => { state.updates++; return updated; },
+        async () => { state.syncs++; return false; },
     );
     return { api, state };
 }
@@ -366,4 +384,68 @@ test('saveItemTopLevel throws instead of writing when the DYE2 read failed', asy
         'recipes', 'autoFavourites', async () => null, async (k, v) => writes.push([k, v]), { info() {} });
     await assert.rejects(() => fn('recipe', '1', { x: false }));
     assert.equal(writes.length, 0);
+});
+
+// #159 acceptance 4: a favourite or recent has no save target of its own, so the only way to keep
+// a dial-in from one is to make a recipe of it. No slot is sent -- the recipe lands in DYE2's
+// library as a card, and the barista gives it a button there (or from a blank cell's menu).
+test('a favourite cell offers Save to recipes, with no slot, and a recipe cell does not', () => {
+    const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const menu = source.slice(source.indexOf('function openCellMenu('));
+    const body = menu.slice(0, menu.indexOf('\n}\n'));
+
+    assert.ok(/kind === 'favourite' \? \[\{ label: getTranslation\('Save to recipes'\), onSelect: \(\) => saveToRecipes\(null, item\.beverage\) \}\] : \[\]/.test(body),
+        'favourite cells only, translated, saveToRecipes(null) for a library-only save, and the item\'s own beverage');
+    assert.ok(body.indexOf("'Save to recipes'") < body.indexOf('divider'), 'before the divider');
+    // Not gated on dial-in recording: unlike "Save changes", this writes a new row rather than
+    // asking DYE2 to record onto the selection, so an older DYE2 answers it too.
+    assert.ok(!/'Save to recipes'[\s\S]*dye2RecordsDialIn/.test(body), 'not gated on dial-in recording');
+});
+
+test('saveToRecipes with no slot omits it, so DYE2 saves to the library', async () => {
+    const { api, state } = buildSaveRecipe();
+    await api.saveToRecipes(null);
+    assert.deepEqual(JSON.parse(state.posts[0].opts.body), {}, 'no slot at all -- not slot: 0');
+    assert.equal(state.loads, 1);
+    assert.deepEqual(state.renders, ['R']);
+});
+
+// DYE2 names the recipe `<profile word> <bean> [beverage]` and never guesses a drink from the
+// shot, so the only way a drink word reaches the name is the item's own typed beverage field --
+// which lives on the KV row, not on the workflow, so DYE2 cannot read it back for itself.
+test('saveToRecipes sends a typed beverage, and omits the field when there is none', async () => {
+    let r = buildSaveRecipe();
+    await r.api.saveToRecipes(null, 'Cappuccino');
+    assert.deepEqual(JSON.parse(r.state.posts[0].opts.body), { beverage: 'Cappuccino' });
+
+    r = buildSaveRecipe();
+    await r.api.saveToRecipes('3', 'Flat White');
+    assert.deepEqual(JSON.parse(r.state.posts[0].opts.body), { slot: 3, beverage: 'Flat White' },
+        'a blank cell save carries it too');
+
+    r = buildSaveRecipe();
+    await r.api.saveToRecipes('3', '');
+    assert.deepEqual(JSON.parse(r.state.posts[0].opts.body), { slot: 3 },
+        'nothing typed: the field is absent, so DYE2 names from profile + bean alone');
+});
+
+test('the retry after a DYE2 update keeps the beverage', async () => {
+    const { api, state } = buildSaveRecipe({ status: 404, updated: true });
+    await api.saveToRecipes(null, 'Latte');
+    assert.equal(state.posts.length, 2, 'one retry');
+    assert.deepEqual(JSON.parse(state.posts[1].opts.body), { beverage: 'Latte' },
+        'the retried POST is not a bare one -- the third arg is the retried flag, not the beverage');
+});
+
+// save-recipe arms the new recipeId in the workflow, so the new recipe is the selected item.
+// Without this the strip keeps highlighting the favourite it was saved from until the next repoll.
+test('saveToRecipes takes DYE2 derived selection so the new recipe highlights at once', async () => {
+    const { api, state } = buildSaveRecipe();
+    await api.saveToRecipes(null);
+    assert.equal(state.syncs, 1);
+    const sync = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8')
+        .match(/async function saveToRecipes\([\s\S]*?\r?\n\}/)[0];
+    assert.ok(sync.includes('syncSelection({ mirror: false })'), 'the derived route only, never the stale mirror');
+    assert.ok(sync.indexOf('loadDyeStripData') < sync.indexOf('syncSelection'),
+        'caches first: armedSelectionId resolves the new id against them');
 });
