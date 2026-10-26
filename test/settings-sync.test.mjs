@@ -565,3 +565,59 @@ test('a late restore announces the keys it applied', () => {
     }
     assert.match(ui, /initPresetRestoreListener\(\);/);
 });
+
+// ── Consumer-side ordering (#168) ───────────────────────────────────────────
+//
+// hydrate() being correct is not enough: a reader that runs before it finishes gets the
+// DEFAULT, and nothing repainted the surface afterwards. dyeStrip is the case that bit --
+// `streamline.dye2Enabled` is on SYNCED_KEYS, and index.html starts initDyeStrip from its
+// own DOMContentLoaded listener, separate from app.js's gated one, so on a second client (or
+// any client after an app update, which wipes WebView storage) the DYE button stayed missing
+// for the whole session while Settings showed the extension enabled.
+
+test('the DYE2 boot reader waits for hydration, and still listens for a late restore', () => {
+    const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const init = source.slice(source.indexOf('export async function initDyeStrip('));
+    const body = init.slice(0, init.indexOf('\n}\n'));
+
+    assert.ok(body.includes('await settingsReady'), 'the flag is read behind settingsReady');
+    assert.ok(body.indexOf('await settingsReady') < body.indexOf('const on = isDye2Enabled()'),
+        'and the await comes first, or the read answers with the pre-hydration default');
+    // settingsReady resolves even when Decaid never answered, so the gate alone is not
+    // enough: the real value then arrives through the retry ladder's restore event.
+    assert.ok(/addEventListener\(SETTINGS_RESTORED_EVENT/.test(body), 'a late restore is heard');
+    assert.ok(body.indexOf('addEventListener(SETTINGS_RESTORED_EVENT') < body.indexOf('await settingsReady'),
+        'registered before the await: the on-time hydrate dispatches while settingsReady is pending');
+    assert.ok(body.includes('ENABLED_KEY in (event.detail || {})'),
+        'and only reacts to its own key');
+});
+
+function buildDyeUi() {
+    const calls = [];
+    const body = lift('dyeStrip.js', [/async function applyDye2Ui\([\s\S]*?\r?\n\}/]);
+    const api = new Function('enableDye2Ui', 'disableDye2Ui',
+        `let dye2UiOn = null;\n${body}\nreturn { applyDye2Ui, shown: () => dye2UiOn };`
+    )(async () => { calls.push('enable'); }, () => { calls.push('disable'); });
+    return { api, calls };
+}
+
+// disableDye2Ui() bumps applySeq, clears the armed item, forgets the parked selection and
+// releases DYE2's selection, so running it on a restore that only confirms what the header
+// already shows would throw away live state.
+test('the surface is only touched when it actually changes', async () => {
+    const { api, calls } = buildDyeUi();
+    await api.applyDye2Ui(false);          // boot, flag off
+    await api.applyDye2Ui(false);          // a restore confirming off
+    assert.deepEqual(calls, ['disable'], 'the confirming restore is a no-op');
+    await api.applyDye2Ui(true);           // the late restore that fixes #168
+    assert.deepEqual(calls, ['disable', 'enable']);
+    assert.equal(api.shown(), true);
+    await api.applyDye2Ui(true);
+    assert.deepEqual(calls, ['disable', 'enable'], 'and so is a confirming restore when on');
+});
+
+test('an unhydrated boot that turns out to be enabled shows the surface once', async () => {
+    const { api, calls } = buildDyeUi();
+    await api.applyDye2Ui(true);
+    assert.deepEqual(calls, ['enable'], 'no spurious disable first');
+});

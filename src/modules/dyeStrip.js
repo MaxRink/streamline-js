@@ -26,6 +26,7 @@ import { fitTextToBox, getTranslation } from './i18n.js';
 import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode, showToast } from './ui.js';
+import { settingsReady, SETTINGS_RESTORED_EVENT } from './settingsSync.js';
 import { recipeIdPatch, SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, selectionModified, recipeCellState, recipeStripCells, favStripCells } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
@@ -71,6 +72,11 @@ let dye2RecordsDialIn = false;
 // plugin list; this is what decides who records, per apply.
 let dye2Armed = false;
 let applySeq = 0; // taps in quick succession: only the newest apply arms
+// What the header is currently showing, not what the flag says: null until the first
+// decision. disableDye2Ui() is not inert (it bumps applySeq, clears the armed item and
+// releases DYE2's selection), so it must only run when the header really is changing.
+let dye2UiOn = null;
+let restoreListenerRegistered = false;
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -1232,6 +1238,7 @@ function wireOnce() {
 // Reveal the DYE2 UI: shift the profile nav right to make room, show the toggle +
 // DYE button, wire listeners, load KV data, restore the saved P/F/R mode.
 export async function enableDye2Ui() {
+    dye2UiOn = true;
     const profileNav = document.getElementById('profile-fav-nav');
     const toggle = document.getElementById('dye-strip-toggle');
     const dyeBtn = document.getElementById('dye-open-btn');
@@ -1250,6 +1257,7 @@ export async function enableDye2Ui() {
 // Restore the stock header: hide the toggle + DYE button + strip and move the
 // profile nav back to its original position (byte-identical to stock Streamline).
 export function disableDye2Ui() {
+    dye2UiOn = false;
     applySeq++; // drop any arm still retrying in the background
     clearActiveItem();
     // DYE2 keeps recording against what it has armed whatever the header shows, so a
@@ -1574,6 +1582,16 @@ async function foldWorkflowIntoItem(item, workflow) {
 
 let workflowListenerRegistered = false;
 
+// Show or hide the DYE2 header surfaces, but only on a real change -- see dye2UiOn. The flag
+// is set here rather than left to the two functions below, so the decision does not depend on
+// a side effect of what it calls; they set it too, for a caller that reaches them directly
+// (window.applyDye2Enabled, from the Extensions toggle).
+async function applyDye2Ui(on) {
+    if (on === dye2UiOn) return;
+    dye2UiOn = on;
+    if (on) await enableDye2Ui(); else disableDye2Ui();
+}
+
 export async function initDyeStrip() {
     // Bridge for the Extensions-settings toggle to flip the header live (the header
     // stays in the DOM behind the settings overlay); if it isn't present the flag
@@ -1585,10 +1603,25 @@ export async function initDyeStrip() {
         onWorkflowUpdated(handleWorkflowUpdatedForAutoSave);
     }
 
-    if (isDye2Enabled()) {
-        await enableDye2Ui();
-        await restoreParkedSelection().catch(e => logger.warn('dyeStrip: could not restore selection', e));
-    } else {
-        disableDye2Ui();
+    // settingsReady resolves either way, so a Decaid that is not listening yet leaves the
+    // flag unhydrated and hands the real value over later, through the retry ladder's restore
+    // event (settingsSync's `boot`). Registered BEFORE the await: the on-time hydrate
+    // dispatches the event while settingsReady is still pending.
+    if (!restoreListenerRegistered) {
+        restoreListenerRegistered = true;
+        window.addEventListener(SETTINGS_RESTORED_EVENT, event => {
+            if (!(ENABLED_KEY in (event.detail || {}))) return;
+            applyDye2Ui(isDye2Enabled()).catch(e => logger.warn('dyeStrip: late enable failed', e));
+        });
     }
+
+    // This flag is synchronized, and reading it before settingsSync has hydrated answers with
+    // the DEFAULT (off). Nothing repainted it afterwards, so a second client -- or any client
+    // after an app update, since WebView storage does not survive one -- lost the DYE button
+    // for the whole session while Settings showed the extension enabled (#168).
+    await settingsReady;
+
+    const on = isDye2Enabled();
+    await applyDye2Ui(on);
+    if (on) await restoreParkedSelection().catch(e => logger.warn('dyeStrip: could not restore selection', e));
 }
