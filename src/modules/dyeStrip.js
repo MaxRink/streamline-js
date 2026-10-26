@@ -133,10 +133,10 @@ function openCellMenu(btn, edit, kind, item, slot) {
     openContextMenu(btn, [
         { label: getTranslation('Edit in DYE2'), onSelect: edit },
         ...(selected ? [{ label: getTranslation('Save changes'), onSelect: () => saveChanges(kind, item) }] : []),
-        // Saves the live workflow into THIS cell's slot, independent of the selection; the label
-        // names the recipe being replaced (it drops to the library, not deleted). R strip only: a
-        // new recipe is invisible from the F strip.
-        ...(kind === 'recipe' ? [{ label: `${getTranslation('Replace')} ${recipeLabel(item)}`, onSelect: () => saveToRecipes(slot) }] : []),
+        // Opens DYE2's recipe library targeted at THIS cell's slot: the barista picks a card and
+        // it is assigned to the button they long-pressed, replacing the recipe named in the label
+        // (which drops to the library, not deleted). R strip only: the F strip holds no slots.
+        ...(kind === 'recipe' ? [{ label: `${getTranslation('Replace')} ${recipeLabel(item)}`, onSelect: () => openPluginOverlay('select-recipe', { slot }) }] : []),
         { divider: true },
         { label: getTranslation('Clear button'), danger: true, onSelect: () => clearCell(kind, item) },
     ]);

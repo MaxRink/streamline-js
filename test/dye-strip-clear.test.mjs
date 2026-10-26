@@ -175,16 +175,24 @@ test('saveChanges retries once after DYE2 auto-updated', async () => {
     assert.equal(state.posts.length, 2, 'one retry, no loop');
 });
 
-test('Save-to-slot is in the recipe cell menu, between Save changes and the divider, and on blank R cells', () => {
+// "Replace <name>" hands the slot to DYE2's recipe library rather than saving the live
+// workflow: the barista picks a card there and it is assigned to the button they pressed.
+// Saving the machine's state as a NEW recipe is still what a BLANK cell's menu does.
+test('Replace opens the recipe picker targeted at the pressed slot; blank cells still save the live workflow', () => {
     const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
     const menu = source.slice(source.indexOf('function openCellMenu('));
     const body = menu.slice(0, menu.indexOf('\n}\n'));
-    assert.ok(/kind === 'recipe' \? \[\{ label: `\$\{getTranslation\('Replace'\)\} \$\{recipeLabel\(item\)\}`, onSelect: \(\) => saveToRecipes\(slot\)/.test(body), 'recipe cells only, names the recipe replaced, passes the slot');
+    assert.ok(/kind === 'recipe' \? \[\{ label: `\$\{getTranslation\('Replace'\)\} \$\{recipeLabel\(item\)\}`, onSelect: \(\) => openPluginOverlay\('select-recipe', \{ slot \}\)/.test(body),
+        'recipe cells only, names the recipe replaced, sends the slot to the picker');
+    // Order-independent: the entry itself must not reach saveToRecipes at all.
+    const replaceEntry = body.slice(body.indexOf("getTranslation('Replace')"));
+    assert.ok(!replaceEntry.slice(0, replaceEntry.indexOf('divider')).includes('saveToRecipes'),
+        'Replace no longer writes the live workflow over the slot');
     assert.ok(body.indexOf("'Save changes'") < body.indexOf("'Replace'") && body.indexOf("'Replace'") < body.indexOf('divider'),
         'after Save changes, before the divider');
     assert.ok(!/'Replace'[\s\S]*dye2RecordsDialIn/.test(body), 'not gated on dial-in recording');
     assert.ok(/makeCell\('', CELL_IDLE, \(\) => editRecipe\(\{ id: slot, blank: true \}\),\s*btn => openContextMenu\(btn, \[\{ label: `\$\{getTranslation\('Save to recipe'\)\} \$\{slot\}`, onSelect: \(\) => saveToRecipes\(slot\)/.test(source),
-        'a blank R cell offers it too');
+        'a blank R cell still saves the live workflow into its slot');
 });
 
 function buildSaveRecipe({ status = 200, json = { id: 'r1', name: 'Turbo Ristretto' }, updated = false } = {}) {
