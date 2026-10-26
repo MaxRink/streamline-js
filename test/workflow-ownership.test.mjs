@@ -93,7 +93,7 @@ const SNAPSHOT = {
     'dye.clearOnDisable': 'context.baristaName context.basket context.beanBatchId context.coffeeName context.coffeeRoaster context.drinkerName context.extras.dye context.extras.rpm',
     'profile.resetDefaults': 'context.extras.dye context.grinderSetting context.targetDoseWeight context.targetYield profile',
     'profile.send': 'context.extras.dye context.grinderSetting context.targetDoseWeight context.targetYield profile',
-    'profile.wake': 'context.extras.dye context.grinderSetting context.targetDoseWeight context.targetYield',
+    'profile.wake': 'context.extras.dye context.grinderSetting context.targetDoseWeight context.targetYield profile',
     'settings.hotWater': 'hotWaterData.duration hotWaterData.flow hotWaterData.targetTemperature hotWaterData.volume',
     'settings.rinse': 'rinseData',
     'settings.steam': 'steamSettings.duration steamSettings.flow steamSettings.stopAtTemperature steamSettings.targetTemperature',
@@ -241,6 +241,11 @@ test('every apply path and every profile switch settles the recipe claim', () =>
     for (const writer of ['profile.send', 'profile.wake', 'profile.resetDefaults']) {
         assert.ok(WORKFLOW_WRITERS[writer].includes('context.extras.dye'),
             `${writer} replaces the profile, so it must own the recipe claim`);
+        // All three hand over a built profile document, so all three own `profile`.
+        // profile.wake was the sibling that did not, and assertDeclaredFields threw
+        // before every wake PUT -- the feature was dead, silently (dye2 #39).
+        assert.ok(WORKFLOW_WRITERS[writer].includes('profile'),
+            `${writer} sends a profile document, so it must own 'profile'`);
     }
     // The payload is sometimes a literal at the call and sometimes a variable
     // built above it. Resolve the variable rather than searching nearby text --

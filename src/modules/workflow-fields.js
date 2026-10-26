@@ -108,7 +108,9 @@ export const WORKFLOW_WRITERS = {
     // --- skin: profile switches --------------------------------------------
     // A profile change nulls recipeId: the recipe's identity IS its profile.
     'profile.send': ['profile', 'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting', 'context.extras.dye'],
-    'profile.wake': ['context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting', 'context.extras.dye'],
+    // Waking sends the profile document, exactly as profile.send does -- omitting
+    // `profile` here threw before the PUT and killed the feature outright (dye2 #39).
+    'profile.wake': ['profile', 'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting', 'context.extras.dye'],
     'profile.resetDefaults': ['profile', 'context.targetDoseWeight', 'context.targetYield', 'context.grinderSetting', 'context.extras.dye'],
 
     // --- skin: bean identity -----------------------------------------------
