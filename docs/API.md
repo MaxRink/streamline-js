@@ -143,9 +143,11 @@ percentage or `null`. Missing or null metadata stays unknown. A host without
 this endpoint may return 404, 405 or 501; 503 means no connected scale.
 
 The inline Preferred control remains available for every scale. Skale devices
-add a Settings popup only when the host exposes `skalePoweredByUsbByDevice`.
-That key requires a Decaid release containing [decentespresso/decaid#745](https://github.com/decentespresso/decaid/pull/745),
-which is still open. There is no legacy USB-setting fallback. The switch is a
+add a Settings popup only when the host exposes the per-device
+`skalePoweredByUsbByDevice` map in its settings. The intended provider is the
+Skale driver-runtime plugin
+([MaxRink/decaid-skale-plugin](https://github.com/MaxRink/decaid-skale-plugin)).
+Hosts without the key show no USB control and behave as before. The switch is a
 manual USB-power declaration; the UI hides the battery level while enabled.
 
 ```bash
