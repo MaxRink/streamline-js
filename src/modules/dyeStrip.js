@@ -27,7 +27,7 @@ import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode, showToast } from './ui.js';
 import { settingsReady, SETTINGS_RESTORED_EVENT } from './settingsSync.js';
-import { recipeIdPatch, SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, profilePatchWithSteps, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, selectionModified, recipeCellState, recipeStripCells, favStripCells } from './dye-selection.js';
+import { recipeIdPatch, SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, profilePatchWithSteps, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, pluginHasEndpoint, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, selectionModified, recipeCellState, recipeStripCells, favStripCells } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
 const RECIPES_KEY = 'recipes';
@@ -67,6 +67,11 @@ let activeModified = false; // DYE2 says the highlighted recipe has drifted: its
 // Does the installed DYE2 record dial-in edits itself? Re-read with the strip data
 // (a plugin update lands without a skin reload). False keeps the legacy auto-save.
 let dye2RecordsDialIn = false;
+// Does the installed DYE2 serve its recipe-library page? The "Select recipe" /
+// "Replace ..." menu items open it, and a DYE2 that never declared the endpoint
+// answers Decaid's 404 inside the overlay instead. Optimistic until a readable
+// plugin list says otherwise, so an unreachable bridge hides nothing.
+let dye2HasSelectRecipe = true;
 // DYE2 confirmed (200) the item the last apply armed, so it is the one recording and
 // the skin writes nothing. The capability flag above is only a hint read from the
 // plugin list; this is what decides who records, per apply.
@@ -94,6 +99,7 @@ export async function loadDyeStripData() {
     // initial false), so the fallback auto-save stays on: writing the same values
     // twice is recoverable, writing them nowhere is not.
     dye2RecordsDialIn = resolveRecordsDialIn(dye2RecordsDialIn, plugins, p => pluginRecordsDialIn(p, PLUGIN_ID));
+    if (plugins != null) dye2HasSelectRecipe = pluginHasEndpoint(plugins, 'select-recipe', PLUGIN_ID);
     logger.info(`dyeStrip: loaded ${favCache.length} favs, ${recipeCache.length} recipes${dye2RecordsDialIn ? ' (DYE2 records dial-in)' : ''}`);
 }
 
@@ -142,7 +148,7 @@ function openCellMenu(btn, edit, kind, item, slot) {
         // Opens DYE2's recipe library targeted at THIS cell's slot: the barista picks a card and
         // it is assigned to the button they long-pressed, replacing the recipe named in the label
         // (which drops to the library, not deleted). R strip only: the F strip holds no slots.
-        ...(kind === 'recipe' ? [{ label: `${getTranslation('Replace')} ${recipeLabel(item)}`, onSelect: () => openPluginOverlay('select-recipe', { slot }) }] : []),
+        ...(kind === 'recipe' && dye2HasSelectRecipe ? [{ label: `${getTranslation('Replace')} ${recipeLabel(item)}`, onSelect: () => openPluginOverlay('select-recipe', { slot }) }] : []),
         // A favourite and a recent have no save target of their own, so keeping a dial-in from one
         // means making a recipe of it (#159 acceptance 4). Saved to the library with no slot: it
         // shows up as a card in DYE2's recipe list, and the barista gives it a button from there.
@@ -348,7 +354,7 @@ export function renderStrip(mode) {
                 // still opens a blank recipe form on this slot.
                 strip.appendChild(makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true }),
                     btn => openContextMenu(btn, [
-                        { label: getTranslation('Select recipe'), onSelect: () => openPluginOverlay('select-recipe', { slot }) },
+                        ...(dye2HasSelectRecipe ? [{ label: getTranslation('Select recipe'), onSelect: () => openPluginOverlay('select-recipe', { slot }) }] : []),
                         { label: `${getTranslation('Save to recipe')} ${slot}`, onSelect: () => saveToRecipes(slot) },
                     ])));
                 return;

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
     parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp, recipeStripCells, favStripCells,
-    recipeIdPatch, selectionModified, recipeCellState, profilePatchWithSteps,
+    recipeIdPatch, selectionModified, recipeCellState, profilePatchWithSteps, pluginHasEndpoint,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -103,6 +103,19 @@ test('pluginRecordsDialIn: only a loaded DYE2 that declares the selection endpoi
     assert.equal(pluginRecordsDialIn(null), false);
     assert.equal(pluginRecordsDialIn([]), false);
     assert.equal(pluginRecordsDialIn([{ id: 'dye2.reaplugin', loaded: true }]), false);
+});
+
+// DYE2's pages are api endpoints, so one the installed build never declared
+// answers Decaid's 404 inside the overlay -- what the barista sees as a
+// page-not-found where "Select recipe" should have opened the library.
+test('pluginHasEndpoint: a page the installed DYE2 does not declare is absent', () => {
+    const api = [{ type: 'http', id: 'recipe-edit' }, { type: 'http', id: 'select-recipe' }];
+    assert.equal(pluginHasEndpoint([{ id: 'dye2.reaplugin', loaded: true, api }], 'select-recipe'), true);
+    // an older DYE2: recipe-edit (the blank cell's tap) but no library page
+    assert.equal(pluginHasEndpoint([{ id: 'dye2.reaplugin', loaded: true, api: [{ type: 'http', id: 'recipe-edit' }] }], 'select-recipe'), false);
+    assert.equal(pluginHasEndpoint([{ id: 'dye2.reaplugin', loaded: false, api }], 'select-recipe'), false);
+    assert.equal(pluginHasEndpoint([{ id: 'dye2.reaplugin', loaded: true, api: [{ type: 'websocket', id: 'select-recipe' }] }], 'select-recipe'), false);
+    assert.equal(pluginHasEndpoint(null, 'select-recipe'), false);
 });
 
 test('armedSelectionId: the cached item own id, or null when it is gone', () => {
@@ -344,5 +357,15 @@ test('dyeStrip never patches the workflow with a stepless profile', () => {
     for (const line of assignments) {
         assert.match(line, /patch\.profile = full;$/,
             `a profile patch must come from profilePatchWithSteps, not a stub: ${line}`);
+    }
+});
+
+test('the recipe-library menu items are offered only when DYE2 serves that page', () => {
+    const strip = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const lines = strip.split('\n').filter(l => l.includes("openPluginOverlay('select-recipe'"));
+    assert.equal(lines.length, 2, 'the empty cell\'s "Select recipe" and a filled cell\'s "Replace ..."');
+    for (const line of lines) {
+        assert.match(line, /dye2HasSelectRecipe/,
+            `ungated: an older DYE2 answers 404 in the overlay instead: ${line.trim()}`);
     }
 });

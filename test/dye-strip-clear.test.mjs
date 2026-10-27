@@ -182,8 +182,9 @@ test('Replace opens the recipe picker targeted at the pressed slot; blank cells 
     const source = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
     const menu = source.slice(source.indexOf('function openCellMenu('));
     const body = menu.slice(0, menu.indexOf('\n}\n'));
-    assert.ok(/kind === 'recipe' \? \[\{ label: `\$\{getTranslation\('Replace'\)\} \$\{recipeLabel\(item\)\}`, onSelect: \(\) => openPluginOverlay\('select-recipe', \{ slot \}\)/.test(body),
-        'recipe cells only, names the recipe replaced, sends the slot to the picker');
+    assert.ok(/kind === 'recipe' && dye2HasSelectRecipe \? \[\{ label: `\$\{getTranslation\('Replace'\)\} \$\{recipeLabel\(item\)\}`, onSelect: \(\) => openPluginOverlay\('select-recipe', \{ slot \}\)/.test(body),
+        'recipe cells only, names the recipe replaced, sends the slot to the picker, '
+        + 'and only where the installed DYE2 serves that page');
     // Order-independent: the entry itself must not reach saveToRecipes at all. Bounded by its own
     // ternary, not by the divider -- "Save to recipes" is a later entry in the same window.
     const replaceEntry = body.slice(body.indexOf("getTranslation('Replace')"));
@@ -201,8 +202,9 @@ test('a blank R cell offers Select recipe and Save to recipe, in that order', ()
     const blank = source.slice(source.indexOf("makeCell('', CELL_IDLE, () => editRecipe({ id: slot, blank: true })"));
     const body = blank.slice(0, blank.indexOf('return;'));
 
-    assert.ok(/\{ label: getTranslation\('Select recipe'\), onSelect: \(\) => openPluginOverlay\('select-recipe', \{ slot \}\) \}/.test(body),
-        'Select recipe opens the picker targeted at this empty slot');
+    assert.ok(/dye2HasSelectRecipe \? \[\{ label: getTranslation\('Select recipe'\), onSelect: \(\) => openPluginOverlay\('select-recipe', \{ slot \}\) \}\]/.test(body),
+        'Select recipe opens the picker targeted at this empty slot, and is offered only '
+        + 'where the installed DYE2 serves that page (an older one answers 404 in the overlay)');
     assert.ok(/\{ label: `\$\{getTranslation\('Save to recipe'\)\} \$\{slot\}`, onSelect: \(\) => saveToRecipes\(slot\) \}/.test(body),
         'Save to recipe still captures the live workflow into this slot');
     assert.ok(body.indexOf("'Select recipe'") < body.indexOf("'Save to recipe'"),

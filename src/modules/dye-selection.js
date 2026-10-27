@@ -150,9 +150,22 @@ export function changedFields(patch, stored) {
 // auto-save in dyeStrip.js stays the only way its items follow the dashboard.
 // The endpoint list comes from GET /api/v1/plugins, which the strip already reads.
 export function pluginRecordsDialIn(plugins, pluginId = 'dye2.reaplugin') {
+    return pluginHasEndpoint(plugins, 'selection', pluginId);
+}
+
+/**
+ * Does the installed plugin serve this http endpoint?
+ *
+ * DYE2's pages ARE api endpoints (Decaid plugins_handler: an endpoint the
+ * manifest does not declare answers 404 `endpoint <id> not available`), so a
+ * menu item that opens one the installed build has never heard of lands the
+ * barista on that error inside the overlay. The manifest's endpoint list comes
+ * with GET /api/v1/plugins, which the strip already reads.
+ */
+export function pluginHasEndpoint(plugins, endpoint, pluginId = 'dye2.reaplugin') {
     const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === pluginId) : null;
     if (!plugin?.loaded || !Array.isArray(plugin.api)) return false;
-    return plugin.api.some(e => e?.type === 'http' && e?.id === 'selection');
+    return plugin.api.some(e => e?.type === 'http' && e?.id === endpoint);
 }
 
 /**
