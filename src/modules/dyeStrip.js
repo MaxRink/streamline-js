@@ -516,18 +516,21 @@ export async function applyRecipe(recipe) {
 // Resolve `stub` (an { id, title } thin reference, an id string, or an
 // already-full Profile) to the full Profile object (steps included) via
 // GET /profiles, so callers can PUT the real thing. Returns null (never
-// throws) when the id can't be resolved -- an ad-hoc/deleted profile with no
-// library record has nothing else to load; callers fall back to the thin
-// stub and a warning is logged.
+// throws) when there is nothing to resolve it from -- an ad-hoc profile with no
+// library record -- and the caller then leaves the loaded profile alone.
 async function resolveFullProfile(stub) {
     if (!stub) return null;
-    const id = typeof stub === 'string' ? stub : stub.id;
-    if (!id) return null;
+    // Before the id guard below, not after: a DYE2 row that captured the whole
+    // profile stores Decaid's `workflow.profile`, which carries no id at all, so
+    // reading the id first threw away every fully-captured recipe.
+    //
     // steps.length, not just Array.isArray: older DYE2 rows store the profile as
     // { id, title, steps: [] }, and treating that as full PUTs a profile with no steps --
     // the live curve keeps running under the recipe's name, which reads as "the recipe did
     // not load". An empty array means the steps were never captured, so resolve by id.
     if (typeof stub === 'object' && profilePatchWithSteps(stub)) return stub; // already full
+    const id = typeof stub === 'string' ? stub : stub.id;
+    if (!id) return null;
     try {
         const records = await getProfiles();
         const record = Array.isArray(records) ? records.find(r => r && r.id === id) : null;

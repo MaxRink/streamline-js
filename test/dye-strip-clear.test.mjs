@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { profilePatchWithSteps } from '../src/modules/dye-selection.js';
 
 // "Clear button" on an R/F cell takes the item off the strip, mirroring the profile strip's
 // own favourite menu. DYE2 owns the flag and both flags default to shown when absent, so
@@ -450,4 +451,79 @@ test('saveToRecipes takes DYE2 derived selection so the new recipe highlights at
     assert.ok(sync.includes('syncSelection({ mirror: false })'), 'the derived route only, never the stale mirror');
     assert.ok(sync.indexOf('loadDyeStripData') < sync.indexOf('syncSelection'),
         'caches first: armedSelectionId resolves the new id against them');
+});
+
+// ── What an apply patches as its profile ────────────────────────────────────
+// PUT /workflow deep-merges, so a profile without steps renames the loaded one
+// instead of replacing it: the machine keeps the previous curve under the item's
+// name. An unresolvable profile must therefore drop out of the patch. The trap
+// is the other direction -- a DYE2 row that captured the whole profile stores
+// Decaid's `workflow.profile`, which carries NO id, so resolving the id first
+// threw away every fully-captured recipe and the apply sent no profile at all.
+const resolveBody = lift([
+    /async function resolveFullProfile\([\s\S]*?\r?\n\}/,
+    /async function applyStoredWorkflow\([\s\S]*?\r?\n\}/,
+    /async function applyFavLegacy\([\s\S]*?\r?\n\}/,
+    /async function applyRecipeLegacy\([\s\S]*?\r?\n\}/,
+]);
+
+const fullProfile = { version: '2', title: 'Advanced spring lever test', steps: [{ name: 'fill' }, { name: 'pour' }] };
+
+function buildApply({ library = [], fail = false } = {}) {
+    const state = { warnings: [], fetches: 0 };
+    return new Function(
+        'getProfiles', 'logger', 'profilePatchWithSteps', 'state',
+        `${resolveBody}
+         return { resolveFullProfile, applyStoredWorkflow, applyFavLegacy, applyRecipeLegacy };`
+    )(
+        async () => { state.fetches++; if (fail) throw new Error('bridge down'); return library; },
+        { warn: (m) => state.warnings.push(m), info() {}, error() {} },
+        profilePatchWithSteps, // the real helper, not a stand-in that could drift from it
+        state,
+    );
+}
+
+test('a recipe that captured the whole profile is sent as-is, id or no id', async () => {
+    const api = buildApply();
+    // Decaid's workflow.profile: full steps, no id anywhere.
+    assert.deepEqual(await api.resolveFullProfile(fullProfile), fullProfile);
+    const patch = await api.applyStoredWorkflow({ context: { targetDoseWeight: 19 }, profile: fullProfile });
+    assert.deepEqual(patch.profile, fullProfile, 'the captured profile reaches the patch');
+    assert.deepEqual(patch.context, { targetDoseWeight: 19 });
+});
+
+test('a profile that cannot be resolved leaves the loaded one alone', async () => {
+    const api = buildApply({ library: [{ id: 'profile:abc', profile: fullProfile }] });
+    // The thin stub DYE2 rows hold: resolvable by id.
+    assert.deepEqual(await api.resolveFullProfile({ id: 'profile:abc', title: 'Advanced spring lever test' }), fullProfile);
+    // Unresolvable, and a `steps: []` row, and a bare {}: no profile in the patch at all.
+    for (const stored of [{ id: 'profile:gone', title: 'Cremina&Gusto' }, { id: 'profile:gone', title: 'X', steps: [] }, {}]) {
+        const patch = await api.applyStoredWorkflow({ context: { targetYield: 95 }, profile: stored });
+        assert.ok(!('profile' in patch), `a stepless profile must not be patched: ${JSON.stringify(stored)}`);
+        assert.deepEqual(patch.context, { targetYield: 95 }, 'the rest of the apply still lands');
+    }
+    // A bridge that simply failed is the same answer, never a throw.
+    const down = buildApply({ fail: true });
+    assert.equal(await down.resolveFullProfile({ id: 'profile:abc', title: 'A' }), null);
+});
+
+test('the legacy favourite and recipe paths follow the same rule', async () => {
+    const api = buildApply({ library: [{ id: 'profile:abc', profile: fullProfile }] });
+
+    const favSnapshot = await api.applyFavLegacy({ snapshot: { profileSnapshot: fullProfile, profileId: 'profile:gone' } });
+    assert.deepEqual(favSnapshot.profile, fullProfile, 'a captured snapshot wins');
+    // A `steps: []` snapshot is not full: fall through to the stored id rather than patching it.
+    const favFallThrough = await api.applyFavLegacy({ snapshot: { profileSnapshot: { title: 'A', steps: [] }, profileId: 'profile:abc' } });
+    assert.deepEqual(favFallThrough.profile, fullProfile);
+    const favGone = await api.applyFavLegacy({ snapshot: { dose: 18, profileId: 'profile:gone', profileTitle: 'Cremina&Gusto' } });
+    assert.ok(!('profile' in favGone), 'no steps anywhere means no profile patch');
+    assert.equal(favGone.context.targetDoseWeight, 18, 'the dial still applies');
+
+    const recipeGone = await api.applyRecipeLegacy({
+        dashboardVariables: { dose: 19, drink: 95 }, profileId: 'profile:gone', profileTitle: 'Cremina&Gusto',
+    });
+    assert.ok(!('profile' in recipeGone));
+    assert.deepEqual(recipeGone.context, { targetDoseWeight: 19, targetYield: 95 });
+    const recipeOk = await api.applyRecipeLegacy({ dashboardVariables: {}, profileSnapshot: fullProfile, profileId: 'profile:gone' });
+    assert.deepEqual(recipeOk.profile, fullProfile);
 });
