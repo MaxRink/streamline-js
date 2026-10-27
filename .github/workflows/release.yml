@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # Manual re-run of a build that failed for a reason outside the repo (a flaky
+  # runner, an expired token). Dispatch it on the tag to rebuild a release, or
+  # on main to redeploy dist — the ref decides, same as a push.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -62,14 +66,27 @@ jobs:
           cat dist/skin-manifest.json
 
 
-      # On main pushes (dist branch deploys), suffix the id so the dist build
-      # installs alongside the released skin instead of clobbering it.
-      - name: Set dist manifest id
+      # On main pushes (dist branch deploys): suffix the id so the dist build
+      # installs alongside the released skin instead of clobbering it, mark the
+      # name so it is obvious which one is running, and stamp a prerelease
+      # version so two dist builds are tellable apart. Without the stamp every
+      # dist build reports the released number, so "installed version" says
+      # nothing about which build is on the tablet.
+      - name: Stamp the dist manifest and the bundle version
         if: github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
-          jq '.id = "streamline.js-dist"' dist/skin-manifest.json > dist/skin-manifest.json.tmp
+          base=$(jq -r '.version' dist/skin-manifest.json)
+          dev="${base}-dev.$(echo "${{ github.sha }}" | cut -c1-7).${{ github.run_number }}"
+          jq --arg v "$dev" '.id = "streamline.js-dist" | .name = "\(.name) Dev" | .version = $v' \
+            dist/skin-manifest.json > dist/skin-manifest.json.tmp
           mv dist/skin-manifest.json.tmp dist/skin-manifest.json
+          # APP_VERSION is what the RUNNING bundle reports; the manifest is what
+          # the bridge reports from disk. The skin-update check compares the two,
+          # so leaving this at the released number would make every dist load
+          # look like a pending update.
+          sed -i "s/^export const APP_VERSION = '.*';/export const APP_VERSION = '${dev}';/" dist/src/version.js
+          grep -n "APP_VERSION" dist/src/version.js
           cat dist/skin-manifest.json
 
       - name: Validate skin-manifest.json
