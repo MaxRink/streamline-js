@@ -27,7 +27,7 @@ import { stripRightInset } from './header-strip-inset.js';
 import { openContextMenu } from './context-menu.js';
 import { setupPressAndHold, setSteamTileModeIfSafe, setHotWaterTileMode, showToast } from './ui.js';
 import { settingsReady, SETTINGS_RESTORED_EVENT } from './settingsSync.js';
-import { recipeIdPatch, SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, selectionModified, recipeCellState, recipeStripCells, favStripCells } from './dye-selection.js';
+import { recipeIdPatch, SELECTION_KEY, RETURN_PARAM, profileFingerprint, profileDrifted, profilePatchWithSteps, serializeSelection, resolveReturn, parseDyeReturn, changedFields, pluginRecordsDialIn, keepPreviousOnFailure, resolveRecordsDialIn, armedSelectionId, selectionModified, recipeCellState, recipeStripCells, favStripCells } from './dye-selection.js';
 
 const AF_KEY = 'autoFavourites';
 const RECIPES_KEY = 'recipes';
@@ -521,7 +521,7 @@ async function resolveFullProfile(stub) {
     // { id, title, steps: [] }, and treating that as full PUTs a profile with no steps --
     // the live curve keeps running under the recipe's name, which reads as "the recipe did
     // not load". An empty array means the steps were never captured, so resolve by id.
-    if (typeof stub === 'object' && Array.isArray(stub.steps) && stub.steps.length) return stub; // already full
+    if (typeof stub === 'object' && profilePatchWithSteps(stub)) return stub; // already full
     try {
         const records = await getProfiles();
         const record = Array.isArray(records) ? records.find(r => r && r.id === id) : null;
@@ -529,15 +529,16 @@ async function resolveFullProfile(stub) {
     } catch (e) {
         logger.warn(`resolveFullProfile: failed to fetch profiles while resolving ${id}`, e);
     }
-    logger.warn(`resolveFullProfile: could not resolve profile ${id} to a full record (deleted/ad-hoc profile?) — applying id/title only, brew steps will not change`);
+    logger.warn(`resolveFullProfile: could not resolve profile ${id} to a full record (purged/ad-hoc profile?) — the loaded profile is left alone`);
     return null;
 }
 
 // The stored `workflow` is a ready-to-PUT { context, profile? }. Merge its context
 // over the live context (preserving fields it doesn't set) and its profile if any.
-// The profile is resolved to its full record as a backstop regardless of what
-// shape was actually stored (older KV items may still carry the legacy thin
-// { id, title } stub — see resolveFullProfile).
+// The profile is resolved to its full record regardless of what shape was
+// actually stored (older KV items may still carry the legacy thin { id, title }
+// stub — see resolveFullProfile), and is left out of the patch when it cannot
+// be resolved.
 // Fold a context fragment into a patch, keeping `extras` a merge rather than a
 // replace: the legacy paths may already have put rpm or note there.
 function mergeContext(patch, fragment) {
@@ -555,7 +556,10 @@ async function applyStoredWorkflow(workflow) {
     const patch = {};
     if (workflow.context) patch.context = { ...workflow.context };
     if (workflow.profile) {
-        patch.profile = (await resolveFullProfile(workflow.profile)) || workflow.profile;
+        // Never the stored stub as a fallback -- see profilePatchWithSteps. An
+        // unresolvable profile leaves the loaded one alone, name included.
+        const full = profilePatchWithSteps(await resolveFullProfile(workflow.profile));
+        if (full) patch.profile = full;
     }
     return patch;
 }
@@ -591,12 +595,12 @@ async function applyFavLegacy(fav) {
     if (on('note') && snp.note) ctx.extras = { ...(ctx.extras || {}), note: snp.note };
     const patch = Object.keys(ctx).length ? { context: ctx } : {};
     if (on('profile') && (snp.profileId || snp.profileTitle)) {
-        if (snp.profileSnapshot && Array.isArray(snp.profileSnapshot.steps)) {
-            patch.profile = snp.profileSnapshot;
-        } else {
-            const full = snp.profileId ? await resolveFullProfile(snp.profileId) : null;
-            patch.profile = full || { id: snp.profileId, title: snp.profileTitle };
-        }
+        // Snapshot first, the stored id second, and nothing at all if neither
+        // yields steps -- a title-only patch renames the loaded profile instead
+        // of replacing it (see profilePatchWithSteps).
+        const full = profilePatchWithSteps(snp.profileSnapshot)
+            || profilePatchWithSteps(snp.profileId ? await resolveFullProfile(snp.profileId) : null);
+        if (full) patch.profile = full;
     }
     return patch;
 }
@@ -616,12 +620,10 @@ async function applyRecipeLegacy(recipe) {
     if (recipe.drinker) ctx.drinkerName = recipe.drinker;
     const patch = Object.keys(ctx).length ? { context: ctx } : {};
     if (recipe.profileId || recipe.profileTitle) {
-        if (recipe.profileSnapshot && Array.isArray(recipe.profileSnapshot.steps)) {
-            patch.profile = recipe.profileSnapshot;
-        } else {
-            const full = recipe.profileId ? await resolveFullProfile(recipe.profileId) : null;
-            patch.profile = full || { id: recipe.profileId, title: recipe.profileTitle };
-        }
+        // Same as applyFavLegacy: no steps, no profile in the patch.
+        const full = profilePatchWithSteps(recipe.profileSnapshot)
+            || profilePatchWithSteps(recipe.profileId ? await resolveFullProfile(recipe.profileId) : null);
+        if (full) patch.profile = full;
     }
     return patch;
 }

@@ -2,10 +2,11 @@
 // Run: node --test test/dye-selection.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
     profileFingerprint, profileDrifted, serializeSelection, restoreSelection,
     parseDyeReturn, resolveReturn, changedFields, pluginRecordsDialIn, armedSelectionId, selectedRecipeSteamTemp, recipeStripCells, favStripCells,
-    recipeIdPatch, selectionModified, recipeCellState,
+    recipeIdPatch, selectionModified, recipeCellState, profilePatchWithSteps,
 } from '../src/modules/dye-selection.js';
 
 const profile = { title: 'Londinium', target_weight: 36, steps: [{ name: 'fill', temperature: 90 }, { name: 'pour', temperature: 92 }] };
@@ -312,4 +313,36 @@ test('the patch carries nothing but the claim', () => {
     assert.deepEqual(Object.keys(patch), ['extras']);
     assert.deepEqual(Object.keys(patch.extras), ['dye']);
     assert.deepEqual(Object.keys(patch.extras.dye).sort(), ['recipeId', 'v']);
+});
+
+
+// --- what a workflow patch may carry as its profile ------------------------
+// PUT /workflow deep-merges, so a profile without steps does not replace the
+// loaded one, it renames it: the machine keeps the previous curve and the shot
+// record is saved under the DYE item's name with the other profile's steps,
+// notes and author. Every stub shape DYE2 actually stores is checked here.
+
+test('a profile patch is only ever one that carries steps', () => {
+    assert.equal(profilePatchWithSteps(profile), profile);
+    // The shapes seen in live DYE2 KV rows.
+    assert.equal(profilePatchWithSteps({ id: 'profile:abc', title: 'Cremina&Gusto' }), null);
+    assert.equal(profilePatchWithSteps({ id: 'profile:abc', title: 'Cremina&Gusto', steps: [] }), null);
+    assert.equal(profilePatchWithSteps({}), null);
+    assert.equal(profilePatchWithSteps(null), null);
+    assert.equal(profilePatchWithSteps(undefined), null);
+    // Not a list of steps at all.
+    assert.equal(profilePatchWithSteps({ title: 'x', steps: 'fill' }), null);
+});
+
+test('dyeStrip never patches the workflow with a stepless profile', () => {
+    // The three apply paths run against window/fetch, so the wiring is asserted
+    // on the source: a `patch.profile =` that is not gated by the helper is the
+    // regression this guards (a stub fallback renaming the loaded profile).
+    const strip = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+    const assignments = strip.match(/patch\.profile = .*/g) || [];
+    assert.equal(assignments.length, 3, 'one per apply path: stored workflow, legacy favourite, legacy recipe');
+    for (const line of assignments) {
+        assert.match(line, /patch\.profile = full;$/,
+            `a profile patch must come from profilePatchWithSteps, not a stub: ${line}`);
+    }
 });

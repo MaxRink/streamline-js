@@ -332,3 +332,20 @@ export function resolveRecordsDialIn(previous, plugins, derive) {
 export function recipeIdPatch(id) {
     return { extras: { dye: { v: 1, recipeId: id == null ? null : String(id) } } };
 }
+
+/**
+ * The profile a workflow patch may carry, or null when there is none to send.
+ *
+ * PUT /workflow deep-merges (Decaid json_utils.deepMergeJson), so a profile
+ * object without steps does not replace the loaded profile -- it *renames* it.
+ * The machine keeps running the previous curve, the dashboard shows the item's
+ * name over it, and the shot record is saved under that name with the other
+ * profile's steps, notes and author. DYE2 stores exactly such stubs: a thin
+ * `{ id, title }`, an older row's `{ id, title, steps: [] }`, and sometimes a
+ * bare `{}`. A profile that cannot be resolved to its full record must drop out
+ * of the patch entirely instead.
+ */
+export function profilePatchWithSteps(profile) {
+    const steps = profile && profile.steps;
+    return Array.isArray(steps) && steps.length ? profile : null;
+}
