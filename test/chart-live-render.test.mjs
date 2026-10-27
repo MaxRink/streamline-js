@@ -13,8 +13,16 @@ test('live chart frames are paint-aligned, deferred while hidden, and expanded i
         const instance = {
             setOption(option) {
                 options.push(option);
-                current = { ...current, ...option };
-                if (option.series) current.series = option.series.map(series => ({ ...series, data: series.data.map(point => [...point]) }));
+                // `series` is held back from the blanket merge: a live frame on the append
+                // path sends label-only entries ({ id, markPoint }, no data) to re-aim the
+                // end labels, and real ECharts merges those onto the series it already holds
+                // by id. Spreading them in would drop the held data, and appendData would
+                // then write past the end of a 5-entry array.
+                const { series, ...rest } = option;
+                current = { ...current, ...rest };
+                if (series?.some(entry => entry.data)) {
+                    current.series = series.map(entry => ({ ...entry, ...(entry.data ? { data: entry.data.map(point => [...point]) } : {}) }));
+                }
             },
             appendData({ seriesIndex, data }) {
                 appends.push({ instance, seriesIndex, data });
@@ -42,10 +50,10 @@ test('live chart frames are paint-aligned, deferred while hidden, and expanded i
     });
     const chartElement = element('plotly-chart', 960, 390);
     const expandedElement = element('expanded-chart', 1920, 1104);
-    const expandedOverlay = { style: { display: 'none' } };
-    const helpButton = { style: { display: '' } };
+    const zoomClasses = new Set();
     const mainPage = {
         style: { display: 'block' },
+        classList: { add: name => zoomClasses.add(name), remove: name => zoomClasses.delete(name) },
         querySelector: selector => selector === '#plotly-chart' ? chartElement : null
     };
     const documentTarget = new EventTarget();
@@ -53,9 +61,7 @@ test('live chart frames are paint-aligned, deferred while hidden, and expanded i
         visibilityState: 'visible',
         getElementById: id => ({
             'main-page': mainPage,
-            'expanded-chart': expandedElement,
-            'expanded-chart-overlay': expandedOverlay,
-            'help-overlay-btn': helpButton
+            'expanded-chart': expandedElement
         })[id] || null,
         createElement: () => ({ style: {}, getContext: () => ({ measureText: text => ({ width: text.length * 8 }) }) })
     });
@@ -151,17 +157,41 @@ test('live chart frames are paint-aligned, deferred while hidden, and expanded i
 
     chart.openExpandedChart();
     await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(zoomClasses.has('chart-zoomed'), true);
+    assert.equal(chart.isExpandedChartOpen(), true);
     const expanded = options.at(-1);
-    assert.equal(expanded.grid.length, 2);
-    assert.equal(expanded.series.length, 9);
-    assert.equal(expanded.series.filter(series => series.id.startsWith('trace-') && series.xAxisIndex === 1 && series.yAxisIndex === 1).length, 4);
-    assert.equal(typeof handlers.legendselectchanged, 'function');
+    // One plot on one [0, 14] axis, no legend; the optional mix-target is the last trace.
+    assert.equal(expanded.grid.length, 1);
+    assert.equal(expanded.xAxis.length, 1);
+    assert.deepEqual([expanded.yAxis[0].min, expanded.yAxis[0].max, expanded.yAxis[0].interval], [0, 14, 1]);
+    assert.deepEqual(expanded.legend, [{ show: false }]);
+    assert.equal(expanded.series.filter(series => series.id.startsWith('trace-')).length, 9);
+    assert.equal(expanded.series.every(series => series.xAxisIndex === 0 && series.yAxisIndex === 0), true);
+    // Every labelled line (pressure, flow, weight, group temp, mix temp) has an end label.
+    assert.deepEqual(expanded.series.filter(series => series.markPoint).map(series => series.name), ['Pressure', 'Flow', 'Weight', '°C', 'Water °C']);
+    assert.equal(expanded.series[0].lineStyle.width, 4.5);
+    assert.deepEqual(expanded.series[3].lineStyle.type, [6, 6]);
+
+    // A live frame in the zoomed layout moves the labels without a full render.
+    const beforeFrame = options.length;
+    chart.updateChart(start, frame(6), 6);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    const liveOption = options.slice(beforeFrame).findLast(option => option.series?.some(series => series.markPoint) && !option.grid);
+    assert.ok(liveOption, 'live frame re-aims the end labels');
+    assert.deepEqual(liveOption.series.find(series => series.id === 'trace-0').markPoint.data[0].coord, [6, 6]);
+
+    // Leaving the layout (tap again / Escape) and re-entering reuses a fresh instance.
     chart.closeExpandedChart();
     await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(zoomClasses.has('chart-zoomed'), false);
+    assert.equal(chart.isExpandedChartOpen(), false);
     chart.openExpandedChart();
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal(legendBindings, 2);
-    chart.closeExpandedChart();
+    assert.equal(zoomClasses.has('chart-zoomed'), true);
+    // Navigating away (router hides the main page) drops the layout without a repaint.
+    document.dispatchEvent(new Event('streamline:mainpagehidden'));
+    assert.equal(zoomClasses.has('chart-zoomed'), false);
+    assert.equal(chart.isExpandedChartOpen(), false);
     await new Promise(resolve => setTimeout(resolve, 0));
 
     chart.clearChart();
@@ -200,6 +230,12 @@ test('real ECharts (SVG ssr) keeps every live series equal to its source across 
         for (let frame = 0; frame < 600; frame++) {
             traces.forEach((trace, index) => { trace.x.push(frame / 10); trace.y.push(frame * (index + 1) / 100); });
             layout.xaxis.range = [0, Math.max(10, frame / 10 + 1)];
+            // End labels re-aimed every frame must not disturb the appended data.
+            // A NON-CONTIGUOUS subset, as the zoomed chart really sends (its labelled
+            // traces are 0, 1, 2, 5, 6 of nine): the per-frame series array is then
+            // shorter than the chart's, so ECharts has to match it by `id` rather than
+            // by position or the labels land on the wrong lines and the gaps lose data.
+            layout.annotations = [traces[0], traces[3]].map(trace => ({ series: trace.name, x: trace.x.at(-1), y: trace.y.at(-1), text: trace.name, font: { color: '#17c29a' } }));
             renderChart(wrapper, element, traces, layout, 'live');
         }
         instance.resize({ width: 960, height: 390 }); // flushes the lazyUpdate pending state
@@ -213,6 +249,14 @@ test('real ECharts (SVG ssr) keeps every live series equal to its source across 
             assert.equal(data.get('x', last), trace.x[last]);
             assert.equal(data.get('y', last), trace.y[last]);
         });
+        // The two labels stayed on the two annotated lines, and the skipped ones
+        // in between never acquired one.
+        const merged = instance.getOption().series;
+        assert.deepEqual(
+            [0, 1, 2, 3].map(index => merged[index].markPoint?.label?.formatter),
+            ['Pressure', undefined, undefined, 'Target Flow'],
+            'series-addressed labels survive a sparse live series array'
+        );
     } finally {
         destroyChart(element);
         globalThis.window = previousWindow;

@@ -291,6 +291,11 @@
                     <!-- Shot chart (tap to open full-screen expanded charts) -->
                     <div id="chart-wrap" class="relative w-full">
                         <div id="plotly-chart" class="w-full h-[650px] border border-l-0 border-r-0 border-[var(--border-color)] cursor-pointer" role="img" aria-label="Shot extraction graph"></div>
+                        <!-- Dial-in values of the hidden #shot-settings sidebar, mirrored as the TCL
+                             zoomed page's dense text line. Filled by zoom-dialin.js while zoomed. -->
+                        <div id="zoom-dialin" aria-label="Dial-in settings"></div>
+                        <!-- Full-screen chart (TCL "zoomed" page): shown instead of #plotly-chart while #main-page has .chart-zoomed; tap it to leave -->
+                        <div id="expanded-chart" class="w-full h-full border border-l-0 border-r-0 border-[var(--border-color)] cursor-pointer" style="display:none" role="img" aria-label="Full-screen shot extraction graph"></div>
                     </div>
                 </div>
 
@@ -390,17 +395,6 @@
         </div><!-- #main-page -->
         <div id="subpage-host" style="display:none;"></div>
 
-        <!-- Full-screen expanded live charts (opened by tapping the main chart) -->
-        <div id="expanded-chart-overlay" style="display:none; position:absolute; top:0; left:0; width:1920px; height:100%; z-index:60; background:var(--bgmain-color); flex-direction:column;" role="dialog" aria-modal="true" aria-label="Expanded live charts">
-            <div style="height:96px; flex:0 0 96px; display:flex; align-items:center; justify-content:space-between; padding:0 44px; border-bottom:1px solid var(--border-color);">
-                <button id="expanded-chart-back" aria-label="Back to main screen" style="display:flex; align-items:center; gap:16px; background:transparent; border:none; cursor:pointer; padding:10px 14px; margin-left:-14px; border-radius:14px;">
-                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--mimoja-blue-v2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-                </button>
-                <div style="color:var(--text-primary); font-size:30px; font-weight:600; font-family:'Inter',sans-serif;">Live Charts</div>
-                <div style="width:140px;" aria-hidden="true"></div>
-            </div>
-            <div id="expanded-chart" style="width:100%; height:1104px;" role="img" aria-label="Pressure, flow, GFlow and temperature charts"></div>
-        </div>
         </div>
     </div>
 

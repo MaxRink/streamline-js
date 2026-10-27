@@ -107,11 +107,11 @@ test('core startup does not wait for the legacy Visualizer credential purge', ()
     assert.match(app, /Promise\.all\(\[historyInit, profileManager\.init\(\)\]\)/);
 });
 
-test('expanded chart closes only from explicit controls', () => {
+test('zoomed chart closes by tapping it or Escape, never from a stray pointerdown', () => {
     const app = read('src/modules/app.js');
-    assert.match(app, /backBtn\.addEventListener\('click', close\)/);
+    assert.match(app, /zoomedEl\.addEventListener\('click', close\)/);
     assert.match(app, /e\.key === 'Escape'/);
-    assert.doesNotMatch(app, /expanded-chart-overlay[\s\S]*?addEventListener\('(click|pointerdown)'/);
+    assert.doesNotMatch(app, /expanded-chart[\s\S]{0,200}addEventListener\('pointerdown'/);
     assert.doesNotMatch(app, /closest\?\.\('\.legend'\)/);
 });
 

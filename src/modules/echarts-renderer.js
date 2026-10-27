@@ -48,6 +48,7 @@ function lineWidthScale() {
 }
 
 function dashType(dash) {
+    if (Array.isArray(dash)) return dash;
     if (dash === 'dot') return 'dotted';
     if (dash === 'dash' || dash === 'longdash') return 'dashed';
     return 'solid';
@@ -123,11 +124,36 @@ function annotationFor(trace, layout) {
     const last = trace.x.length - 1;
     if (last < 0) return null;
     const annotations = layout.annotations || [];
+    const named = annotations.find(annotation => annotation.series === trace.name);
+    if (named) return named;
+    // Series-addressed annotations are exact: never fall back to colour/coordinates.
+    if (annotations.some(annotation => annotation.series)) return null;
     const color = trace.line?.color?.toLowerCase();
     const colorMatch = annotations.find(annotation => annotation.font?.color?.toLowerCase() === color);
     if (colorMatch) return colorMatch;
     const coordinateMatches = annotations.filter(annotation => annotation.x === trace.x[last] && annotation.y === trace.y[last]);
     return coordinateMatches.length === 1 ? coordinateMatches[0] : null;
+}
+
+function markPointFor(trace, annotation) {
+    if (!annotation) return undefined;
+    return {
+        silent: true,
+        symbol: 'circle',
+        symbolSize: 1,
+        itemStyle: { color: 'transparent', borderWidth: 0 },
+        label: {
+            show: true,
+            formatter: annotation.text,
+            position: 'right',
+            distance: annotation.xshift || 6,
+            offset: [0, -(annotation.yshift || 0)],
+            color: annotation.font?.color || trace.line?.color,
+            fontFamily: 'Inter, sans-serif',
+            fontSize: annotation.font?.size || 16
+        },
+        data: [{ coord: [annotation.x, annotation.y] }]
+    };
 }
 
 function seriesOptions(traces, layout, projections) {
@@ -161,23 +187,7 @@ function seriesOptions(traces, layout, projections) {
             },
             itemStyle: { color: trace.line?.color },
             emphasis: { disabled: true },
-            markPoint: annotation ? {
-                silent: true,
-                symbol: 'circle',
-                symbolSize: 1,
-                itemStyle: { color: 'transparent', borderWidth: 0 },
-                label: {
-                    show: true,
-                    formatter: annotation.text,
-                    position: 'right',
-                    distance: annotation.xshift || 6,
-                    offset: [0, -(annotation.yshift || 0)],
-                    color: annotation.font?.color || trace.line?.color,
-                    fontFamily: 'Inter, sans-serif',
-                    fontSize: annotation.font?.size || 16
-                },
-                data: [{ coord: [annotation.x, annotation.y] }]
-            } : undefined
+            markPoint: markPointFor(trace, annotation)
         };
     }).concat(markerSeriesOptions(layout));
 }
@@ -285,11 +295,23 @@ function projectSeries(traces, previous) {
     });
 }
 
-function liveSeriesOptions(projections, layout, includeMarkers) {
-    const series = projections.map((projection, index) => ({
-            id: `trace-${index}`,
-            data: projection.data
-        }));
+// End labels follow the line while it grows: annotated series get their
+// markPoint re-aimed at the newest sample on every live frame.
+function liveLabelSeries(traces, layout) {
+    if (!layout.annotations?.length) return [];
+    return traces.flatMap((trace, index) => {
+        const markPoint = markPointFor(trace, annotationFor(trace, layout));
+        return markPoint ? [{ id: `trace-${index}`, markPoint }] : [];
+    });
+}
+
+function liveSeriesOptions(projections, layout, includeMarkers, traces) {
+    const series = projections.map((projection, index) => {
+        const entry = { id: `trace-${index}`, data: projection.data };
+        const markPoint = layout.annotations?.length ? markPointFor(traces[index], annotationFor(traces[index], layout)) : undefined;
+        if (markPoint) entry.markPoint = markPoint;
+        return entry;
+    });
     return includeMarkers ? series.concat(markerSeriesOptions(layout, true)) : series;
 }
 
@@ -341,7 +363,9 @@ export function renderChart(echarts, element, traces, layout, mode = 'full') {
         const axes = layoutChanged ? axesOptions(layout, traces) : null;
         state.chart.setOption({
             ...(axes || { xAxis: liveXAxisOptions(layout) }),
-            ...(!append ? { series: liveSeriesOptions(projections, layout, layoutChanged) } : {})
+            ...(!append
+                ? { series: liveSeriesOptions(projections, layout, layoutChanged, traces) }
+                : (layout.annotations?.length ? { series: liveLabelSeries(traces, layout) } : {}))
         }, { notMerge: false, lazyUpdate: true, silent: true });
         // appendData does not expand coordinate extents: update explicit x
         // bounds first. Y bounds change only on the layout-signature path.

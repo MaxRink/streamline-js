@@ -1,11 +1,12 @@
 import { logger } from './logger.js';
 import { getTranslation } from './i18n.js';
 import { hasMachineGFlow, createScaleFlowResolver, createPourPhaseTracker } from './historical-gflow.js';
-import { EXP_TOP_FLOOR, computeExpandedTopYMax, computeExpandedTempRange, separateLabelPositions, pickVisible } from './chart-autoscale.js';
+import { ZOOM_Y_MAX, computeLabelShifts, rangeMaxForLabelRoom, separateLabelPositions } from './chart-autoscale.js';
 import { createLatestTaskRunner } from './latest-task-runner.js';
 import { loadECharts } from './echarts-loader.js';
 import { createChartCadence, DEFAULT_CHART_INTERVAL_MS } from './chart-live-policy.js';
-import { destroyChart, getSeriesVisibility, hasChart, onLegendChange, renderChart, resizeChart, selectSeries, setYAxisRange } from './echarts-renderer.js';
+import { destroyChart, hasChart, renderChart, resizeChart } from './echarts-renderer.js';
+import { startZoomDialIn, stopZoomDialIn } from './zoom-dialin.js';
 
 // Maps internal trace key → i18n key used for the chart label.
 const LABEL_KEYS = {
@@ -38,7 +39,6 @@ async function drawECharts({ element, traces, layout, mode, generation }) {
     const echarts = await loadECharts();
     if (!element.isConnected || renderGenerations.get(element) !== generation) return;
     renderChart(echarts, element, traces, layout, mode);
-    ensureExpandedInteractions(element);
 }
 
 function renderECharts(element, traces, layout, mode = 'full') {
@@ -189,33 +189,19 @@ const chartData = JSON.parse(JSON.stringify(baseChartData));
 const chartTraces = Object.values(chartData);
 
 // ============================================================================
-// Expanded (full-screen) live charts.
-// Tapping the main chart opens a full-screen overlay with two stacked plots:
-//   TOP    (2/3 height) = Pressure / Flow / their targets / GFlow, on one axis
-//                         with a damped auto Y-max (grows to fit up to ~20+ ml/s,
-//                         never snaps around) so fast flows are visible.
-//   BOTTOM (1/3 height) = Group + Mix temperature vs their targets, on a
-//                         +5/−10 °C band around every GROUP target seen this
-//                         shot (target 80 -> 70..85; if it then drops to 70 the
-//                         band widens to 60..85), hard-capped at 105 °C. Every
-//                         other line (group actual, mix actual, mix target)
-//                         only widens the band so it never clips; only the
-//                         group target anchors it — the mix "target" is really
-//                         the DE1's servo setpoint and would wreck the band.
-// Fed from the SAME live frames as the main chart, plus a rebuild from chartData
-// when a historical shot is loaded — so it always mirrors what's on screen.
-// The band/axis maths live in chart-autoscale.js (DOM-free, node-tested).
+// Expanded (full-screen) chart -- the TCL skin's "zoomed" page.
+// Tapping the main chart puts #main-page in a `chart-zoomed` layout mode (header
+// stays, the dashboard and the machine-button column go, the chart grows to the
+// full width and down to the bottom of the screen); tapping it again, or Escape,
+// leaves it. ONE plot, one
+// y axis [0, 14]: pressure / flow / weight flow in their own units, temperature
+// at /10 (as on the main chart). No legend; each live line carries a label at
+// its own right-hand end. Fed from the same live frames as the main chart, plus
+// a rebuild from chartData when a historical shot is loaded.
 // ============================================================================
-let expandedOpen = false;      // overlay currently visible
-let expandedTopYMax = EXP_TOP_FLOOR;  // damped, monotonic-within-shot top-axis max
-let helpBtnPrevDisplay = '';   // help FAB display value to restore when overlay closes
+let expandedOpen = false;      // zoomed layout currently active
 let expandedMixTemp = { x: [], y: [] };
 let expandedTargetMixTemp = { x: [], y: [] };
-let expandedTargetTempMin = Infinity;
-let expandedTargetTempMax = -Infinity;
-let expandedTempMin = Infinity;
-let expandedTempMax = -Infinity;
-let expandedLastGroupTemp = 90;
 
 const baseLayout = {
     // Transparent, not a color: this layout is shared by the main page's shot
@@ -571,243 +557,200 @@ function flushDeferredChart() {
 function resetExpandedData() {
     expandedMixTemp = { x: [], y: [] };
     expandedTargetMixTemp = { x: [], y: [] };
-    expandedTopYMax = EXP_TOP_FLOOR;
-    expandedTargetTempMin = Infinity;
-    expandedTargetTempMax = -Infinity;
-    expandedTempMin = Infinity;
-    expandedTempMax = -Infinity;
-    expandedLastGroupTemp = 90;
-}
-
-function includeExpandedTemp(value) {
-    if (!Number.isFinite(value)) return;
-    expandedTempMin = Math.min(expandedTempMin, value);
-    expandedTempMax = Math.max(expandedTempMax, value);
-}
-
-function includeExpandedTargetTemp(value) {
-    if (!Number.isFinite(value) || value <= 0) return;
-    expandedTargetTempMin = Math.min(expandedTargetTempMin, value);
-    expandedTargetTempMax = Math.max(expandedTargetTempMax, value);
 }
 
 function pushExpandedFrame(time, data) {
-    if (Number.isFinite(data.groupTemperature)) {
-        expandedLastGroupTemp = data.groupTemperature;
-        includeExpandedTemp(data.groupTemperature);
-    }
-    includeExpandedTargetTemp(data.targetGroupTemperature);
     if (Number.isFinite(data.mixTemperature)) {
         expandedMixTemp.x.push(time);
         expandedMixTemp.y.push(data.mixTemperature / 10);
-        includeExpandedTemp(data.mixTemperature);
     }
     if (Number.isFinite(data.targetMixTemperature) && data.targetMixTemperature > 0) {
         expandedTargetMixTemp.x.push(time);
         expandedTargetMixTemp.y.push(data.targetMixTemperature / 10);
-        includeExpandedTemp(data.targetMixTemperature);
     }
 }
 
 function rebuildExpandedFromChartData(mixSeries = null, mixTargetSeries = null) {
     resetExpandedData();
-    for (const value of chartData.groupTemperature.y) includeExpandedTemp(value * 10);
-    if (chartData.groupTemperature.y.length) {
-        expandedLastGroupTemp = chartData.groupTemperature.y[chartData.groupTemperature.y.length - 1] * 10;
-    }
-    for (const value of chartData.targetTemperature.y) includeExpandedTargetTemp(value * 10);
-    if (mixSeries) {
-        expandedMixTemp = { x: mixSeries.x.slice(), y: mixSeries.y.map(value => value / 10) };
-        for (const value of mixSeries.y) includeExpandedTemp(value);
-    }
-    if (mixTargetSeries) {
-        expandedTargetMixTemp = { x: mixTargetSeries.x.slice(), y: mixTargetSeries.y.map(value => value / 10) };
-        for (const value of mixTargetSeries.y) includeExpandedTemp(value);
-    }
+    if (mixSeries) expandedMixTemp = { x: mixSeries.x.slice(), y: mixSeries.y.map(value => value / 10) };
+    if (mixTargetSeries) expandedTargetMixTemp = { x: mixTargetSeries.x.slice(), y: mixTargetSeries.y.map(value => value / 10) };
     if (expandedOpen) renderExpandedCharts();
 }
 
+// Colours, grid and axis tokens of the TCL zoomed page (skin.tcl).
 function expandedAxisColors(theme) {
     const dark = theme === 'dark';
     return {
-        // Transparent so the charts sit on the overlay's own --bgmain-color
-        // rather than the #0d0e14 they used to paint over it. font stays
-        // brighter than Text/Graph.Axis on purpose: the expanded view is
-        // read at arm's length and the style guide has no spec for it.
         paper: 'transparent',
-        grid: dark ? '#1E202B' : '#E8E8E8',
+        grid: dark ? '#212227' : '#E0E0E0',
         line: dark ? '#606579' : '#959595',
-        font: dark ? '#9aa0b3' : '#606579',
+        font: dark ? '#606579' : '#959595',
     };
 }
 
-function expandedTemperatureRange() {
-    const targets = Number.isFinite(expandedTargetTempMin)
-        ? [expandedTargetTempMin, expandedTargetTempMax]
-        : [];
-    const temperatures = Number.isFinite(expandedTempMin)
-        ? [expandedTempMin, expandedTempMax, expandedLastGroupTemp]
-        : [];
-    return computeExpandedTempRange(targets, temperatures);
-}
-
-function expandedTemperatureTicks(range) {
-    const values = [];
-    const text = [];
-    for (let value = Math.ceil(range[0] / 2) * 2; value <= range[1]; value += 2) {
-        values.push(value / 10);
-        text.push(`${value}°`);
-    }
-    return { values, text };
-}
+// TCL dash patterns x0.75 and line widths x0.75 (skin.tcl design space is 2560 wide).
+const ZOOM_GOAL_DASH = [6, 6];
+const ZOOM_THIN_DASH = [12, 12];
+const ZOOM_MIX_COLOR = '#d9822b';
+const ZOOM_MIX_TARGET_COLOR = '#e8b480';
+const ZOOM_PLOT_MARGIN = { l: 70, r: 24, t: 15, b: 52 };
 
 function expandedShapes(theme) {
-    return ((theme === 'dark' ? darkLayout : lightLayout).shapes || []).flatMap(shape => [
-        { ...shape, xref: 'x', yref: 'y domain', line: { ...shape.line } },
-        { ...shape, xref: 'x2', yref: 'y2 domain', line: { ...shape.line } }
-    ]);
+    return ((theme === 'dark' ? darkLayout : lightLayout).shapes || []).map(shape => ({
+        ...shape,
+        line: { ...shape.line, width: 1.5, dash: ZOOM_THIN_DASH }
+    }));
 }
 
-function expandedLayout(theme, topRange, tempRange, xRange) {
-    const c = expandedAxisColors(theme);
-    const ticks = expandedTemperatureTicks(tempRange);
-    return {
-        paper_bgcolor: c.paper,
-        plot_bgcolor: c.paper,
-        font: { color: c.font, size: 18 },
-        margin: { l: 70, r: 28, t: 88, b: 52, pad: 0 },
-        xaxis: {
-            gridcolor: c.grid, linecolor: c.line, tickcolor: c.line,
-            fixedrange: true, range: xRange, autorange: !xRange, zeroline: false, domain: [0, 1], anchor: 'y'
-        },
-        yaxis: {
-            gridcolor: c.grid, linecolor: c.line, tickcolor: c.line,
-            fixedrange: true, range: topRange, zeroline: false, domain: [0.46, 1], anchor: 'x'
-        },
-        xaxis2: {
-            gridcolor: c.grid, linecolor: c.line, tickcolor: c.line,
-            fixedrange: true, range: xRange, autorange: !xRange, zeroline: false, domain: [0, 1], anchor: 'y2', matches: 'x',
-            title: { text: 'seconds', font: { size: 15 } }
-        },
-        yaxis2: {
-            gridcolor: c.grid, linecolor: c.line, tickcolor: c.line,
-            fixedrange: true, range: tempRange.map(value => value / 10), zeroline: false,
-            domain: [0, 0.30], anchor: 'x2', tickvals: ticks.values, ticktext: ticks.text
-        },
-        shapes: expandedShapes(theme),
-        showlegend: true,
-        legend: { orientation: 'h', y: 1.04, yanchor: 'bottom', x: 0, xanchor: 'left', font: { size: 26 } },
-        legend2: { orientation: 'h', y: 0.37, yanchor: 'bottom', x: 0, xanchor: 'left', font: { size: 26 } },
-        autosize: true
-    };
+function expandedPlotPxHeight() {
+    const usable = observedChartSize.height - ZOOM_PLOT_MARGIN.t - ZOOM_PLOT_MARGIN.b;
+    return usable > 100 ? usable : 700;
 }
 
-function expandedTopTraces() {
-    return [
-        // Colors come from chartData, which updateChartColors has already put
-        // on the current theme — the expanded view used to carry its own
-        // literals and so stayed in light-mode colors on a dark screen.
-        { ...chartData.pressure, name: getTranslation('Pressure (bar)'), line: { color: chartData.pressure.line.color, width: 3 }, hoverinfo: 'skip' },
-        { ...chartData.flow, name: getTranslation('Flow (ml/s)'), line: { color: chartData.flow.line.color, width: 3 }, hoverinfo: 'skip' },
-        { ...chartData.weight, name: getTranslation('GFlow (g/s)'), line: { color: chartData.weight.line.color, width: 3 }, hoverinfo: 'skip' },
-        { ...chartData.targetPressure, name: getTranslation('Target Pressure'), line: { color: chartData.targetPressure.line.color, dash: 'dot', width: 2 }, hoverinfo: 'skip' },
-        { ...chartData.targetFlow, name: getTranslation('Target Flow'), line: { color: chartData.targetFlow.line.color, dash: 'dot', width: 2 }, hoverinfo: 'skip' }
-    ];
+function expandedPlotPxWidth() {
+    const usable = observedChartSize.width - ZOOM_PLOT_MARGIN.l - ZOOM_PLOT_MARGIN.r;
+    return usable > 200 ? usable : 1500;
 }
 
-function expandedTempTraces() {
+// Traces keep a stable order: top-axis lines, then temperatures; the optional
+// mix-target trace is always last so appearing mid-shot only appends.
+function expandedTraces() {
+    const line = (key, width, dash) => ({ color: chartData[key].line.color, width, ...(dash ? { dash } : {}) });
     const traces = [
-        { ...chartData.groupTemperature, name: `${getTranslation('Coffee')} °C`, line: { color: chartData.groupTemperature.line.color, width: 3 }, hoverinfo: 'skip', xaxis: 'x2', yaxis: 'y2', legend: 'legend2' },
+        { ...chartData.pressure, name: getTranslation('Pressure'), line: line('pressure', 4.5), hoverinfo: 'skip' },
+        { ...chartData.flow, name: getTranslation('Flow'), line: line('flow', 4.5), hoverinfo: 'skip' },
+        { ...chartData.weight, name: getTranslation('Weight'), line: line('weight', 4.5), hoverinfo: 'skip' },
+        { ...chartData.targetPressure, name: getTranslation('Target Pressure'), line: line('targetPressure', 3, ZOOM_GOAL_DASH), hoverinfo: 'skip' },
+        { ...chartData.targetFlow, name: getTranslation('Target Flow'), line: line('targetFlow', 3, ZOOM_GOAL_DASH), hoverinfo: 'skip' },
+        { ...chartData.groupTemperature, name: '°C', line: line('groupTemperature', 3), hoverinfo: 'skip' },
         // Water and Mix Target have no counterpart in the style guide's graph
         // tokens, so they keep their own literals in both themes.
-        { ...expandedMixTemp, name: `${getTranslation('Water')} °C`, type: 'scatter', mode: 'lines', line: { color: '#d9822b', width: 3 }, hoverinfo: 'skip', xaxis: 'x2', yaxis: 'y2', legend: 'legend2' },
-        { ...chartData.targetTemperature, name: `${getTranslation('Coffee')} ${getTranslation('Target')} °C`, line: { color: chartData.targetTemperature.line.color, dash: 'dot', width: 2 }, hoverinfo: 'skip', xaxis: 'x2', yaxis: 'y2', legend: 'legend2' }
+        { ...expandedMixTemp, name: `${getTranslation('Water')} °C`, type: 'scatter', mode: 'lines', line: { color: ZOOM_MIX_COLOR, width: 3 }, hoverinfo: 'skip' },
+        { ...chartData.targetTemperature, name: `${getTranslation('Target')} °C`, line: line('targetTemperature', 1.5, ZOOM_THIN_DASH), hoverinfo: 'skip' }
     ];
     if (expandedTargetMixTemp.y.length) {
         traces.push({
             ...expandedTargetMixTemp, name: `${getTranslation('Water')} ${getTranslation('Target')} °C`, type: 'scatter', mode: 'lines',
-            line: { color: '#e8b480', dash: 'dash', width: 2 }, hoverinfo: 'skip',
-            xaxis: 'x2', yaxis: 'y2', legend: 'legend2'
+            line: { color: ZOOM_MIX_TARGET_COLOR, width: 1.5, dash: ZOOM_THIN_DASH }, hoverinfo: 'skip'
         });
     }
     return traces;
 }
 
-const expandedInteractionCallbacks = new WeakMap();
+// Indices (into expandedTraces()) of the lines that carry an end label; goals
+// do not, as on the TCL page.
+const ZOOM_LABELLED = [0, 1, 2, 5, 6];
 
-function expandedTopSeriesYs() {
-    return [
-        chartData.pressure.y,
-        chartData.flow.y,
-        chartData.weight.y,
-        chartData.targetPressure.y,
-        chartData.targetFlow.y
-    ];
+function expandedAnnotations(traces) {
+    const labelled = ZOOM_LABELLED.map(i => traces[i]).filter(trace => trace.x.length);
+    const lastYs = labelled.map(trace => trace.y[trace.y.length - 1]);
+    const shifts = computeLabelShifts(lastYs, ZOOM_Y_MAX, expandedPlotPxHeight(), MIN_LABEL_SEP_PX, BOTTOM_EDGE_PAD_PX);
+    return labelled.map((trace, i) => ({
+        series: trace.name,
+        x: trace.x[trace.x.length - 1],
+        y: lastYs[i],
+        text: trace.name,
+        yshift: shifts[i],
+        xshift: LABEL_X_GAP,
+        font: { color: trace.line.color, size: LABEL_FONT_SIZE }
+    }));
 }
 
-function rescaleExpandedTop(element) {
-    const visibility = getSeriesVisibility(element, 5);
-    if (!visibility) return;
-    expandedTopYMax = computeExpandedTopYMax(pickVisible(expandedTopSeriesYs(), visibility), 0);
-    setYAxisRange(element, [0, expandedTopYMax]);
+function expandedLayout(theme, traces, xRange) {
+    const c = expandedAxisColors(theme);
+    return {
+        paper_bgcolor: c.paper,
+        plot_bgcolor: c.paper,
+        font: { color: c.font, size: 18 },
+        margin: { ...ZOOM_PLOT_MARGIN, pad: 0 },
+        xaxis: {
+            gridcolor: c.grid, linecolor: c.line, tickcolor: c.line,
+            fixedrange: true, range: xRange, autorange: !xRange, zeroline: false,
+            title: { text: 'seconds', font: { size: 15 } }
+        },
+        yaxis: {
+            gridcolor: c.grid, linecolor: c.line, tickcolor: c.line,
+            fixedrange: true, range: [0, ZOOM_Y_MAX], dtick: 1, zeroline: false
+        },
+        shapes: expandedShapes(theme),
+        annotations: expandedAnnotations(traces),
+        showlegend: false,
+        autosize: true
+    };
 }
 
-function ensureExpandedInteractions(element) {
-    if (element.id !== 'expanded-chart' || !hasChart(element)) return;
-    let callback = expandedInteractionCallbacks.get(element);
-    if (!callback) {
-        callback = event => {
-            const topNames = expandedTopTraces().map(trace => trace.name);
-            if (!topNames.some(name => event.selected[name] !== false)) selectSeries(element, topNames);
-            rescaleExpandedTop(element);
-        };
-        expandedInteractionCallbacks.set(element, callback);
+// Full renders (first paint, history, theme/language) get a data-fitted x range
+// with room for the end labels; live frames use the same 93% fraction as the
+// main chart so the range does not jump per frame.
+function expandedXRange(mode, traces) {
+    if (mode === 'live') return liveXRange(pendingTime);
+    let dataMax = 0;
+    let labelPx = 0;
+    for (const i of ZOOM_LABELLED) {
+        const trace = traces[i];
+        if (!trace.x.length) continue;
+        dataMax = Math.max(dataMax, trace.x[trace.x.length - 1]);
+        labelPx = Math.max(labelPx, measureTextWidth(trace.name));
     }
-    onLegendChange(element, callback);
+    if (!dataMax) return undefined;
+    return [0, rangeMaxForLabelRoom(dataMax, expandedPlotPxWidth(), labelPx + LABEL_X_GAP + LABEL_X_PAD)];
 }
 
 function renderExpandedCharts(mode = 'full') {
     if (!expandedOpen) return;
     const element = document.getElementById('expanded-chart');
     if (!element) return;
-    const theme = currentTheme;
-    const visibility = getSeriesVisibility(element, 5);
-    expandedTopYMax = computeExpandedTopYMax(pickVisible(expandedTopSeriesYs(), visibility), expandedTopYMax);
-    const layout = expandedLayout(theme, [0, expandedTopYMax], expandedTemperatureRange(), mode === 'live' ? liveXRange(pendingTime) : undefined);
-    renderECharts(element, [...expandedTopTraces(), ...expandedTempTraces()], layout, mode);
+    const traces = expandedTraces();
+    const layout = expandedLayout(currentTheme, traces, expandedXRange(mode, traces));
+    renderECharts(element, traces, layout, mode);
 }
+
+function mainPageEl() { return document.getElementById('main-page'); }
 
 export function isExpandedChartOpen() { return expandedOpen; }
 
 export function openExpandedChart() {
-    const overlay = document.getElementById('expanded-chart-overlay');
-    if (!overlay) return;
+    const page = mainPageEl();
+    if (!page || expandedOpen) return;
     expandedOpen = true;
-    overlay.style.display = 'flex';
-    // The help FAB floats above everything (z-8000, outside the scaled container);
-    // tuck it away for a clean full-screen view, remembering its prior state.
-    const help = document.getElementById('help-overlay-btn');
-    if (help) { helpBtnPrevDisplay = help.style.display; help.style.display = 'none'; }
+    page.classList.add('chart-zoomed');
+    // The zoomed layout hides the dial-in sidebar to win the chart's width; mirror
+    // its values into the strip above the chart, as the TCL zoomed page does.
+    startZoomDialIn();
     // Plot after the browser has laid the containers out at real size.
     requestAnimationFrame(() => {
+        if (!expandedOpen) return;
         const element = document.getElementById('expanded-chart');
-        if (element) observeChartElement(element);
+        if (!element) return;
+        observeChartElement(element);
         renderExpandedCharts();
-        requestAnimationFrame(() => resizeChart(element));
+        requestAnimationFrame(() => { if (expandedOpen) resizeChart(element); });
     });
 }
 
-export function closeExpandedChart() {
+function leaveExpandedLayout() {
     expandedOpen = false;
-    const overlay = document.getElementById('expanded-chart-overlay');
-    if (overlay) overlay.style.display = 'none';
-    const help = document.getElementById('help-overlay-btn');
-    if (help) help.style.display = helpBtnPrevDisplay;
+    mainPageEl()?.classList.remove('chart-zoomed');
+    stopZoomDialIn();
     const element = document.getElementById('expanded-chart');
     if (element) void disposeECharts(element).catch(error => logger.error('Chart cleanup failed:', error));
+}
+
+export function closeExpandedChart() {
+    if (!expandedOpen) return;
+    leaveExpandedLayout();
     const mainElement = getChartElement();
     if (mainElement) observeChartElement(mainElement);
     flushMainRender();
+}
+
+// The router hid the main page (profile browser, settings...): drop the zoomed
+// layout without repainting the main chart into a foreign page. The repaint
+// happens on streamline:mainpagevisible via the dirty flag.
+function handleMainPageHidden() {
+    if (!expandedOpen) return;
+    leaveExpandedLayout();
+    mainRenderDirty = true;
 }
 
 export function getCurrentProfile() { return currentProfile; }
@@ -1583,6 +1526,7 @@ function ensureChartLifecycle() {
         document.addEventListener('streamline:languagechange', handleChartLanguageChange);
         document.addEventListener('streamline:chartlinewidthchange', handleChartLineWidthChange);
         document.addEventListener('streamline:mainpagevisible', handleMainPageVisible);
+        document.addEventListener('streamline:mainpagehidden', handleMainPageHidden);
         document.addEventListener('visibilitychange', handleChartVisibilityChange);
         chartLifecycleBound = true;
     }

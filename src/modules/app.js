@@ -2326,8 +2326,8 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// Tap the main chart to open the full-screen live charts;
-// Back button / Escape closes it. Bound once at startup.
+// Tap the main chart to zoom it to the full-screen layout; tap the zoomed chart
+// again (or press Escape) to leave. Bound once at startup.
 function wireExpandedChart() {
     const open = () => { try { chart.openExpandedChart(); } catch (e) { console.error('openExpandedChart', e); } };
     const close = () => { try { chart.closeExpandedChart(); } catch (e) { console.error('closeExpandedChart', e); } };
@@ -2335,8 +2335,8 @@ function wireExpandedChart() {
     const chartEl = document.getElementById('plotly-chart');
     if (chartEl) chartEl.addEventListener('click', open);
 
-    const backBtn = document.getElementById('expanded-chart-back');
-    if (backBtn) backBtn.addEventListener('click', close);
+    const zoomedEl = document.getElementById('expanded-chart');
+    if (zoomedEl) zoomedEl.addEventListener('click', close);
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && chart.isExpandedChartOpen && chart.isExpandedChartOpen()) close();

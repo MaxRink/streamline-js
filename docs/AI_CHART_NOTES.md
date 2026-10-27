@@ -68,7 +68,7 @@ Never patch the minified bundle directly. Keep ECharts lazy-loaded so direct sub
 - target vs actual data;
 - shot start/end transitions;
 - historical and profile rendering;
-- expanded chart;
+- expanded (zoomed) chart: single plot, y fixed [0, 14], temperature at /10, no legend, per-line end labels that follow live frames through the renderer's live `markPoint` path;
 - autoscale and view state.
 
 `echarts-renderer.js` owns translation to ECharts and instance lifecycle. Do not put espresso-domain decisions into the renderer or ECharts details into unrelated UI handlers.
@@ -85,7 +85,7 @@ Prefer extracting new math or policy into a DOM-free helper. This keeps tests fa
 | Legend choices reset | Full render discarded selection |
 | Old profile chart flashes on main-page return | Router/main-page clear and history repaint ordering |
 | Canvas remains after leaving a subpage | Missing chart cleanup/dispose |
-| Expanded chart closes on canvas interaction | Event propagation/overlay interaction regression |
+| Zoomed chart stays after navigating away, or main chart is stale on return | `streamline:mainpagehidden` teardown in `chart.js` regressed; the zoomed view is a `.chart-zoomed` layout mode of `#main-page`, not an overlay |
 | Hidden-route chart is 1×1 or mis-scaled | Measured while hidden and not resized later |
 
 ## Focused Checks

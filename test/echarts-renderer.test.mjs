@@ -74,8 +74,9 @@ test('renderer preserves Plotly geometry, line styling, markers, labels, and cap
     assert.equal(calls[1].option.legend, undefined);
     assert.equal(calls[1].option.yAxis, undefined);
     assert.deepEqual([calls[1].option.xAxis[0].min, calls[1].option.xAxis[0].max], [0, 1.2]);
-    assert.deepEqual(Object.keys(calls[1].option.series[0]), ['id', 'data']);
-    assert.equal(calls[1].option.series.length, 2);
+    // (This stub has no appendData, so data is resent too.) An annotated live series re-aims its end label at the newest sample.
+    assert.deepEqual(calls[1].option.series.map(series => Object.keys(series)), [['id', 'data', 'markPoint'], ['id', 'data']]);
+    assert.deepEqual(calls[1].option.series[0].markPoint.data[0].coord, [1, 8]);
 
     renderChart(echarts, element, traces, { ...layout, xaxis: { ...layout.xaxis, range: [0, 2.4] } }, 'live');
     assert.equal(calls[2].option.yAxis, undefined);
@@ -98,6 +99,30 @@ test('renderer preserves Plotly geometry, line styling, markers, labels, and cap
     destroyChart(element);
     assert.equal(disposed, true);
     assert.equal(labelRemoved, true);
+});
+
+test('dash arrays pass through to ECharts and a series-named annotation wins over colour matching', () => {
+    const calls = [];
+    const chart = { setOption: (option, settings) => calls.push({ option, settings }), getOption: () => undefined, resize() {}, on() {}, dispose() {} };
+    const element = { clientWidth: 800, clientHeight: 400, style: {}, ownerDocument: { createElement: () => null }, append() {}, replaceChildren() {} };
+    const traces = [
+        { name: 'Pressure', x: [0, 1], y: [1, 2], line: { color: '#111111', width: 4.5 } },
+        { name: 'Target Pressure', x: [0, 1], y: [1, 2], line: { color: '#17c29a', width: 3, dash: [6, 6] } }
+    ];
+    const layout = {
+        margin: { l: 50, r: 50, t: 20, b: 40 },
+        xaxis: { range: [0, 1] },
+        yaxis: { range: [0, 14] },
+        shapes: [{ xref: 'x', x0: 0.5, line: { color: '#7f8bbb', width: 1.5, dash: [12, 12] } }],
+        annotations: [{ series: 'Target Pressure', x: 1, y: 2, text: 'goal', font: { color: '#17c29a' } }]
+    };
+    globalThis.window = { devicePixelRatio: 1 };
+    renderChart({ init: () => chart }, element, traces, layout);
+    const option = calls[0].option;
+    assert.deepEqual(option.series[1].lineStyle.type, [6, 6]);
+    assert.equal(option.series[0].markPoint, undefined);
+    assert.equal(option.series[1].markPoint.label.formatter, 'goal');
+    assert.deepEqual(option.series[2].markLine.data[0].lineStyle.type, [12, 12]);
 });
 
 test('the Chart Line Width setting scales both series and step-marker line widths', () => {

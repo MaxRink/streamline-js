@@ -998,3 +998,80 @@ textarea,
   -webkit-mask-size: contain;
   mask-size: contain;
 }
+
+/* Full-screen chart (TCL "zoomed" page): chart.js toggles .chart-zoomed on
+   #main-page. Header and telemetry band stay; the machine-button column, the
+   dashboard and the dial-in sidebar go, and the zoomed chart takes the plot's
+   place out to the full width and down to the bottom of the screen (#chart-wrap
+   is already the flex item that absorbs free space). */
+/* The strip and the chart share #chart-wrap's height instead of both taking all
+   of it: #expanded-chart's h-full was measured against the wrap, so the chart
+   hung the strip's own height past the bottom of the screen and took the x tick
+   labels with it. Column flex gives the strip its line and the chart the rest. */
+#main-page.chart-zoomed #chart-wrap {
+    display: flex;
+    flex-direction: column;
+}
+
+#main-page.chart-zoomed #expanded-chart {
+    display: block !important;
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+}
+
+#main-page.chart-zoomed #plotly-chart,
+#main-page.chart-zoomed #shot-settings,
+#main-page.chart-zoomed #shot-history-panel,
+#main-page.chart-zoomed #shot-data-panel {
+    display: none;
+}
+
+/* The machine-button column goes behind the zoomed chart: on a non-GHC machine
+   it is a 172px flex sibling of the chart column, so leaving it in place keeps
+   that width off the plot. Hidden by the class, never by the inline style that
+   showGhcControls()/scaling.js read, so the layout returns untouched on exit. */
+#main-page.chart-zoomed #ghc-controls {
+    display: none !important;
+}
+
+#main-page.chart-zoomed main {
+    padding-bottom: 0;
+}
+
+/* The dial-in line above the zoomed chart: the hidden sidebar's values, in the
+   telemetry row's own idiom (label in the card-title colour, value in mono). */
+#zoom-dialin {
+    display: none;
+}
+
+#main-page.chart-zoomed #zoom-dialin {
+    display: flex;
+    align-items: center;
+    gap: 34px;
+    padding: 0 40px 10px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.zoom-dialin-pair {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.zoom-dialin-label {
+    color: var(--data-card-title-text-color);
+    font-family: 'Inter', sans-serif;
+    font-size: 22.5px;
+    font-weight: 600;
+    line-height: 1.5rem;
+}
+
+.zoom-dialin-value {
+    color: var(--text-primary);
+    font-family: 'NotoSansMono', monospace;
+    font-size: 22.5px;
+    font-weight: 600;
+    line-height: 1.5rem;
+}

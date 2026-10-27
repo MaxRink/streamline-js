@@ -35,15 +35,18 @@ test('live rendering stays paint-aligned and skips hidden charts', () => {
     assert.match(chart, /observedChartSize = \{ width: element\.clientWidth, height: element\.clientHeight \}/);
 });
 
-test('expanded mode uses one two-grid instance and preserves visibility autoscaling', () => {
+test('expanded mode is a layout mode of the main page drawing one single-axis plot', () => {
     const chart = read('src/modules/chart.js');
     const index = read('index.html');
+    const css = read('src/css/main.css');
     assert.match(index, /id="expanded-chart"/);
+    assert.doesNotMatch(index, /expanded-chart-overlay|expanded-chart-back/);
     assert.doesNotMatch(index, /id="expanded-(flow|temp)-chart"/);
-    assert.match(chart, /renderECharts\(element, \[\.\.\.expandedTopTraces\(\), \.\.\.expandedTempTraces\(\)\]/);
-    assert.match(chart, /pickVisible\(expandedTopSeriesYs\(\), visibility\)/);
-    assert.match(chart, /onLegendChange\(element/);
-    assert.match(chart, /selectSeries\(element, topNames\)/);
+    assert.match(css, /#main-page\.chart-zoomed #plotly-chart/);
+    assert.match(chart, /classList\.add\('chart-zoomed'\)/);
+    assert.match(chart, /renderECharts\(element, traces, layout, mode\)/);
+    assert.match(chart, /showlegend: false/);
+    assert.match(chart, /addEventListener\('streamline:mainpagehidden', handleMainPageHidden\)/);
 });
 
 test('hidden renders coalesce and teardown invalidates queued work before disposal', () => {

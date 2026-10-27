@@ -33,6 +33,10 @@ This protects edits to a user fork that has the same title as a bundled/default 
 
 Edits can produce a new content-derived ID. When that occurs, remap any favorite slot from the old ID to the new one. Inspect the current editor save/visibility/parent logic before changing it; these fields preserve revert and default-profile behavior.
 
+Plain SAVE on a bundled default takes the same hide+replace route as a user profile: Decaid refuses content edits on a default (`ProfileController.update`), so the fork is the only edit path, and the bundled record is then retired to `hidden` so the edit can keep the title the user knows. Leaving it visible is the mistake to avoid — the edit lands as `… (2)` while the original keeps the name, the favorite slot, `wakeProfileId`, and every title lookup. Retiring it is reversible: `setVisibility` accepts `hidden` for a default (only `deleted` is refused), a hidden default survives Decaid's boot re-seed, `/lineage` ignores visibility so Revert still offers it, and the selector's hidden view can restore it.
+
+`retiredSource` in `saveProfile` is the single gate for everything keyed by the old ID — favorites/`wakeProfileId` remap, and moving the `streamlineProfileOverrides` record. Save As New never sets it: its source stays visible with its own numbers, so the new profile starts from the profile's own defaults rather than inheriting a dial-in the user did not ask it to copy.
+
 ## Favorites
 
 There are five favorite slots. Assignments are validated to integer indices in range and persisted to Decaid storage with an IndexedDB backup.
