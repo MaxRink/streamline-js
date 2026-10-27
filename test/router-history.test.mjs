@@ -33,6 +33,7 @@ test('the previous page is recorded before a page inits, so the editor can retur
 
     const editor = readFileSync('src/modules/profile_editor.js', 'utf8');
     assert.match(editor, /_returnUrl = getPreviousPageUrl\(\) \|\| 'index\.html';/);
-    // Save and Cancel both go back where the user came from.
-    assert.equal((editor.match(/loadPage\(_returnUrl\)/g) || []).length, 2);
+    // Cancel goes back where the user came from; a save ends on the main page.
+    assert.equal((editor.match(/loadPage\(_returnUrl\)/g) || []).length, 1);
+    assert.match(editor, /function finishSaveSuccess[\s\S]*?loadPage\('index\.html'\)/);
 });

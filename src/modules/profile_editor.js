@@ -2889,12 +2889,16 @@ function executionChanged(orig, edited) {
 
 // Shared tail of a successful save (including the no-op "nothing changed"
 // case, which reports success without writing anything): hint the selector to
-// pre-select this profile, toast, and navigate back to wherever the editor was
-// opened from.
+// pre-select this profile, toast, and go to the main page.
+//
+// Saving ends the errand, so it lands on the dashboard rather than back on
+// whatever opened the editor -- a selector the user is done with, or a context
+// menu they only passed through. Cancel still returns to _returnUrl: an
+// abandoned edit leaves the user where they were.
 function finishSaveSuccess(id) {
     sessionStorage.setItem('lastEditedProfileKey', id);
     showToast(getTranslation('Saved profile'), 2000, 'success');
-    setTimeout(() => { loadPage(_returnUrl); }, 1000);
+    setTimeout(() => { loadPage('index.html'); }, 1000);
 }
 
 // A save writes to /profiles, which is the library. The machine keeps running
