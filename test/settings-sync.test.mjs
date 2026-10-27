@@ -621,3 +621,18 @@ test('an unhydrated boot that turns out to be enabled shows the surface once', a
     await api.applyDye2Ui(true);
     assert.deepEqual(calls, ['enable'], 'no spurious disable first');
 });
+
+// settingsSync cannot import ui.js, so RESTORE_HANDLED_KEYS is a copy of its
+// preset keys; a preset ui.js repaints but this list lacks would force a reload.
+test('the late-restore handled keys cover every preset ui.js repaints', () => {
+    const ui = readFileSync(new URL('../src/modules/ui.js', import.meta.url), 'utf8');
+    const sync = readFileSync(new URL('../src/modules/settingsSync.js', import.meta.url), 'utf8');
+    const handled = sync.match(/export const RESTORE_HANDLED_KEYS = \[[\s\S]*?\];/)?.[0];
+    assert.ok(handled, 'RESTORE_HANDLED_KEYS declaration not found');
+    const byKey = ui.match(/const byKey = \{([\s\S]*?)\n    \};/)?.[1];
+    assert.ok(byKey, 'byKey map not found');
+    const presetKeys = [...byKey.matchAll(/\[([A-Z_]+_KEY)\]/g)].map(m =>
+        ui.match(new RegExp(`const ${m[1]} = '([^']+)';`))?.[1]);
+    assert.ok(presetKeys.length >= 8 && presetKeys.every(Boolean));
+    for (const key of presetKeys) assert.match(handled, new RegExp(`'${key}'`), `${key} missing`);
+});

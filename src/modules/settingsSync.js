@@ -213,6 +213,76 @@ export function retryDelay(attempt) {
     return attempt < RETRY_DELAYS_MS.length ? RETRY_DELAYS_MS[attempt] : RETRY_STEADY_MS;
 }
 
+// Keys whose late restore already repaints the live page, so they never justify
+// a reload on their own:
+//  - theme / language: apply() sets data-theme and the retry path calls
+//    setLanguage().
+//  - the user preset arrays: the SETTINGS_RESTORED_EVENT listener in
+//    src/modules/ui.js (its `byKey` map) re-runs each loader. These strings are
+//    copied from the *_PRESETS_KEY constants there; ui.js cannot be imported
+//    (it touches the DOM at load), so a preset key added to `byKey` but not here
+//    would trigger a needless reload. test/settings-sync.test.mjs fails if the
+//    two drift.
+//  - streamline.dye2Enabled: the listener in src/modules/dyeStrip.js.
+// Every other synced key (zoom, units, screensaver, bindings, ...) is read once
+// at boot and stays stale until the page reloads.
+export const RESTORE_HANDLED_KEYS = [
+    'theme',
+    'language',
+    'drink-out-presets-user',
+    'brew-temp-presets-user',
+    'flush-presets-user',
+    'hot-water-temp-presets-user',
+    'hot-water-vol-presets-user',
+    'steam-time-presets-user',
+    'milk-stop-presets-user',
+    'steam-flow-presets-user',
+    'streamline.dye2Enabled',
+];
+
+// Should a late restore reload the page? A restore that lands after first paint
+// (the app-update case: Decaid's webservice was not up yet, and the WebView's
+// localStorage was wiped too, so everything painted as stock defaults) leaves
+// anything not in RESTORE_HANDLED_KEYS showing defaults for the whole session.
+// A per-key re-apply registry was rejected: initScaling()/initEcoSteam() bind
+// listeners on every call, initUnits() lets an IndexedDB copy outrank
+// localStorage, and it would only cover keys someone remembered. One reload
+// re-boots from the now-hydrated localStorage and covers all of them.
+// Every guard exists so the reload can never cost the user anything:
+//  - applied: nothing unhandled changed, so there is nothing to fix.
+//  - armed: the user has not touched the page yet, so no input is lost.
+//  - machineBusy: never yank the UI mid-shot/steam/flush.
+//  - alreadyReloaded: at most one reload per session, so a key that is
+//    re-applied every time cannot loop.
+export function shouldReloadForRestore({ applied, handledKeys = RESTORE_HANDLED_KEYS, armed, machineBusy, alreadyReloaded }) {
+    if (!armed || machineBusy || alreadyReloaded) return false;
+    const handled = new Set(handledKeys);
+    return Object.keys(applied || {}).some(key => !handled.has(key));
+}
+
+const RELOADED_FLAG = 'streamline.settingsRestoreReloaded';
+
+// sessionStorage can throw (private mode, blocked site data). Every failure
+// reads as "already reloaded": no reload is the safe side.
+function reloadedThisSession() {
+    try { return sessionStorage.getItem(RELOADED_FLAG) === '1'; } catch { return true; }
+}
+function markReloaded() {
+    try { sessionStorage.setItem(RELOADED_FLAG, '1'); return true; } catch { return false; }
+}
+
+// Busy unless the machine state is known and does not block profile sends.
+// Imported lazily for the same reason boot() imports api.js lazily.
+async function machineIsBusy() {
+    try {
+        const { currentMachineState } = await import('./api.js');
+        const { profileSendBlocked } = await import('./profile-send-gate.js');
+        return profileSendBlocked(currentMachineState);
+    } catch {
+        return true;
+    }
+}
+
 // Boot-time wiring. Kept out of hydrate() so the logic above stays testable.
 async function boot() {
     // Imported here, not at the top: api.js pulls in the DOM-touching modules,
@@ -274,6 +344,20 @@ async function boot() {
         logger.info(`settings hydrate deferred: ${e.message}`);
     }
 
+    // The page painted from defaults, so a late restore may need a reload (see
+    // shouldReloadForRestore). Armed only here: on the on-time path nothing has
+    // painted yet. The first touch disarms it, because a reload after that could
+    // discard what the user is doing.
+    let armed = true;
+    const disarm = () => {
+        armed = false;
+        window.removeEventListener('pointerdown', disarm, true);
+        window.removeEventListener('keydown', disarm, true);
+    };
+    const listen = { capture: true, passive: true, once: true };
+    window.addEventListener('pointerdown', disarm, listen);
+    window.addEventListener('keydown', disarm, listen);
+
     // Deliberately NOT awaited: settingsReady gates app.js's first paint, and a
     // device with no Decaid at all (browser dev) must not wait out the ladder
     // before the app is allowed to render.
@@ -298,6 +382,16 @@ async function boot() {
                     .then(({ setLanguage, getCurrentLanguage }) =>
                         getCurrentLanguage() === applied.language ? null : setLanguage(applied.language))
                     .catch(e => logger.info(`late language restore failed: ${e.message}`));
+            }
+            // Flag first, so a failed or repeated reload can never loop.
+            if (shouldReloadForRestore({
+                applied, armed,
+                machineBusy: armed ? await machineIsBusy() : true,
+                alreadyReloaded: reloadedThisSession(),
+            }) && armed && markReloaded()) {
+                disarm();
+                logger.info('Late settings restore: reloading to apply it everywhere');
+                window.location.reload();
             }
             return;
         }

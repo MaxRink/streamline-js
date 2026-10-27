@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { LEGACY_VISUALIZER_KEYS, LEGACY_VISUALIZER_PURGED_FLAG, legacyKeysToPurge } from '../src/modules/legacy-credentials-purge.js';
-import { hydrate, installMirror, createWriteGate, decideMerge, retryDelay, SYNCED_KEYS, SETTINGS_NAMESPACE } from '../src/modules/settingsSync.js';
+import { hydrate, installMirror, createWriteGate, decideMerge, retryDelay, SYNCED_KEYS, SETTINGS_NAMESPACE, shouldReloadForRestore, RESTORE_HANDLED_KEYS } from '../src/modules/settingsSync.js';
 
 // Stand-in for window.localStorage with a shared prototype to patch, matching
 // the browser's Storage/Storage.prototype split.
@@ -390,4 +390,34 @@ test('retryDelay climbs the ladder, then settles at a capped steady interval', (
     assert.equal(retryDelay(4), 15000);
     assert.equal(retryDelay(5), 60000);
     assert.equal(retryDelay(500), 60000);
+});
+
+// A late restore reloads the page once so every boot-time reader sees the
+// hydrated values -- but only when something the live repaint paths do not
+// cover changed, and only while a reload costs the user nothing.
+const idle = { armed: true, machineBusy: false, alreadyReloaded: false };
+
+test('a late restore carrying an unhandled key reloads when armed and idle', () => {
+    assert.equal(shouldReloadForRestore({ ...idle, applied: { uiZoom: '1.2', theme: 'dark' } }), true);
+});
+
+test('a late restore of only self-repainting keys does not reload', () => {
+    const applied = Object.fromEntries(RESTORE_HANDLED_KEYS.map(k => [k, 'x']));
+    assert.equal(shouldReloadForRestore({ ...idle, applied }), false);
+});
+
+test('an empty restore does not reload', () => {
+    assert.equal(shouldReloadForRestore({ ...idle, applied: {} }), false);
+});
+
+test('no reload once the user has interacted', () => {
+    assert.equal(shouldReloadForRestore({ ...idle, armed: false, applied: { uiZoom: '1.2' } }), false);
+});
+
+test('no reload while the machine is busy', () => {
+    assert.equal(shouldReloadForRestore({ ...idle, machineBusy: true, applied: { uiZoom: '1.2' } }), false);
+});
+
+test('no second reload in the same session', () => {
+    assert.equal(shouldReloadForRestore({ ...idle, alreadyReloaded: true, applied: { uiZoom: '1.2' } }), false);
 });
