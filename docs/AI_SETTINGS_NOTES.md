@@ -95,6 +95,13 @@ and `page=settings`. Preserve the actual host, port and path: skin origins are
 assigned by Decaid, and the browser referrer can omit the route. Plugin UIs must
 validate the return URL before using it. See [Plugin settings UI](plugin-settings-ui.md).
 
+The same module owns the other form hints (`valueLabels`, `valueDescriptions`,
+`advanced`, `multiline`, JSON text) and the plugin-page links
+(`pluginSurfaceLinks`): every page href is confined to
+`/api/v1/plugins/<that id>/` on the API origin before it reaches the surface
+dialog, which validates it again with `deviceSurfaceUrl`. Plugin text (labels,
+descriptions, setup messages) is untrusted: escape it or set it as text.
+
 ### Add A Navigation Item
 
 1. Add it to `settings-tree.js`.

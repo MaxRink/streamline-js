@@ -2,15 +2,18 @@
 // so the WebView never navigates away from the skin. The host must allow framing the
 // page (CSP frame-ancestors); a refusal is invisible to the skin, so the fallback link
 // to open the page itself stays on screen. Key events go to the frame once it is
-// touched and a tablet has no Escape key: the dialog closes on its own button and on a
-// backdrop tap too.
+// touched and a tablet has no Escape key: the dialog closes on its own button, on a
+// backdrop tap and on the page's own `streamline:close`. A page that says
+// `streamline:ready` follows the theme on a transparent body; any other page gets the
+// white canvas it was written for.
 
 import { isPageAvailable } from './api.js';
-import { getTranslation } from './i18n.js';
+import { getCurrentLanguage, getTranslation } from './i18n.js';
 import { logger } from './logger.js';
 import { loadStyle } from './vendor-loader.js';
 
 const LOAD_TIMEOUT_MS = 10000;
+const READY_GRACE_MS = 300;
 let closeCurrent = null;
 
 const styleReady = loadStyle('src/css/surface-dialog.css').catch(() => {});
@@ -27,14 +30,17 @@ const themed = href => {
     const url = new URL(href);
     url.searchParams.set('embed', '1');
     url.searchParams.set('theme', document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+    url.searchParams.set('lang', getCurrentLanguage());
     return url.href;
 };
 
-export async function openSurfaceDialog(href, title, findOpener = null) {
+export async function openSurfaceDialog(href, title, findOpener = null, onClose = null) {
     closeSurfaceDialog();
     const opener = document.activeElement;
     const probe = new AbortController();
     let timer = null;
+    let plainTimer = null;
+    let themedPage = false;
 
     const dialog = document.createElement('dialog');
     dialog.className = 'surface-dialog';
@@ -78,18 +84,34 @@ export async function openSurfaceDialog(href, title, findOpener = null) {
         if (closeCurrent !== close) return;
         closeCurrent = null;
         clearTimeout(timer);
+        clearTimeout(plainTimer);
         probe.abort();
         dialog.removeEventListener('close', close);
+        window.removeEventListener('message', onMessage);
         if (dialog.open) dialog.close();
         dialog.remove();
         (opener?.isConnected ? opener : findOpener?.())?.focus?.();
+        onClose?.();
+    }
+
+    function onMessage(event) {
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.type === 'streamline:ready') {
+            themedPage = true;
+            delete frame.dataset.plain;
+        }
+        else if (event.data?.type === 'streamline:close') close();
     }
     closeCurrent = close;
 
     dialog.addEventListener('close', close);
     closeButton.addEventListener('click', close);
     dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
-    frame.addEventListener('load', () => clearTimeout(timer), { once: true });
+    window.addEventListener('message', onMessage);
+    frame.addEventListener('load', () => {
+        clearTimeout(timer);
+        plainTimer = setTimeout(() => { if (!themedPage) frame.dataset.plain = '1'; }, READY_GRACE_MS);
+    }, { once: true });
 
     await styleReady;
     if (closeCurrent !== close) return dialog;

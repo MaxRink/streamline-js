@@ -255,3 +255,129 @@ export function pluginNavEntries(plugins, selfInstallableIds = []) {
             settingsCategory: pluginCategoryFor(entry.pluginId),
         }));
 }
+
+// ─── Plugin pages, setup status and grants ───────────────────────────────────
+
+const SURFACE_ROLES = ['setup', 'settings', 'diagnostics'];
+
+const declaresHttpEndpoint = (plugin, id) =>
+    Array.isArray(plugin?.api) && plugin.api.some(e => e?.type === 'http' && e?.id === id);
+
+const pluginPagePath = pluginId => `/api/v1/plugins/${encodeURIComponent(pluginId)}/`;
+
+function pluginPageUrl(href, apiOrigin, pluginId) {
+    if (typeof href !== 'string' || !href) return null;
+    try {
+        const url = new URL(href, apiOrigin);
+        return url.origin === apiOrigin && !url.username && !url.password
+            && url.pathname.startsWith(pluginPagePath(pluginId)) ? url : null;
+    } catch {
+        return null;
+    }
+}
+
+const trimmed = value => (typeof value === 'string' && value.trim() ? value.trim() : null);
+
+/**
+ * A device page of this plugin, from the `surfaces` Decaid lists on a connected device
+ * (`GET /grinder/info`, `GET /scale/info`): `{ role, label, href }`, href confined to this
+ * plugin's pages on the API origin.
+ */
+export function pluginDeviceSurfaces(pluginId, deviceInfos, apiOrigin) {
+    return (Array.isArray(deviceInfos) ? deviceInfos : []).flatMap(info =>
+        (Array.isArray(info?.surfaces) ? info.surfaces : []).flatMap(surface => {
+            const url = pluginPageUrl(surface?.href, apiOrigin, pluginId);
+            const role = trimmed(surface?.role);
+            return url && SURFACE_ROLES.includes(role) ? [{ role, label: trimmed(surface.label), href: url.href }] : [];
+        }));
+}
+
+/**
+ * The plugin's own Set up, Settings and Diagnostics pages, at most one per role, in that order.
+ * Declared top-level `surfaces` win; a host that drops them still gets Set up from a `setup`
+ * HTTP endpoint. A plugin-level page whose endpoint a connected device also serves opens that
+ * device's page (it carries the deviceId). Endpoint `ui` is left to the existing Open button.
+ */
+export function pluginSurfaceLinks(plugin, apiOrigin, deviceSurfaces = []) {
+    if (!plugin?.id || !plugin.loaded) return [];
+    const declared = Array.isArray(plugin.surfaces)
+        ? plugin.surfaces
+        : declaresHttpEndpoint(plugin, 'setup') ? [{ id: 'setup', role: 'setup', endpoint: 'setup' }] : [];
+    const links = new Map();
+    for (const surface of declared) {
+        const role = trimmed(surface?.role);
+        const endpoint = trimmed(surface?.endpoint);
+        if (!SURFACE_ROLES.includes(role) || links.has(role) || endpoint === 'ui') continue;
+        let url = pluginPageUrl(surface.href, apiOrigin, plugin.id);
+        if (!url && endpoint && declaresHttpEndpoint(plugin, endpoint)) {
+            url = new URL(`${pluginPagePath(plugin.id)}${encodeURIComponent(endpoint)}`, apiOrigin);
+            url.searchParams.set('ui', '1');
+            url.searchParams.set('surface', trimmed(surface.id) || role);
+        }
+        if (!url) continue;
+        const status = new URL(url.pathname, apiOrigin);
+        status.searchParams.set('status', '1');
+        const device = deviceSurfaces.find(d => new URL(d.href).pathname === url.pathname);
+        links.set(role, { role, label: trimmed(surface.label), href: device ? device.href : url.href, statusHref: role === 'setup' ? status.href : null });
+    }
+    for (const device of deviceSurfaces) {
+        if (!links.has(device.role)) links.set(device.role, { ...device, statusHref: null });
+    }
+    return SURFACE_ROLES.filter(role => links.has(role)).map(role => links.get(role));
+}
+
+/** `GET <setup>?status=1` -> `{ needsSetup, message }`, or null for a plugin that reports no setup status. */
+export function parseSetupStatus(body) {
+    if (!body || typeof body !== 'object' || typeof body.needsSetup !== 'boolean') return null;
+    return { needsSetup: body.needsSetup, message: trimmed(body.message) };
+}
+
+/** The machine-control grant Decaid reports for a plugin (`{ granted, reason }`), or null on a host without grants. */
+export function pluginMachineControl(plugin) {
+    const grant = plugin?.machineControl;
+    if (typeof grant === 'boolean') return { granted: grant, reason: null };
+    if (grant && typeof grant === 'object' && typeof grant.granted === 'boolean') return { granted: grant.granted, reason: trimmed(grant.reason) };
+    return null;
+}
+
+// ─── Generated-form hints (presentation only; Decaid passes them through) ────
+
+/** An enum's options: `valueLabels` names a value, `valueDescriptions` explains it; the raw value is the fallback. */
+export function pluginEnumOptions(schema) {
+    const text = (map, value) => (map && typeof map === 'object' ? trimmed(map[value]) : null);
+    return (Array.isArray(schema?.values) ? schema.values : []).map(raw => {
+        const value = String(raw);
+        return { value, label: text(schema.valueLabels, value) ?? value, description: text(schema.valueDescriptions, value) };
+    });
+}
+
+export function isAdvancedPluginSetting(schema) {
+    return schema?.advanced === true;
+}
+
+/** A string setting whose default is a JSON object or array: edited as text, validated as JSON. */
+export function isJsonPluginSetting(schema) {
+    if (schema?.type !== 'string' || typeof schema.default !== 'string') return false;
+    try {
+        const parsed = JSON.parse(schema.default);
+        return parsed !== null && typeof parsed === 'object';
+    } catch {
+        return false;
+    }
+}
+
+export function pluginSettingUsesTextarea(schema) {
+    return schema?.type === 'string' && schema.secure !== true && (schema.multiline === true || isJsonPluginSetting(schema));
+}
+
+/** The value a text setting saves: trimmed, and for a JSON setting only when it parses to an object or array. */
+export function parsePluginTextSetting(text, schema) {
+    const value = String(text ?? '').trim();
+    if (!isJsonPluginSetting(schema)) return { value };
+    try {
+        const parsed = JSON.parse(value);
+        return parsed !== null && typeof parsed === 'object' ? { value } : { error: 'Invalid JSON' };
+    } catch {
+        return { error: 'Invalid JSON' };
+    }
+}
