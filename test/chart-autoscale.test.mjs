@@ -19,6 +19,9 @@ import {
     computeExpandedTempRange,
     pickVisible,
     separateLabelPositions,
+    ZOOM_Y_MAX,
+    computeLabelShifts,
+    rangeMaxForLabelRoom,
 } from '../src/modules/chart-autoscale.js';
 import { readFileSync } from 'node:fs';
 
@@ -257,23 +260,54 @@ test('hiding a three-digit GFlow hands the axis back to the other lines', () => 
     assert.equal(computeExpandedTopYMax(pickVisible(all, [true, true, 'legendonly']), 0), 12);
 });
 
-test('the top-chart trace order in chart.js matches the y-array order', () => {
-    // Plotly reports visibility by trace INDEX, so expandedTopTraces() and
-    // expandedTopSeriesYs() must emit the same series in the same order or
-    // hiding one line would rescale against another. chart.js touches the DOM
-    // at import time, so read the order out of the source instead.
+// ── Single-plot full-screen chart (TCL zoomed page) ─────────────────────────
+
+test('the zoomed chart keeps a stable trace order: lines, temperatures, optional mix target last', () => {
+    // chart.js touches the DOM at import time, so read the order out of the source.
     const src = readFileSync(new URL('../src/modules/chart.js', import.meta.url), 'utf8');
-    const body = (name) => {
-        const m = src.match(new RegExp(`function ${name}\\(\\)\\s*\\{[\\s\\S]*?\\n\\}`));
-        assert.ok(m, `${name} not found in chart.js`);
-        return m[0];
-    };
-    const keys = ['pressure', 'flow', 'weight', 'targetPressure', 'targetFlow'];
-    const orderIn = (text) => keys
-        .map(k => ({ k, at: text.indexOf(`chartData.${k}`) }))
-        .filter(e => e.at !== -1)
-        .sort((a, b) => a.at - b.at)
-        .map(e => e.k);
-    assert.deepEqual(orderIn(body('expandedTopSeriesYs')), keys);
-    assert.deepEqual(orderIn(body('expandedTopTraces')), keys);
+    const body = src.match(/function expandedTraces\(\)\s*\{[\s\S]*?\n\}/)[0];
+    const keys = ['pressure', 'flow', 'weight', 'targetPressure', 'targetFlow', 'groupTemperature', 'expandedMixTemp', 'targetTemperature', 'expandedTargetMixTemp'];
+    const at = keys.map(k => body.indexOf(k === 'expandedMixTemp' || k === 'expandedTargetMixTemp' ? `...${k}` : `chartData.${k}`));
+    assert.ok(at.every(i => i !== -1), `all keys present: ${at}`);
+    assert.deepEqual([...at].sort((x, y) => x - y), at);
+    assert.match(src, /const ZOOM_LABELLED = \[0, 1, 2, 5, 6\]/);
+});
+
+test('ZOOM_Y_MAX is the TCL axis max', () => {
+    assert.equal(ZOOM_Y_MAX, 14);
+});
+
+test('computeLabelShifts leaves well-separated labels in place', () => {
+    assert.deepEqual(computeLabelShifts([2, 7, 12], 14, 700, 18, 8), [0, 0, 0]);
+});
+
+test('computeLabelShifts pushes colliding labels apart, returned in input order', () => {
+    // 700px / 14 = 50px per unit. y=5 and y=5.1 are 5px apart; they must end 18px apart.
+    const ys = [5.1, 9, 5];
+    const shifts = computeLabelShifts(ys, 14, 700, 18, 8);
+    assert.equal(shifts[1], 0);
+    const px = ys.map((y, i) => (1 - y / 14) * 700 - shifts[i]); // yshift is negative when moved down
+    assert.ok(Math.abs(px[0] - px[2]) >= 18 - 1e-9);
+    assert.ok(shifts[0] !== 0 || shifts[2] !== 0);
+});
+
+test('computeLabelShifts keeps the lowest label above the bottom edge', () => {
+    const shifts = computeLabelShifts([0, 0.1], 14, 700, 18, 8);
+    const px = [0, 0.1].map((y, i) => (1 - y / 14) * 700 - shifts[i]);
+    assert.ok(Math.max(...px) <= 700 - 8 + 1e-9);
+    assert.ok(Math.abs(px[0] - px[1]) >= 18 - 1e-9);
+});
+
+test('computeLabelShifts clamps out-of-range values onto the plot', () => {
+    assert.deepEqual(computeLabelShifts([-3], 14, 700, 18, 8), [0]);
+    assert.deepEqual(computeLabelShifts([99], 14, 700, 18, 8), [0]);
+    assert.deepEqual(computeLabelShifts([], 14, 700, 18, 8), []);
+});
+
+test('rangeMaxForLabelRoom reserves padPx of the plot to the right of the data', () => {
+    const max = rangeMaxForLabelRoom(30, 1000, 100);
+    // data ends 100px short of the right edge: 30 / max == 900 / 1000
+    assert.ok(Math.abs(30 / max - 0.9) < 1e-9);
+    assert.equal(rangeMaxForLabelRoom(0, 1000, 100), 0);
+    assert.ok(Number.isFinite(rangeMaxForLabelRoom(10, 50, 500)));
 });

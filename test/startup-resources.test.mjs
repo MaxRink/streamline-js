@@ -100,18 +100,18 @@ test('ECharts loads after first paint only on chart-bearing routes', () => {
     assert.match(loader, /catch\(error => \{\s*echartsPromise = null;/);
 });
 
-test('core startup does not wait for Visualizer verification', () => {
+test('core startup does not wait for the legacy Visualizer credential purge', () => {
     const app = read('src/modules/app.js');
-    assert.doesNotMatch(app, /await initVisualizer\(\)/);
-    assert.match(app, /connectShotSettingsWebSocket\(handleShotSettingsData\);\s*void initVisualizer\(\)/);
+    assert.doesNotMatch(app, /await purgeLegacyVisualizerCredentials\(\)/);
+    assert.match(app, /connectShotSettingsWebSocket\(handleShotSettingsData\);\s*void purgeLegacyVisualizerCredentials\(\)\.catch\(\(\) => \{\}\)/);
     assert.match(app, /Promise\.all\(\[historyInit, profileManager\.init\(\)\]\)/);
 });
 
-test('expanded chart closes only from explicit controls', () => {
+test('zoomed chart closes by tapping it or Escape, never from a stray pointerdown', () => {
     const app = read('src/modules/app.js');
-    assert.match(app, /backBtn\.addEventListener\('click', close\)/);
+    assert.match(app, /zoomedEl\.addEventListener\('click', close\)/);
     assert.match(app, /e\.key === 'Escape'/);
-    assert.doesNotMatch(app, /expanded-chart-overlay[\s\S]*?addEventListener\('(click|pointerdown)'/);
+    assert.doesNotMatch(app, /expanded-chart[\s\S]{0,200}addEventListener\('pointerdown'/);
     assert.doesNotMatch(app, /closest\?\.\('\.legend'\)/);
 });
 

@@ -1,4 +1,5 @@
 import { currentBeanContext } from '../src/modules/bean-selection.js';
+import { isSteamOff, recipeSteamPatch } from '../src/modules/steam-mode.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -278,39 +279,21 @@ function lift(module, patterns) {
     });
 }
 
-// ── Workflow context cleanup (dyeStrip.js) ──────────────────────────────────
-// DYE2 stamps bean/barista identity onto the workflow context and Decaid copies
-// the workflow into every persisted ShotRecord, so anything left there labels
-// later shots nobody meant to label. The clear runs after each persisted shot
-// and at boot when DYE2 isn't running; what matters is that it nulls exactly the
-// plugin-owned fields, leaves the dashboard's own dose/yield/grind alone, and
-// stays silent when there is nothing to clear.
+// ── Workflow context policy (dyeStrip.js, workflow-note.js) ─────────────────
+// Bean, roaster, batch, grinder, barista, drinker, basket and rpm persist across
+// shots and reloads; only the note is per shot. The one remaining wipe is the
+// Settings switch-off of DYE2.
 {
+    const { noteClearContext } = await import('../src/modules/workflow-note.js');
     const body = lift('dyeStrip.js', [
-        /const DYE_CONTEXT_FIELDS = \{[\s\S]*?\n\};/,
-        /export function hasDyeContext\([\s\S]*?\r?\n\}/,
-        /export async function clearDyeWorkflowContext\([\s\S]*?\r?\n\}/,
+        /const DYE2_OWNED_CONTEXT = \{[\s\S]*?\n\};/,
+        /export async function clearDye2ContextOnDisable\([\s\S]*?\r?\n\}/,
     ]);
-
-    const { scopedClearContext, hasDyeMarker, skinBeanClearContext, mergeClearContext } = await import('../src/modules/dye-context.js');
-    const build = (context, { scoped = false, inUse = true, selection = null } = {}) => {
+    const build = (context) => {
         const puts = [];
-        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger', 'scopedClearSupported', 'scopedClearContext', 'hasDyeMarker', 'isDye2Enabled', 'dye2PluginLoaded', 'skinBeanClearContext', 'mergeClearContext', 'getKVValue', 'DYE2_KV_NAMESPACE',
-            `${body}\nreturn { hasDyeContext, clearDyeWorkflowContext };`);
-        const api = fn(
-            async () => ({ context }),
-            async (payload) => { puts.push(payload); return payload; },
-            { info() {}, warn() {} },
-            async () => scoped,
-            scopedClearContext,
-            hasDyeMarker,
-            () => inUse,
-            async () => inUse,
-            skinBeanClearContext,
-            mergeClearContext,
-            async () => selection,
-            'dye2.reaplugin',
-        );
+        const fn = new Function('getWorkflow', 'updateWorkflow', 'logger',
+            `${body}\nreturn { clearDye2ContextOnDisable };`);
+        const api = fn(async () => ({ context }), async (p) => { puts.push(p); return p; }, { info() {}, warn() {} });
         return { ...api, puts };
     };
 
@@ -318,169 +301,58 @@ function lift(module, patterns) {
         targetDoseWeight: 22, targetYield: 44, grinderSetting: '21.00',
         beanBatchId: 'b1', coffeeName: 'Colombia El Paraiso', coffeeRoaster: 'La Cabra',
         grinderId: 'g1', baristaName: 'Mark', drinkerName: 'John',
-        extras: { note: 'Well balanced', rpm: 0, basketId: 'k1', basketName: 'ims 18g' },
+        extras: { note: 'Well balanced', rpm: 0, basketId: 'k1', basketName: 'ims 18g', dye: { v: 1 } },
     };
 
-    test('a selected recipe keeps its batch, grinder and basket; only per-shot fields clear (#149)', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { selection: { kind: 'recipe', id: 'r1' } });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        assert.deepEqual(puts[0].context, { baristaName: null, drinkerName: null, extras: { note: null } });
+    test('the note is cleared after a shot only when one is set, and nothing else is touched', () => {
+        assert.deepEqual(noteClearContext(dirty), { extras: { note: null } });
+        assert.deepEqual(noteClearContext({ extras: { note: '' } }), { extras: { note: null } });
+        assert.equal(noteClearContext({ extras: { note: null } }), null);
+        assert.equal(noteClearContext({ coffeeName: 'x', baristaName: 'y' }), null);
+        assert.equal(noteClearContext(null), null);
+        assert.deepEqual(Object.keys(noteClearContext(dirty)), ['extras']);
     });
 
-    test('a selected favourite is cleared as before', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { selection: { kind: 'favourite', id: 'f1' } });
-        await clearDyeWorkflowContext();
-        assert.equal(puts[0].context.beanBatchId, null);
-    });
-
-    test('clears every plugin-owned field and nothing the dashboard owns', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty);
-        assert.equal(await clearDyeWorkflowContext(), true);
+    test('the DYE2 switch-off wipes every DYE2-owned field including grinderSetting', async () => {
+        const { clearDye2ContextOnDisable, puts } = build(dirty);
+        assert.equal(await clearDye2ContextOnDisable(), true);
         assert.equal(puts.length, 1);
         const sent = puts[0].context;
-        for (const key of ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'grinderId',
-            'grinderModel', 'baristaName', 'drinkerName']) {
+        for (const key of ['beanBatchId', 'coffeeName', 'coffeeRoaster', 'grinderId', 'grinderModel',
+            'grinderSetting', 'baristaName', 'drinkerName']) {
             assert.equal(sent[key], null, key);
         }
-        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null, dye: null, streamlineBean: null });
-        assert.ok(!('targetDoseWeight' in sent));
-        assert.ok(!('targetYield' in sent));
-        assert.ok(!('grinderSetting' in sent), 'the grind tile is not DYE2-owned');
-        assert.ok(!('profile' in puts[0]));
+        assert.deepEqual(sent.extras, { basketId: null, basketName: null, rpm: null, note: null, dye: null });
+        assert.ok(!('targetDoseWeight' in sent) && !('targetYield' in sent) && !('profile' in sent));
     });
 
-    test('leaves another plugin\'s values alone when DYE2 is not in use', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { inUse: false });
-        assert.equal(await clearDyeWorkflowContext(), false);
-        assert.equal(puts.length, 0);
-    });
-
-    test('a coffee the skin picker set for one shot is still dropped when DYE2 is not in use', async () => {
-        const ctx = { targetDoseWeight: 18, beanBatchId: 'b', coffeeName: 'Lot', coffeeRoaster: 'R', grinderId: 'g1', extras: { streamlineBean: true } };
-        const { clearDyeWorkflowContext, puts } = build(ctx, { inUse: false });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        assert.deepEqual(puts[0].context, { beanBatchId: null, coffeeName: null, coffeeRoaster: null, extras: { streamlineBean: null } });
-    });
-
-    test('the skin picker\'s coffee is dropped alongside a marked DYE2 clear', async () => {
-        const ctx = { beanBatchId: 'b', coffeeName: 'Lot', coffeeRoaster: 'R', grinderId: 'g1',
-            extras: { streamlineBean: true, dye: { v: 1, grinderId: true } } };
-        const { clearDyeWorkflowContext, puts } = build(ctx, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        const sent = puts[0].context;
-        // report #4: the grinder is equipment, so it survives the post-shot clear while its DYE2 flag does not
-        assert.ok(!('grinderId' in sent));
-        assert.equal(sent.coffeeName, null);
-        assert.equal(sent.extras.streamlineBean, null);
-        assert.deepEqual(sent.extras.dye, { grinderId: null });
-    });
-
-    test('the Settings switch-off still clears everything', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty, { inUse: false });
-        assert.equal(await clearDyeWorkflowContext({ includeGrinderSetting: true }), true);
-        assert.equal(puts.length, 1);
-    });
-
-    test('coffee picker selection is cleared for the following shot without changing dose or grind', async () => {
-        const context = {
-            targetDoseWeight: 18, targetYield: 36, grinderSetting: '21',
-            ...currentBeanContext({ id: 'bean', name: 'Lot', roaster: 'Roaster' }, { id: 'batch', beanId: 'bean' }),
-        };
-        const { clearDyeWorkflowContext, puts } = build(context);
-        assert.equal(context.beanBatchId, 'batch');
-        assert.equal(await clearDyeWorkflowContext(), true);
-        const followingShot = { ...context, ...puts[0].context };
-        assert.equal(followingShot.beanBatchId, null);
-        assert.equal(followingShot.coffeeName, null);
-        assert.equal(followingShot.coffeeRoaster, null);
-        assert.equal(followingShot.targetDoseWeight, 18);
-        assert.equal(followingShot.targetYield, 36);
-        assert.equal(followingShot.grinderSetting, '21');
-    });
-
-    test('a DYE2 that marks its writes: only the flagged fields are cleared, another plugin\'s stay', async () => {
-        const context = {
-            ...dirty,
-            grinderModel: 'EG-1', // set by another plugin, never flagged
-            extras: { ...dirty.extras, dye: { v: 1, coffeeName: true, beanBatchId: true, note: true } },
-        };
-        const { clearDyeWorkflowContext, puts } = build(context, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        const sent = puts[0].context;
-        assert.equal(sent.coffeeName, null);
-        assert.equal(sent.beanBatchId, null);
-        assert.equal(sent.extras.note, null);
-        assert.deepEqual(sent.extras.dye, { coffeeName: null, beanBatchId: null, note: null });
-        for (const kept of ['coffeeRoaster', 'grinderId', 'grinderModel', 'baristaName', 'drinkerName']) {
-            assert.ok(!(kept in sent), kept);
-        }
-        assert.ok(!('rpm' in sent.extras) && !('basketId' in sent.extras));
-    });
-
-    test('marked DYE2 that wrote nothing: nothing is cleared, no PUT', async () => {
-        const { clearDyeWorkflowContext, puts } = build({ ...dirty, extras: { ...dirty.extras, dye: { v: 1 } } }, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), false);
-        assert.equal(puts.length, 0);
-    });
-
-    test('a marker-capable version that sent no marker still gets the blanket clear', async () => {
-        // The version gate says the plugin COULD mark its writes, not that it did: a
-        // build that declares the version and writes no marker must not silently stop
-        // the clear, or one shot's bean identity labels every later shot.
-        const { clearDyeWorkflowContext, puts } = build(dirty, { scoped: true });
-        assert.equal(await clearDyeWorkflowContext(), true);
-        assert.equal(puts[0].context.coffeeName, null);
-        assert.equal(puts[0].context.beanBatchId, null);
-        assert.ok(!('grinderSetting' in puts[0].context));
-    });
-
-    test('the settings switch-off still clears everything, marked or not', async () => {
-        const { clearDyeWorkflowContext, puts } = build({ ...dirty, extras: { ...dirty.extras, dye: { v: 1, note: true } } }, { scoped: true });
-        await clearDyeWorkflowContext({ includeGrinderSetting: true });
-        assert.equal(puts[0].context.coffeeName, null);
-        assert.equal(puts[0].context.grinderSetting, null);
-    });
-
-    test('grinderSetting goes only when the whole plugin is switched off', async () => {
-        const { clearDyeWorkflowContext, puts } = build(dirty);
-        await clearDyeWorkflowContext({ includeGrinderSetting: true });
-        assert.equal(puts[0].context.grinderSetting, null);
-    });
-
-    test('no PUT when there is nothing to clear -- every shot and every boot calls this', async () => {
-        const { clearDyeWorkflowContext, puts } = build({ targetDoseWeight: 18, targetYield: 36, grinderSetting: '21.00' });
-        assert.equal(await clearDyeWorkflowContext(), false);
-        assert.equal(puts.length, 0);
-    });
-
-    test('rpm 0 and an empty-string note still count as set', async () => {
-        const { hasDyeContext } = build({});
-        assert.equal(hasDyeContext({ extras: { rpm: 0 } }), true);
-        assert.equal(hasDyeContext({ extras: { note: '' } }), true);
-        assert.equal(hasDyeContext({ extras: { note: null } }), false);
-        assert.equal(hasDyeContext(null), false);
-        assert.equal(hasDyeContext({ grinderSetting: '21.00' }), false);
-        assert.equal(hasDyeContext({ grinderSetting: '21.00' }, true), true);
+    test('no PUT when nothing is set; rpm 0 and an empty note count as set', async () => {
+        const empty = build({ targetDoseWeight: 18, targetYield: 36 });
+        assert.equal(await empty.clearDye2ContextOnDisable(), false);
+        assert.equal(empty.puts.length, 0);
+        assert.equal(await build({ extras: { rpm: 0 } }).clearDye2ContextOnDisable(), true);
+        assert.equal(await build({ extras: { note: '' } }).clearDye2ContextOnDisable(), true);
+        assert.equal(await build({ grinderSetting: '21.00' }).clearDye2ContextOnDisable(), true);
+        assert.equal(await build(null).clearDye2ContextOnDisable(), false);
     });
 
     test('a failed workflow read never throws at the caller', async () => {
         const fn = new Function('getWorkflow', 'updateWorkflow', 'logger',
-            `${body}\nreturn { clearDyeWorkflowContext };`);
-        const { clearDyeWorkflowContext } = fn(
+            `${body}\nreturn { clearDye2ContextOnDisable };`);
+        const { clearDye2ContextOnDisable } = fn(
             async () => { throw new Error('bridge down'); },
             async () => { throw new Error('should not be reached'); },
             { info() {}, warn() {} },
         );
-        assert.equal(await clearDyeWorkflowContext(), false);
+        assert.equal(await clearDye2ContextOnDisable(), false);
     });
 }
 
 // ── Recipe-cell long-press → DYE2 recipe-edit deep link (dyeStrip.js) ───────
-// Long-pressing a recipe cell should land the user directly on that recipe in
-// DYE2, not DYE2's dashboard root -- recipe-edit.ts reads the same
-// 'dye_editRecipeIdx' sessionStorage key dashboard.ts writes before its own
-// "Recipes" settings entry, and recipe ids are the fixed slots '1'..'5', so
-// id-1 is the reliable index (not the cell's filtered/sorted position).
+// Current DYE2 recipe-edit opens a recipe by its opaque id ('dye_editRecipeId').
+// Older builds read 'dye_editRecipeIdx' (ids '1'..'5', index = id - 1), which is
+// still set when the id has that shape. A blank cell clears the id key so
+// recipe-edit starts a new recipe.
 {
     const body = lift('dyeStrip.js', [
         /function editRecipe\(recipe\) \{[\s\S]*?\r?\n\}/,
@@ -491,29 +363,47 @@ function lift(module, patterns) {
         const opened = [];
         const fn = new Function('sessionStorage', 'openPluginOverlay', `${body}\nreturn editRecipe;`);
         const editRecipe = fn(
-            { setItem: (k, v) => { store[k] = v; } },
-            (page) => opened.push(page),
+            { setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } },
+            (page, params) => opened.push(params ? [page, params] : page),
         );
         return { editRecipe, store, opened };
     };
 
-    test('recipe id is the slot index plus one -- id "1" maps to index 0', () => {
+    test('an opaque id is passed through and sets no legacy index', () => {
         const { editRecipe, store, opened } = build();
-        editRecipe({ id: '1' });
-        assert.equal(store.dye_editRecipeIdx, '0');
-        assert.deepEqual(opened, ['recipe-edit']);
+        editRecipe({ id: 'rcp_ab12' });
+        assert.equal(store.dye_editRecipeId, 'rcp_ab12');
+        assert.equal(store.dye_editRecipeIdx, undefined);
+        assert.deepEqual(opened, [['recipe-edit', { id: 'rcp_ab12' }]]);
     });
 
-    test('recipe id "5" maps to index 4', () => {
+    test('a legacy id "1" also sets index 0 and "5" index 4 for an older DYE2', () => {
         const { editRecipe, store } = build();
+        editRecipe({ id: '1' });
+        assert.equal(store.dye_editRecipeId, '1');
+        assert.equal(store.dye_editRecipeIdx, '0');
         editRecipe({ id: '5' });
         assert.equal(store.dye_editRecipeIdx, '4');
     });
 
-    test('a missing or non-numeric id falls back to index 0, never negative', () => {
+    test('a blank cell clears the id (new recipe) and keeps the slot index for an older DYE2', () => {
         const { editRecipe, store } = build();
-        editRecipe({});
-        assert.equal(store.dye_editRecipeIdx, '0');
+        store.dye_editRecipeId = 'stale';
+        editRecipe({ id: '3', blank: true });
+        assert.equal(store.dye_editRecipeId, undefined);
+        assert.equal(store.dye_editRecipeIdx, '2');
+    });
+
+    test('a blank cell asks for a new recipe on that slot; a recipe passes its id in the URL', () => {
+        const { editRecipe, opened } = build();
+        editRecipe({ id: '3', blank: true });
+        editRecipe({ id: 'rcp_x' });
+        // ?slot is the cell that was tapped: without it DYE2 starts with no slot targeted and
+        // SAVE files the recipe in the library, leaving the cell blank. An older DYE2 ignores it.
+        assert.deepEqual(opened, [
+            ['recipe-edit', { new: 1, slot: '3' }],
+            ['recipe-edit', { id: 'rcp_x' }],
+        ]);
     });
 }
 
@@ -561,9 +451,10 @@ function lift(module, patterns) {
 // direction, folding a dashboard edit back into the active recipe. The only
 // safety property that matters here is that it never claims to represent an
 // edit the recipe schema has no field for (KV_CONTRACT.md's dashboardVariables
-// shape): milk auto-stop and calibrated auto-steam are dashboard-only concepts
-// with nothing to write into, so those must produce no patch at all rather than
-// a guessed one.
+// shape): calibrated auto-steam is a dashboard-only concept with nothing to
+// write into, so it must produce no patch at all rather than a guessed one.
+// The milk auto-stop DOES have a field -- steamStopAtTempC, added in dye2
+// 6aec7f3 along with a Milk stop control in the recipe editor.
 {
     const recipeAutoSaveFields = new Function(
         `${readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8')
@@ -611,12 +502,30 @@ function lift(module, patterns) {
         assert.deepEqual(patch, { steamMode: 'flow', steamFlowMls: 1.4 });
     });
 
-    test('a milk auto-stop edit has no recipe field -- produces no steam patch at all', () => {
+    test('a milk auto-stop edit records steamStopAtTempC and leaves steamMode alone', () => {
+        // steamMode names which of the time/flow PAIR the editor shows; there
+        // is no 'milk' value for it, so the stop is recorded on its own.
         const patch = recipeAutoSaveFields(
             { steamSettings: { stopAtTemperature: 65 } },
             { steamSettings: { stopAtTemperature: 65 } },
         );
-        assert.deepEqual(patch, {});
+        assert.deepEqual(patch, { steamStopAtTempC: 65 });
+    });
+
+    test('a milk auto-stop of 0 is a real value -- the stop turned off', () => {
+        const patch = recipeAutoSaveFields(
+            { steamSettings: { stopAtTemperature: 0 } },
+            { steamSettings: { stopAtTemperature: 0 } },
+        );
+        assert.deepEqual(patch, { steamStopAtTempC: 0 });
+    });
+
+    test('a steam time edit alongside a stop records both', () => {
+        const patch = recipeAutoSaveFields(
+            { steamSettings: { duration: 25, stopAtTemperature: 62 } },
+            { steamSettings: { duration: 25, stopAtTemperature: 62 } },
+        );
+        assert.deepEqual(patch, { steamMode: 'time', steamTimeS: 25, steamStopAtTempC: 62 });
     });
 
     test('hot water volume vs temperature pick the matching mode', () => {
@@ -630,6 +539,24 @@ function lift(module, patterns) {
         );
     });
 
+    test('one write carrying both hot water fields records both, not just the first', () => {
+        const patch = recipeAutoSaveFields(
+            { hotWaterData: { volume: 120, targetTemperature: 85 } },
+            { hotWaterData: { volume: 120, targetTemperature: 85 } },
+        );
+        assert.deepEqual(patch, { hotWaterMode: 'vol', hotWaterMl: 120, hotWaterTempC: 85 });
+    });
+
+    test('the workflow response wins over the sent payload for the stop and hot water too', () => {
+        assert.deepEqual(
+            recipeAutoSaveFields(
+                { steamSettings: { stopAtTemperature: 65 }, hotWaterData: { targetTemperature: 85 } },
+                { steamSettings: { stopAtTemperature: 64 }, hotWaterData: { targetTemperature: 86 } },
+            ),
+            { steamStopAtTempC: 64, hotWaterMode: 'temp', hotWaterTempC: 86 },
+        );
+    });
+
     test('flush maps to flushS', () => {
         const patch = recipeAutoSaveFields({ rinseData: { duration: 8 } }, { rinseData: { duration: 8 } });
         assert.deepEqual(patch, { flushS: 8 });
@@ -637,6 +564,170 @@ function lift(module, patterns) {
 
     test('an edit with nothing this schema covers produces an empty patch', () => {
         assert.deepEqual(recipeAutoSaveFields({ context: { extras: { note: 'x' } } }, {}), {});
+    });
+}
+
+// ── Recipe apply: which held settings reach the machine (dyeStrip.js)
+// The other direction. KV_CONTRACT.md is explicit that steamMode/hotWaterMode
+// are display-only and "Apply ignores them and writes every setting held" --
+// DYE2's own apply says the same (plugin.js RECIPE_MACHINE_FIELDS). Gating the
+// write on the mode silently dropped everything the recipe held outside it.
+{
+    const persisted = [];
+    const heaterOn = { steamSettings: { targetTemperature: 165 } };
+    const heaterOff = { steamSettings: { targetTemperature: 0 } };
+    let autoSteamActive = false;
+    let rememberedSteamTemp = 160;
+    const mergeRecipeLiveSettings = new Function(
+        'isSteamOff', 'isAutoSteamActive', 'persistSharedValue', 'STEAM_DURATION_LAST_VALUE_KEY', 'STEAM_FLOW_LAST_VALUE_KEY',
+        'MILK_STOP_LAST_VALUE_KEY', 'HOT_WATER_VOLUME_LAST_VALUE_KEY', 'HOT_WATER_TEMP_LAST_VALUE_KEY',
+        'FLUSH_DURATION_LAST_VALUE_KEY', 'recipeSteamPatch', 'readSharedValue', 'STEAM_TEMP_LAST_VALUE_KEY',
+        `${readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8')
+            .match(/async function mergeRecipeLiveSettings\(dv, live\) \{[\s\S]*?\r?\n\}/)[0]}\nreturn mergeRecipeLiveSettings;`
+    )(
+        isSteamOff,
+        () => autoSteamActive,
+        async (key, value) => { persisted.push([key, value]); },
+        'last-steam-duration', 'last-steam-flow', 'last-milk-stop',
+        'last-hot-water-volume', 'last-hot-water-temp', 'last-flush-duration',
+        recipeSteamPatch, async (key) => (key === 'last-steam-temp' ? rememberedSteamTemp : null), 'last-steam-temp',
+    );
+
+    test('a time-mode recipe turns a heater that is off back on at the remembered temperature', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ steamMode: 'time', steamTimeS: 25 }, heaterOff);
+        assert.deepEqual(patch, { steamSettings: { targetTemperature: 160, duration: 25 } });
+        assert.deepEqual(persisted, [['last-steam-temp', 160], ['last-steam-duration', 25]]);
+    });
+
+    test('the recipe\'s own steam temperature wins, and nothing remembered still heats', async () => {
+        const held = await mergeRecipeLiveSettings({ steamMode: 'time', steamTimeS: 25, steamTempC: 145 }, heaterOff);
+        assert.equal(held.steamSettings.targetTemperature, 145);
+        rememberedSteamTemp = null;
+        try {
+            const fallback = await mergeRecipeLiveSettings({ steamMode: 'time', steamTimeS: 25 }, heaterOff);
+            assert.equal(fallback.steamSettings.targetTemperature, 150);
+        } finally {
+            rememberedSteamTemp = 160;
+        }
+    });
+
+    test('a recipe holding a steam time turns the heater on whichever unit it displays', async () => {
+        for (const recipe of [{ steamMode: 'flow', steamTimeS: 25 }, { steamTimeS: 25, steamFlowMls: 1.2 }]) {
+            const patch = await mergeRecipeLiveSettings(recipe, heaterOff);
+            assert.equal(patch.steamSettings.targetTemperature, 160, JSON.stringify(recipe));
+            assert.equal(patch.steamSettings.duration, 25, JSON.stringify(recipe));
+        }
+    });
+
+    test('a recipe holding only a steam temperature never heats with a time of 0', async () => {
+        const patch = await mergeRecipeLiveSettings({ steamTempC: 145 }, heaterOff);
+        assert.deepEqual(patch, { steamSettings: { targetTemperature: 145, duration: 30 } });
+    });
+
+    test('a recipe saved with steam off switches both halves off and keeps what to return to', async () => {
+        const live = { steamSettings: { targetTemperature: 165, duration: 40 } };
+        for (const recipe of [{ steamMode: 'time', steamTimeS: 0 }, { steamMode: 'time', steamTimeS: 25, steamTempC: 0 }]) {
+            persisted.length = 0;
+            const patch = await mergeRecipeLiveSettings(recipe, live);
+            assert.deepEqual(patch, { steamSettings: { targetTemperature: 0, duration: 0 } }, JSON.stringify(recipe));
+            assert.deepEqual(persisted, [['last-steam-temp', 165], ['last-steam-duration', 40]]);
+        }
+    });
+
+    test('a heater already on takes the recipe temperature', async () => {
+        const patch = await mergeRecipeLiveSettings({ steamMode: 'time', steamTimeS: 25, steamTempC: 145 }, heaterOn);
+        assert.deepEqual(patch, { steamSettings: { targetTemperature: 145, duration: 25 } });
+    });
+
+    test('a recipe holding only a flow leaves a heater that is off alone', async () => {
+        assert.deepEqual(await mergeRecipeLiveSettings({ steamMode: 'flow', steamFlowMls: 1.2 }, heaterOff), { steamSettings: { flow: 1.2 } });
+    });
+
+    test('an active Auto session keeps its steam time, flow and temperature', async () => {
+        autoSteamActive = true;
+        try {
+            assert.deepEqual(await mergeRecipeLiveSettings({ steamMode: 'time', steamTimeS: 25, steamFlowMls: 1.2, steamTempC: 145 }, heaterOff), {});
+        } finally {
+            autoSteamActive = false;
+        }
+    });
+
+    test('every flush setting the recipe holds is applied', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ flushS: 12, flushTempC: 88, flushFlowMls: 6 });
+        assert.deepEqual(patch, { rinseData: { duration: 12, targetTemperature: 88, flow: 6 } });
+        assert.deepEqual(persisted, [['last-flush-duration', 12]]);
+    });
+
+    test('a recipe\'s milk stop reaches the machine and is remembered', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ steamStopAtTempC: 62 });
+        assert.deepEqual(patch, { steamSettings: { stopAtTemperature: 62 } });
+        assert.deepEqual(persisted, [['last-milk-stop', 62]]);
+    });
+
+    test('a stop of 0 is applied but never remembered', async () => {
+        // 0 means the stop is off; remembering it would erase the temperature
+        // the user tuned, the same rule api.setStopAtTemperature follows.
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ steamStopAtTempC: 0 });
+        assert.deepEqual(patch, { steamSettings: { stopAtTemperature: 0 } });
+        assert.deepEqual(persisted, []);
+    });
+
+    test('the stop rides along with a steam time without needing a steamMode', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ steamMode: 'time', steamTimeS: 25, steamStopAtTempC: 62 });
+        assert.deepEqual(patch, { steamSettings: { duration: 25, stopAtTemperature: 62 } });
+    });
+
+    test('a time-mode recipe holding a flow writes and remembers both', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ steamMode: 'time', steamTimeS: 25, steamFlowMls: 1.2 }, heaterOn);
+        assert.deepEqual(patch, { steamSettings: { duration: 25, flow: 1.2 } });
+        assert.deepEqual(persisted, [['last-steam-duration', 25], ['last-steam-flow', 1.2]]);
+    });
+
+    test('a flow-mode recipe holding a time writes and remembers both', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ steamMode: 'flow', steamTimeS: 25, steamFlowMls: 1.2 }, heaterOn);
+        assert.deepEqual(patch, { steamSettings: { duration: 25, flow: 1.2 } });
+        assert.deepEqual(persisted, [['last-steam-duration', 25], ['last-steam-flow', 1.2]]);
+    });
+
+    test('a flow-mode recipe holding a zero time writes no duration', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({ steamMode: 'flow', steamTimeS: 0, steamFlowMls: 1.2 }, heaterOn);
+        assert.deepEqual(patch, { steamSettings: { flow: 1.2 } });
+        assert.deepEqual(persisted, [['last-steam-flow', 1.2]]);
+    });
+
+    test('an active Auto steam session keeps its duration and flow', async () => {
+        persisted.length = 0;
+        autoSteamActive = true;
+        try {
+            assert.deepEqual(await mergeRecipeLiveSettings({ steamTimeS: 25, steamFlowMls: 1.2 }, heaterOn), {});
+            assert.deepEqual(persisted, []);
+        } finally {
+            autoSteamActive = false;
+        }
+    });
+
+    test('every hot water setting held is applied, whatever the display mode says', async () => {
+        persisted.length = 0;
+        const patch = await mergeRecipeLiveSettings({
+            hotWaterMode: 'vol', hotWaterMl: 120, hotWaterTempC: 85,
+            hotWaterTimeS: 30, hotWaterFlowMls: 6,
+        });
+        assert.deepEqual(patch, {
+            hotWaterData: { volume: 120, targetTemperature: 85, duration: 30, flow: 6 },
+        });
+        assert.deepEqual(persisted, [['last-hot-water-volume', 120], ['last-hot-water-temp', 85]]);
+    });
+
+    test('a recipe holding nothing produces no patch', async () => {
+        assert.deepEqual(await mergeRecipeLiveSettings({}), {});
     });
 }
 

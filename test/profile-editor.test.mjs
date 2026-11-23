@@ -430,3 +430,45 @@ test('the tail is a percentage, so it tracks the scrollbar gutter rather than as
     // scrollbar-gutter reserves the vertical bar, leaving a 1875 content box.
     assert.match(cardRowTailTrack(6), /^ calc\(100% - \d+px\)$/);
 });
+
+// --- sending a saved profile to the machine -------------------------------
+// The send itself lives in profileManager (sendProfileRecordToMachine, covered
+// in profile-send-gate.test.mjs). What belongs to the editor is only that SAVE
+// goes through it at all, and that a held switch is reported to the user --
+// "Saved profile" alone would read as "the machine has it".
+const pushMatch = source.match(/async function pushSavedProfileToMachine\([\s\S]*?\n\}/);
+assert.ok(pushMatch, 'pushSavedProfileToMachine not found in profile_editor.js');
+const pushSource = pushMatch[0].replace("await import('./profileManager.js')", 'deps');
+
+function editorPush(result) {
+    const seen = [], toasts = [];
+    const deps = { sendProfileRecordToMachine: async r => { seen.push(r); return result; } };
+    const fn = new Function('deps', 'showToast', 'getTranslation',
+        `${pushSource}\nreturn pushSavedProfileToMachine;`)(
+        deps, m => toasts.push(m), k => k);
+    return { fn, seen, toasts };
+}
+
+const saved = { id: 'A', profile: { title: 'Londinium', target_weight: '36' }, metadata: {} };
+
+test('saving sends the profile to the machine and reports a held switch', async () => {
+    const sent = editorPush('sent');
+    await sent.fn(saved);
+    assert.deepEqual(sent.seen, [saved]);
+    assert.deepEqual(sent.toasts, [], 'the ordinary save toast already covers this');
+
+    const deferred = editorPush('deferred');
+    await deferred.fn(saved);
+    assert.equal(deferred.toasts.length, 1, 'the user must learn the machine kept the old profile');
+
+    // A failed send is logged by the send itself; the save still succeeded, so
+    // it must not be dressed up as a failure here.
+    const failed = editorPush('failed');
+    await failed.fn(saved);
+    assert.deepEqual(failed.toasts, []);
+
+    const empty = editorPush('sent');
+    await empty.fn(null);
+    await empty.fn({ id: 'A' });
+    assert.deepEqual(empty.seen, [], 'nothing to send without a profile');
+});

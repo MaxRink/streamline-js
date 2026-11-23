@@ -29,7 +29,6 @@ It owns or starts:
 - initial workflow and machine identification;
 - machine snapshot, scale, devices, water level, time-to-ready, shot state, display, and shot-settings streams;
 - brightness restoration and gateway tracking;
-- optional Visualizer initialization.
 
 Keep the first useful paint independent from unrelated slow work. For example, returning from the profile selector repaints cached history without waiting for every device connection and socket.
 

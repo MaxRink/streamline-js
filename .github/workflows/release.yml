@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # Manual re-run of a build that failed for a reason outside the repo (a flaky
+  # runner, an expired token). Dispatch it on the tag to rebuild a release, or
+  # on main to redeploy dist — the ref decides, same as a push.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,19 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Sync translations from Google Sheets
-        env:
-          TRANSLATIONS_URL: ${{ secrets.TRANSLATIONS_SHEET_URL }}
-        run: |
-          set -euo pipefail
-          if [ -z "${TRANSLATIONS_URL:-}" ]; then
-            echo "::warning::TRANSLATIONS_SHEET_URL secret not set — skipping translation sync, using committed file"
-          else
-            curl -fL "$TRANSLATIONS_URL" -o "src/ui/de1 gui translation - Sheet1.csv"
-            echo "Translations synced from Google Sheets"
-            echo "Languages: $(head -1 'src/ui/de1 gui translation - Sheet1.csv')"
-          fi
 
       - name: Stage whitelist into ./dist
         run: |
@@ -62,14 +53,33 @@ jobs:
           cat dist/skin-manifest.json
 
 
-      # On main pushes (dist branch deploys), suffix the id so the dist build
-      # installs alongside the released skin instead of clobbering it.
-      - name: Set dist manifest id
+      # On main pushes (dist branch deploys): suffix the id so the dist build
+      # installs alongside the released skin instead of clobbering it, mark the
+      # name so it is obvious which one is running, and stamp a prerelease
+      # version so two dist builds are tellable apart. Without the stamp every
+      # dist build reports the released number, so "installed version" says
+      # nothing about which build is on the tablet.
+      - name: Stamp the dist manifest and the bundle version
         if: github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
-          jq '.id = "streamline.js-dist"' dist/skin-manifest.json > dist/skin-manifest.json.tmp
+          base=$(jq -r '.version' dist/skin-manifest.json)
+          dev="${base}-dev.$(echo "${{ github.sha }}" | cut -c1-7).${{ github.run_number }}"
+          jq --arg v "$dev" '.id = "streamline.js-dist" | .name = "\(.name) Dev" | .version = $v' \
+            dist/skin-manifest.json > dist/skin-manifest.json.tmp
           mv dist/skin-manifest.json.tmp dist/skin-manifest.json
+          # APP_VERSION is what the RUNNING bundle reports; the manifest is what
+          # the bridge reports from disk. The skin-update check compares the two,
+          # so leaving this at the released number would make every dist load
+          # look like a pending update.
+          sed -i "s/^export const APP_VERSION = '.*';/export const APP_VERSION = '${dev}';/" dist/src/version.js
+          # SKIN_ID is how the running bundle finds ITSELF in GET /webui/skins.
+          # Left at 'streamline.js' the dist build reads the bundled released
+          # skin's version instead, and a prerelease stamp always sorts below
+          # that release, so every dist load showed "new version available"
+          # (streamline-js #196 follow-up).
+          sed -i "s/^export const SKIN_ID = '.*';/export const SKIN_ID = 'streamline.js-dist';/" dist/src/version.js
+          grep -n "APP_VERSION\|SKIN_ID" dist/src/version.js
           cat dist/skin-manifest.json
 
       - name: Validate skin-manifest.json

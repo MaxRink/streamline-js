@@ -1,4 +1,4 @@
-import { loadPage } from './router.js';
+import { loadPage, getPreviousPageUrl } from './router.js';
 import { showToast, flashPlusMinusButton, flashIconButton } from './ui.js';
 import { openModal, resetNumpadModal } from './numpad-modal.js';
 import { openNotesModal } from './notes-modal.js';
@@ -6,7 +6,7 @@ import { getTranslation, fitTextToWidth } from './i18n.js';
 import { callPluginEndpoint, getPluginSettings } from './api.js';
 import { validateProfileStructure, isActiveProfile } from './profileManager.js';
 import { getProfileOverride, saveProfileOverride, removeProfileOverrideKeys,
-    ensureProfileOverridesLoaded } from './profile-overrides.js';
+    clearProfileOverride, ensureProfileOverridesLoaded } from './profile-overrides.js';
 import { applyFlowCalibrationForProfile, getFlowCalibrationBaseline, pickFlowCalibration,
     FLOW_CAL_KEYS, FLOW_CAL_DEFAULTS } from './flow-calibration.js';
 import { loadECharts } from './echarts-loader.js';
@@ -875,65 +875,12 @@ function renderStepCards() {
         editorState.editingStep = numSteps > 0 ? numSteps - 1 : null;
     }
 
-    // Maximum, Move on if and the footer share one TAIL track rather than a
-    // track each: Maximum shows one line per limit that is actually set, and a
-    // shared grid row is sized by the tallest card, so a single step with all
-    // three limits used to stretch every other card's Maximum cell to three
-    // lines. Inside TAIL each card stacks its own blocks and hugs its content
-    // (align-self: start), so a one-line Maximum card is one line tall. The
-    // trade-off the design accepts: cards no longer end at the same height,
-    // and the gutter's Move on if label lines up with the tallest card only.
     const R = { HEADER: 1, TEMP: 2, PUMP: 3, TAIL: 4 };
 
-    // Maximum block geometry, duplicated here as arithmetic rather than
-    // measured: controlLine/collapsedRow are both min-h-[72px] and mCell adds
-    // a gap plus top+bottom padding. The gutter needs the tallest card's
-    // Maximum height before anything is laid out, and counting lines is
-    // cheaper (and steadier) than a forced reflow mid-render.
-    //
-    // Figma only ever draws two Maximum lines. A card showing all three -- any
-    // open card, or a closed one with all three limits set -- totals 939 at
-    // the design's spacing against the 853.5 the content area has. Rather than
-    // taking all 85.5 out of the two rows that happen to be adjacent to it,
-    // the whole row drops to a tighter ROW_PAD: every row keeps its content at
-    // full size (72 lines, 72 +/- targets, a 67.5 footer button) and only the
-    // breathing room around it gives, uniformly, so no row reads as squeezed
-    // next to its neighbours. The step-name header keeps its Figma 97.5.
-    //
-    // Figma only ever draws two Maximum lines. A card showing all three -- any
-    // open card, or a closed one with all three limits set -- needs 87 more
-    // than a two-line one, which the content area does not have.
-    //
-    // Only the last three rows can give it. The step-name, Temp and Pump rows
-    // are shared GRID TRACKS: every card's Temp cell is the same track, which
-    // is what lines the gutter's labels up across the row, and a track is
-    // sized by its tallest cell -- so one card cannot shrink them without
-    // shrinking all of them. Maximum, Move on if and the footer are stacked
-    // inside each card's own TAIL cell, so they are the card's to spend.
-    //
-    // Spread evenly over those three, 87 is 29 off each, and the arithmetic
-    // lands on a three-line tail exactly as tall as a two-line one -- so
-    // nothing moves at all when a card opens:
-    //
-    //   2 lines, 45 pad:  205.5 + 118.5 + 114 = 438
-    //   3 lines, 16 pad:  263.5 +  89.5 +  85 = 438
-    //
-    // Each figure includes the row's own 1.5px top border, which border-box
-    // folds into its height -- easy to forget, and the reason an earlier pass
-    // at this came out 2px over on a CLOSED row.
-    const MAX_LINE_H = 72, MAX_LINE_GAP = 15, HAIRLINE_H = 1.5;
-    const TAIL_PAD = 45, TAIL_PAD_TIGHT = 16;
-    const maxLinesFor = (step, isExpanded) => (isExpanded
-        ? 3
-        : Math.max(1, ['weight', 'seconds', 'volume'].filter((k) => (step[k] || 0) > 0).length));
-    // Per CARD, not per row: a three-line card tightens, its neighbours do not.
-    const isTight = (lines) => lines >= 3;
-    const tailPad = (lines) => (isTight(lines) ? TAIL_PAD_TIGHT : TAIL_PAD);
-    // Tailwind needs whole class names, so both halves are spelled out.
-    const padY = (tight) => (tight ? 'py-[8px]' : 'py-[22.5px]');
-    const rowMinH = (tight) => (tight ? 'min-h-[88px]' : 'min-h-[117px]');
-    const maxBlockHeight = (lines) => lines * MAX_LINE_H + (lines - 1) * MAX_LINE_GAP
-        + tailPad(lines) + HAIRLINE_H;
+    const MAX_LINE_H = 72, MAX_LINE_GAP = 15, HAIRLINE_H = 1.5, TAIL_ROW_PAD = 16;
+    const MAX_FIELD_COUNT = 3;
+    const MAX_BLOCK_H = MAX_FIELD_COUNT * MAX_LINE_H + (MAX_FIELD_COUNT - 1) * MAX_LINE_GAP + TAIL_ROW_PAD + HAIRLINE_H;
+    const MOVE_ON_H = MAX_LINE_H + TAIL_ROW_PAD + HAIRLINE_H;
 
     // Attach once: the container is never recreated, only its contents are.
     initScrollThumb('editor-steps-container', 'editor-steps-container-thumb');
@@ -954,16 +901,12 @@ function renderStepCards() {
     // instead of running the cards full height.
     // Figma's own label-gutter row heights (Temp 157, Pump 289) set the
     // proportions between the two rows that are uniform across every card.
-    // TAIL is content-sized (auto) and each card hugs its own content inside
-    // it, so the track only ever grows to the tallest card and the slack goes
-    // to the proportional rows.
     // Figma 2662-936's own card rows (97.5 / 117 / 204 / 433.5 here) as
     // proportions rather than fixed px: on the design's 1200-high canvas each
     // track lands on its exact value, and on a viewport whose aspect differs
     // the three top rows give up a few px each instead of the row overflowing
     // into a vertical scrollbar. The floors are each row's own content height,
-    // so they stop shrinking before anything clips; an expanded card whose
-    // Maximum block runs to three lines genuinely does not fit and scrolls.
+    // so they stop shrinking before anything clips.
     // The three shared tracks keep the design's values whatever any card is
     // doing: 97.5 for the step name, then Figma's 117:204 for Temp and Pump,
     // with floors loose enough to absorb the hairlines and sub-pixel rounding.
@@ -1038,18 +981,6 @@ function renderStepCards() {
     // chip row) sits 43.5px above centre. 87px of bottom padding lifts the
     // label's centre by the same amount, putting it level with that chip.
     pumpLabel.style.paddingBottom = '87px';
-    // The gutter mirrors the cards' TAIL stack: a Maximum slot as tall as the
-    // tallest card's Maximum block, then Move on if. Cards shorter than that
-    // sit higher than their label — unavoidable once each card hugs its own
-    // content, and the reason the label tracks the tallest card rather than
-    // the first one.
-    let tallestMax = maxBlockHeight(1);
-    let tallestMaxPad = TAIL_PAD / 2;
-    steps.forEach((s, i) => {
-        const lines = maxLinesFor(s, editorState.editingStep === i);
-        const h = maxBlockHeight(lines);
-        if (h > tallestMax) { tallestMax = h; tallestMaxPad = tailPad(lines) / 2; }
-    });
     const tailLabel = mkLabel(R.TAIL, '');
     tailLabel.className = 'flex flex-col items-end bg-[var(--bg-tertiary)] px-[22.5px]';
 
@@ -1066,14 +997,8 @@ function renderStepCards() {
         return slot;
     }
 
-    // Maximum's block is top-aligned, so its first 72px line is centred
-    // 1.5 (hairline) + padding + 36 from the block top; a 30px label starts
-    // half its own height above that. The padding is the tallest card's, which
-    // is the compact one whenever that card is the open one.
-    mkTailLabel(getTranslation('Maximum'), tallestMax, tallestMaxPad + 22.5).id = 'editor-row-max';
-    // Move on if is a single centred 72px line, so its 30px label sits half
-    // the difference down whatever the row's padding makes that block.
-    mkTailLabel(getTranslation('Move on if'), 72 + TAIL_PAD, (72 + TAIL_PAD - 30) / 2).id = 'editor-row-exit';
+    mkTailLabel(getTranslation('Maximum'), MAX_BLOCK_H, TAIL_ROW_PAD / 2 + 22.5).id = 'editor-row-max';
+    mkTailLabel(getTranslation('Move on if'), MOVE_ON_H, (MOVE_ON_H - 30) / 2).id = 'editor-row-exit';
 
     // ── Card columns ────────────────────────────────────────────────────────
     // Each column is one white "card": rounded-[15px], 1.5px border, drawn as
@@ -1325,22 +1250,12 @@ function renderStepCards() {
         // Three horizontal lines, stacked: Weight, Time (seconds), Volume.
         // All three are live on the machine — whichever trips first ends the
         // step — so all three stay editable from here, not just weight/time.
-        // One cell for the rest of the card, stacked internally and hugging its
-        // own content: a card with fewer Maximum lines ends higher than its
-        // neighbours rather than being padded out to match them. Stretching it
-        // to the track instead would line every card's footer up, but it also
-        // grows every CLOSED card the moment one is opened, which reads as all
-        // of them expanding at once.
         const tailCell = cardAttr(mkCell(R.TAIL, col, 'flex flex-col min-w-0'));
         tailCell.style.alignSelf = 'start';
 
-        // Three Maximum lines need 87 more than two; this card spends it out
-        // of its own three tail rows, evenly, so its neighbours never move.
-        const tight = isTight(maxLinesFor(step, expanded));
-
-
         const mCell = cardAttr(mkCell(R.TAIL, col,
-            `flex flex-col items-center justify-start ${CARD_BG} ${SIDE} ${HAIRLINE} px-[30px] ${padY(tight)} gap-[15px] ${expanded ? '' : 'cursor-pointer'}`, tailCell));
+            `flex flex-col items-center justify-start ${CARD_BG} ${SIDE} ${HAIRLINE} px-[30px] py-[8px] gap-[15px] ${expanded ? '' : 'cursor-pointer'}`, tailCell));
+        mCell.style.height = `${MAX_BLOCK_H}px`;
         onExpandClick(mCell);
 
         const MAX_FIELDS = [
@@ -1387,7 +1302,7 @@ function renderStepCards() {
         // One horizontal line: the exit-condition chip, then the ± value —
         // the value is simply absent while the chip reads Off.
         const eCell = cardAttr(mkCell(R.TAIL, col,
-            `flex items-center justify-center ${CARD_BG} ${SIDE} ${HAIRLINE} px-[30px] ${padY(tight)} ${rowMinH(tight)} ${expanded ? '' : 'cursor-pointer'}`, tailCell));
+            `flex items-center justify-center ${CARD_BG} ${SIDE} ${HAIRLINE} px-[30px] py-[8px] min-h-[88px] ${expanded ? '' : 'cursor-pointer'}`, tailCell));
         onExpandClick(eCell);
 
         const exitDef = readExitDef(step);
@@ -1464,7 +1379,7 @@ function renderStepCards() {
 
         // ── Footer row — trash / plus, on every card (collapsed or expanded) ──
         const fCell = cardAttr(mkCell(R.TAIL, col,
-            `flex items-center justify-between ${CARD_BG} ${SIDE} ${HAIRLINE} rounded-b-[15px] px-[30px] ${padY(tight)} ${expanded ? '' : 'cursor-pointer'}`, tailCell));
+            `flex items-center justify-between ${CARD_BG} ${SIDE} ${HAIRLINE} rounded-b-[15px] px-[30px] py-[8px] ${expanded ? '' : 'cursor-pointer'}`, tailCell));
         onExpandClick(fCell);
 
         const deleteBtn = document.createElement('button');
@@ -1546,7 +1461,7 @@ function renderStepCards() {
     updateSaveAsNewButtonState();
 }
 
-// ─── Flow calibration (per profile) ─────────────────────────────────────────
+// ─── Shot control (per profile) ─────────────────────────────────────────────
 // Decaid's flow multipliers are app-wide: ShotSequencer reads the global
 // setting when a shot starts, so there is no per-profile field to write. These
 // numbers therefore live in the profile's KV override (the same namespace as
@@ -1603,17 +1518,8 @@ function renderFlowCalibrationFields(col) {
         wrapper.appendChild(headerRow);
 
         const label = document.createElement('div');
-        // Same label color/style every other section title uses (see
-        // settingsSectionRow), but w-[180px] instead of the shared
-        // w-[127.5px): "calibration" alone is wider than 127.5px at this
-        // font-size, so that width either forced a mid-word break (stranding
-        // a lone "n" on its own line) or, if shrunk to fit via fitTextToWidth,
-        // read visibly smaller than every sibling label at a fixed 24px.
-        // 180px fits "Flow" / "calibration" on two whole-word lines at the
-        // same 24px size as everything else -- a one-row exception to the
-        // shared gutter, not a change to it.
-        label.className = 'text-[24px] font-semibold text-[var(--settings-label-color)] w-[180px] shrink-0';
-        label.textContent = getTranslation('Flow calibration');
+        label.className = 'text-[24px] font-semibold text-[var(--settings-label-color)] w-[127.5px] shrink-0';
+        label.textContent = getTranslation('Shot control');
         headerRow.appendChild(label);
 
         const toggleRow = document.createElement('label');
@@ -1645,7 +1551,7 @@ function renderFlowCalibrationFields(col) {
             persist();
         });
         const toggleText = document.createElement('span');
-        toggleText.textContent = getTranslation('Use this profile\u2019s own flow calibration');
+        toggleText.textContent = getTranslation('Use this profile\u2019s own shot control');
         toggleRow.appendChild(switchEl);
         toggleRow.appendChild(toggleText);
         headerRow.appendChild(toggleRow);
@@ -1664,12 +1570,12 @@ function renderFlowCalibrationFields(col) {
                 );
                 boxRow.appendChild(settingsFieldBox(getTranslation(text), spinner, { last }));
             };
-            spinnerBox('weightFlowMultiplier', 'Weight flow multiplier', 0.1, '', 5, false);
-            spinnerBox('volumeFlowMultiplier', 'Volume flow multiplier (s)', 0.05, 's', 5, true);
+            spinnerBox('weightFlowMultiplier', 'Weight Look-ahead', 0.1, '', 5, false);
+            spinnerBox('volumeFlowMultiplier', 'Volume Look-ahead', 0.05, 's', 5, true);
             // Indent boxRow past a spacer the same w-[127.5px]+gap-[15px] width as
             // headerRow's label, so it starts at the same x as Stop At's own box
             // row (settingsSectionRow indents its boxes past its label the same
-            // way) instead of flush left under the "Flow calibration" label.
+            // way) instead of flush left under the "Shot control" label.
             const boxRowLine = document.createElement('div');
             boxRowLine.className = 'flex items-start gap-[15px]';
             const spacer = document.createElement('div');
@@ -2189,18 +2095,13 @@ function renderSettingsTab() {
             shareImportBtn.textContent = getTranslation('Importing');
             shareStatus.textContent = '';
             try {
-                const vizSettings = await getPluginSettings('visualizer.reaplugin');
-                // Secure settings come back as { isSet } state, never plaintext (decaid #588).
-                const password = vizSettings?.Password;
-                const passwordSet = password == null ? false
-                    : typeof password === 'object' ? password.isSet === true
-                    : !!password; // legacy cleartext from older decaid
-                const isConfigured = vizSettings?.Enabled !== false && !!(vizSettings?.Username && passwordSet);
-                if (!isConfigured) {
+                const { VISUALIZER_PLUGIN_ID, visualizerAccountConfigured } = await import('./visualizer-account.js');
+                const vizSettings = await getPluginSettings(VISUALIZER_PLUGIN_ID);
+                if (!visualizerAccountConfigured(vizSettings)) {
                     shareStatus.innerHTML = 'No Visualizer account found. Go to <strong>Settings → Extensions → Visualizer</strong> to log in first.';
                     return;
                 }
-                const result = await callPluginEndpoint('visualizer.reaplugin', 'import', { shareCode: code });
+                const result = await callPluginEndpoint(VISUALIZER_PLUGIN_ID, 'import', { shareCode: code });
                 if (!result.success) {
                     const msg = result.error || 'Import failed';
                     const isAuthError = /credential|login|auth|unauthorized|password|username/i.test(msg);
@@ -2665,7 +2566,7 @@ function renderScriptGraph() {
     const graphDiv = document.getElementById('script-graph');
     if (!graphDiv) return;
 
-    const isDark = (localStorage.getItem('theme') || 'light') === 'dark';
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
     const stepMarkerColor = isDark ? '#7f8bbb' : '#7c7c7c';
     const tempLineColor = isDark ? '#653F43' : '#ff97a1';
 
@@ -2894,11 +2795,36 @@ function executionChanged(orig, edited) {
 
 // Shared tail of a successful save (including the no-op "nothing changed"
 // case, which reports success without writing anything): hint the selector to
-// pre-select this profile, toast, and navigate back.
+// pre-select this profile, toast, and go to the main page.
+//
+// Saving ends the errand, so it lands on the dashboard rather than back on
+// whatever opened the editor -- a selector the user is done with, or a context
+// menu they only passed through. Cancel still returns to _returnUrl: an
+// abandoned edit leaves the user where they were.
 function finishSaveSuccess(id) {
     sessionStorage.setItem('lastEditedProfileKey', id);
     showToast(getTranslation('Saved profile'), 2000, 'success');
-    setTimeout(() => { loadPage('src/profiles/profile_selector.html'); }, 1000);
+    setTimeout(() => { loadPage('index.html'); }, 1000);
+}
+
+// A save writes to /profiles, which is the library. The machine keeps running
+// whatever updateWorkflow last sent it, so an edit to the profile currently
+// loaded stayed invisible on the machine until the user re-picked it in the
+// selector. Push it here instead: saving loads the profile.
+//
+// sendProfileRecordToMachine holds it instead of sending when the machine is
+// mid-shot -- see profile-send-gate.js for why writing then is unsafe -- and
+// app.js sends what was held once the shot ends.
+async function pushSavedProfileToMachine(saved) {
+    if (!saved?.profile) return;
+    const { sendProfileRecordToMachine } = await import('./profileManager.js');
+    const result = await sendProfileRecordToMachine(saved);
+    if (result === 'deferred') {
+        showToast(getTranslation('The machine is brewing — this profile loads when the shot ends.'), 4000, 'info');
+    }
+    // 'failed' is logged by the send itself. The save succeeded and the machine
+    // simply stays on the previous profile, which is what happened before this
+    // existed -- not worth turning a good save into a failed one.
 }
 
 // Save routing for a profile opened from a local-only draft (see
@@ -2935,6 +2861,7 @@ async function saveDraftEdit(draftRecord) {
             });
             editorState.sourceProfileRecord = updated;
             _baselineProfileJson = JSON.stringify(editorState.profile);
+            await pushSavedProfileToMachine(updated);
             finishSaveSuccess(updated.id);
             return;
         }
@@ -2979,6 +2906,7 @@ async function saveDraftEdit(draftRecord) {
         editorState.sourceProfileId = saved.id;
         _baselineProfileJson = JSON.stringify(editorState.profile);
 
+        await pushSavedProfileToMachine(saved);
         finishSaveSuccess(saved.id);
     } catch (err) {
         console.error('Draft save failed:', err);
@@ -3068,20 +2996,18 @@ function resolveSaveTarget({ hasSource, isDefault, execChanged, titleChanged, as
 // left unchanged that second record collides with its own still-visible
 // parent — this adds sourceTitle back in for exactly that case.
 //
-//  - PUT (in place), or SAVE's hide+replace overwrite of a non-default: the
-//    same profile kept under whatever title it now has — no collision check
-//    at all, even if that title happens to match something else (matches
-//    the pre-existing 'overwrite' path, which was only ever reached with an
-//    unchanged title).
-//  - Everything else that mints a record (Save As New, a brand-new/uploaded
-//    profile, or a default forced to fork on an execution change) must not
-//    silently share a title with its own source.
-function resolveFinalTitle({ title, existingTitles, sourceId, sourceTitle, asNew, target, isDefault }) {
+//  - PUT (in place), or SAVE's hide+replace overwrite: the same profile kept
+//    under whatever title it now has — no collision check at all, even if
+//    that title happens to match something else.
+//  - Everything else that mints a record (Save As New, or a brand-new/
+//    uploaded profile) must not silently share a title with its own source,
+//    which stays visible alongside it.
+function resolveFinalTitle({ title, existingTitles, sourceId, sourceTitle, asNew, target }) {
     const trimmed = title.trim();
     // The no-source case (a brand-new profile, or an uploaded file) is never
     // "in place" — sourceId gates it explicitly so it still collision-checks
     // against existingTitles, same as before this function existed.
-    const isInPlace = !!sourceId && (target === 'put' || (target === 'post' && !asNew && !isDefault));
+    const isInPlace = !!sourceId && (target === 'put' || (target === 'post' && !asNew));
     if (isInPlace) return trimmed;
 
     const collisionTitles = (sourceId && sourceTitle) ? new Set([...existingTitles, sourceTitle]) : existingTitles;
@@ -3147,6 +3073,7 @@ async function saveProfile({ asNew = false } = {}) {
         const editedJson = JSON.stringify(editorState.profile);
         if (sourceProfileJson) {
             if (sourceProfileJson === editedJson) {
+                await pushSavedProfileToMachine(src);
                 finishSaveSuccess(src.id);
                 return;
             }
@@ -3191,6 +3118,8 @@ async function saveProfile({ asNew = false } = {}) {
                 .map(r => r.profile?.title)
                 .filter(Boolean)
         );
+        const forkingDefault = !!src?.isDefault && execChanged && !asNew;
+
         const finalTitle = resolveFinalTitle({
             title: editorState.profile.title,
             existingTitles,
@@ -3198,7 +3127,6 @@ async function saveProfile({ asNew = false } = {}) {
             sourceTitle: src?.profile?.title ?? null,
             asNew,
             target,
-            isDefault: !!src?.isDefault,
         });
         if (finalTitle !== editorState.profile.title.trim()) {
             editorState.profile.title = finalTitle;
@@ -3248,20 +3176,16 @@ async function saveProfile({ asNew = false } = {}) {
         //    presentation-only change (rename included) or rehashes it (deleting
         //    the old) on a user execution change.
         let saved;
+        // Set by the hide+replace branch below: the source record is retired,
+        // so its id is dead and anything keyed by it (favorites, wakeProfileId,
+        // the KV override record) belongs to the new id instead.
+        let retiredSource = false;
         if (target === 'put') {
             // Presentation-only change (title/author/notes, no execution
             // change), not a default, not an explicit Save As New — same id,
             // PUT in place. Renaming a user profile with plain SAVE lands here.
             saved = await updateProfile(src.id, editorState.profile);
-        } else if (src?.isDefault) {
-            // Forced fork — PUT is rejected server-side for a default. The
-            // default itself stays as the parent/reset point (never hidden).
-            saved = await uploadProfileWithParent(editorState.profile, src.id);
-            if (forkDeduped(saved, src.id)) {
-                showToast(getTranslation('This change matches an existing profile — nothing new was saved'), 4000, 'info');
-                return;
-            }
-        } else if (!src || asNew) {
+        } else if (!src || asNew || forkingDefault) {
             // New profile / uploaded file, or an explicit Save As New with a
             // real execution change: a plain POST. src?.id links provenance
             // (getProfileLineage) but the source's visibility is never
@@ -3272,12 +3196,13 @@ async function saveProfile({ asNew = false } = {}) {
                 return;
             }
         } else {
-            // Plain SAVE overwriting an existing user profile with a real
+            // Plain SAVE overwriting one of the user's own profiles with a real
             // execution change: the content rehashes to a new id, so keep the
             // prior version as a hidden, restorable snapshot instead of
             // letting the server drop it on rehash. The new record links back
             // via parentId, so /lineage returns the full history the Revert
             // picker reads.
+            retiredSource = true;
             saved = await uploadProfileWithParent(editorState.profile, src.id);
             // A dedup here would return src itself — flipping it visible then
             // straight back to hidden a few lines down and erasing the user's
@@ -3296,25 +3221,22 @@ async function saveProfile({ asNew = false } = {}) {
         const oldId = editorState.sourceProfileId;
         availableProfiles[saved.id] = saved;
 
-        // Only the plain-overwrite POST (hide+replace, just above) actually
-        // retires the old id — favorites need to follow it there. A default's
-        // fork keeps the default around, and Save As New deliberately leaves
-        // the source alone, so neither should touch a favorite pointed at it.
-        if (oldId && oldId !== saved.id && !src?.isDefault && !asNew) {
+        if (retiredSource && oldId && oldId !== saved.id) {
             delete availableProfiles[oldId];
             await remapFavorite(oldId, saved.id);
         }
 
-        // A fork/rehash mints a new id, and the overrides (dose/yield/grind/
-        // brew-temp/steam/flow calibration) are keyed by the old one. Carry
-        // them, or the edited profile silently loses numbers the user set —
-        // including the flow calibration they may have just typed on this tab.
-        if (oldId && oldId !== saved.id) {
+        // A rehash mints a new id, and the overrides (dose/yield/grind/brew-
+        // temp/steam/flow calibration) are keyed by the old one. Move them, or
+        // the edited profile silently loses numbers the user set — including
+        // the flow calibration they may have just typed on this tab.
+        if (retiredSource && oldId && oldId !== saved.id) {
             await ensureProfileOverridesLoaded();
             const carried = getProfileOverride(oldId);
             if (carried) {
                 const merged = await saveProfileOverride(saved.id, carried);
                 saved.metadata = { ...(saved.metadata || {}), ...merged };
+                await clearProfileOverride(oldId);
             }
         }
 
@@ -3324,6 +3246,7 @@ async function saveProfile({ asNew = false } = {}) {
         _baselineProfileJson = JSON.stringify(editorState.profile);
         updateSaveAsNewButtonState();
 
+        await pushSavedProfileToMachine(saved);
         finishSaveSuccess(saved.id);
     } catch (err) {
         console.error('Profile save failed:', err);
@@ -3405,7 +3328,7 @@ async function cancelEditor() {
             }
         } catch (_) {}
     }
-    loadPage('index.html');
+    loadPage(_returnUrl);
 }
 
 
@@ -3519,7 +3442,7 @@ async function openVersionHistory() {
         const { getProfileLineage } = await import('./api.js');
         lineage = await getProfileLineage(id);
     } catch (err) {
-        showToast('Could not load version history', 3000, 'error');
+        showToast('Could not load version history.', 3000, 'error');
         return;
     }
 
@@ -3528,7 +3451,7 @@ async function openVersionHistory() {
         .filter(r => r.id !== id && r.profile)
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     if (!versions.length) {
-        showToast('No previous versions yet', 2500, 'info');
+        showToast('No previous versions yet.', 2500, 'info');
         return;
     }
 
@@ -3558,12 +3481,21 @@ async function openVersionHistory() {
     // Baseline deliberately not reset: a restored version is unsaved work, so
     // Cancel must still warn before throwing it away.
     setActiveTab(editorState.activeTab || 0);
-    showToast('Restored — Save to keep this version', 3000, 'success');
+    showToast('Restored - Save to keep this version.', 3000, 'success');
 }
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
+// The page the editor was opened from -- the main page's header/context menu,
+// the profile selector, or a favorite's context menu. Save and Cancel both
+// return here instead of to a fixed page. Resolved once at init: by the time
+// either fires, the router's "previous page" is the editor's own origin only
+// if nothing else navigated, and nothing can without leaving the editor.
+let _returnUrl = 'index.html';
+
 export async function initializeProfileEditor() {
+    _returnUrl = getPreviousPageUrl() || 'index.html';
+
     console.log('[ProfileEditor] initializeProfileEditor called');
     console.log('[ProfileEditor] window.__pendingEditProfile=', window.__pendingEditProfile);
     console.log('[ProfileEditor] typeof window.__pendingEditProfile=', typeof window.__pendingEditProfile);
@@ -3571,9 +3503,7 @@ export async function initializeProfileEditor() {
     // 1. Read pending profile from window global (set by profile_selector.js)
     const profileRecord = window.__pendingEditProfile;
     if (!profileRecord) {
-        console.warn('[ProfileEditor] No profile data on window.__pendingEditProfile — aborting.');
-        showToast('No profile data found. Returning to selector.', 3000, 'error');
-        setTimeout(() => { loadPage('src/profiles/profile_selector.html'); }, 1000);
+        setTimeout(() => { loadPage(_returnUrl, { history: 'replace' }); }, 0);
         return;
     }
     console.log('[ProfileEditor] Got profile:', profileRecord?.profile?.title);

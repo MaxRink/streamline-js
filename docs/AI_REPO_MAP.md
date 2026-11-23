@@ -8,6 +8,7 @@ Use this file for orientation. Read the smallest matching topic note, inspect th
 | --- | --- | --- |
 | App boot, main-page state, lifecycle, navigation | `index.html`, `src/modules/app.js`, `src/modules/router.js` | `AI_RUNTIME_NOTES.md` |
 | REST calls, WebSockets, devices, machine commands, firmware upload | `src/modules/api.js`, the relevant call site, `rest_v1.yml`, `websocket_v1.yml` | `AI_API_NOTES.md` |
+| Writing the live workflow: which surface owns which field | `src/modules/workflow-fields.js`, the call site, `docs/AI_WORKFLOW_NOTES.md` | `AI_WORKFLOW_NOTES.md` |
 | Main UI, scaling, modals, accessibility, themes | `index.html`, `src/modules/ui.js`, `src/modules/scaling.js`, relevant `src/css/*.css` | `AI_UI_NOTES.md` |
 | Translation, units, text fitting | `src/modules/i18n.js`, `src/modules/i18n-parser.js`, `src/modules/units.js`, the translation CSV | `AI_UI_NOTES.md`, then `AI_BUILD_NOTES.md` |
 | Settings navigation or a settings category | `src/settings/settings-tree.js`, `src/settings/settings-shell.js`, the target category module | `AI_SETTINGS_NOTES.md` |

@@ -123,6 +123,18 @@
             maxReconnectInterval: 30000,
             /** The rate of increase of the reconnect delay. Allows reconnect attempts to back off when problems persist. */
             reconnectDecay: 1.5,
+            /**
+             * LOCAL PATCH. 0..1. Shortens each retry delay by a random 0..jitter fraction (downward only,
+             * so a retry is never later than without it) to de-synchronise sockets that dropped together.
+             * Default 0 = legacy timing.
+             */
+            reconnectJitter: 0,
+            /**
+             * LOCAL PATCH. When set (ms), a successful open no longer resets the backoff counter; the
+             * counter resets on close only if the socket had stayed open at least this long, so a socket
+             * that opens and is dropped at once keeps backing off. Default null = legacy (reset on open).
+             */
+            stableAfterMs: null,
 
             /** The maximum time in milliseconds to wait for a connection to succeed before closing and retrying. */
             timeoutInterval: 2000,
@@ -171,6 +183,7 @@
         var self = this;
         var ws;
         var forcedClose = false;
+        var openedAt = 0; // LOCAL PATCH: when the current socket opened (only tracked with stableAfterMs)
         var timedOut = false;
         var eventTarget = document.createElement('div');
 
@@ -256,7 +269,11 @@
                 }
                 self.protocol = ws.protocol;
                 self.readyState = WebSocket.OPEN;
-                self.reconnectAttempts = 0;
+                if (self.stableAfterMs === null) {
+                    self.reconnectAttempts = 0;
+                } else {
+                    openedAt = Date.now();
+                }
                 var e = generateEvent('open');
                 e.isReconnect = reconnectAttempt;
                 reconnectAttempt = false;
@@ -266,6 +283,10 @@
             ws.onclose = function(event) {
                 clearTimeout(timeout);
                 ws = null;
+                if (self.stableAfterMs !== null && openedAt) {
+                    if (Date.now() - openedAt >= self.stableAfterMs) self.reconnectAttempts = 0;
+                    openedAt = 0;
+                }
                 if (forcedClose) {
                     self.readyState = WebSocket.CLOSED;
                     eventTarget.dispatchEvent(generateEvent('close'));
@@ -284,10 +305,12 @@
                     }
 
                     var timeout = self.reconnectInterval * Math.pow(self.reconnectDecay, self.reconnectAttempts);
+                    var delay = timeout > self.maxReconnectInterval ? self.maxReconnectInterval : timeout;
+                    if (self.reconnectJitter > 0) delay = delay * (1 - self.reconnectJitter * Math.random());
                     setTimeout(function() {
                         self.reconnectAttempts++;
                         self.open(true);
-                    }, timeout > self.maxReconnectInterval ? self.maxReconnectInterval : timeout);
+                    }, delay);
                 }
             };
             ws.onmessage = function(event) {

@@ -27,7 +27,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-import { createSocketSlot, silenceSocket } from '../src/modules/socket-slot.js';
+import { createSocketSlot, silenceSocket, RECONNECT_POLICY } from '../src/modules/socket-slot.js';
 
 const WS_URL = 'ws://localhost:8080/ws/v1/machine/snapshot';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -173,4 +173,97 @@ test('END TO END: a resync landing in the backoff leaves exactly ONE live socket
     assert.equal(first.readyState, FakeWebSocket.CLOSED);
 
     second.close();
+});
+
+// --- backoff policy: jitter + stableAfterMs (deterministic: timers and clock are driven by hand) ---
+
+/** Drop the current underlying socket and return the reconnect delay the library armed, plus a trigger for it. */
+function dropAndCapture() {
+    const sock = opened[opened.length - 1];
+    const realSetTimeout = globalThis.setTimeout;
+    let armed = null;
+    globalThis.setTimeout = (fn, ms) => { armed = { fn, ms }; return 0; };
+    try { sock.serverClose(); } finally { globalThis.setTimeout = realSetTimeout; }
+    assert.ok(armed, 'a reconnect timer must be armed');
+    return { delay: armed.ms, fire: armed.fn };
+}
+
+function withStubs({ random, now }, fn) {
+    const realRandom = Math.random;
+    const realNow = Date.now;
+    if (random !== undefined) Math.random = () => random;
+    if (now) Date.now = now;
+    try { return fn(); } finally { Math.random = realRandom; Date.now = realNow; }
+}
+
+test('defaults (no new options) back off exactly as before and reset on open', () => {
+    const rws = new RWS(WS_URL, [], { reconnectInterval: 1000 });
+    let drop = dropAndCapture();
+    assert.equal(drop.delay, 1000);
+    drop.fire();
+    drop = dropAndCapture(); // reconnect never opened
+    assert.equal(drop.delay, 1500);
+    drop.fire();
+    opened[opened.length - 1].serverAccept(); // legacy: open resets the counter...
+    drop = dropAndCapture(); // ...even for a socket dropped immediately
+    assert.equal(drop.delay, 1000);
+    rws.close();
+});
+
+test('reconnectJitter only shortens the delay, never lengthens it', () => {
+    const rws = new RWS(WS_URL, [], { reconnectInterval: 1000, reconnectJitter: 0.3 });
+    const none = withStubs({ random: 0 }, () => dropAndCapture());
+    assert.equal(none.delay, 1000, 'random 0 -> un-jittered delay');
+    none.fire();
+    const most = withStubs({ random: 0.999 }, () => dropAndCapture());
+    assert.ok(most.delay <= 1500 && most.delay >= 1500 * 0.7 - 1e-9, `jittered ${most.delay} within [1050, 1500]`);
+    rws.close();
+});
+
+test('stableAfterMs: a flapping socket keeps backing off, a stable one resets', () => {
+    let clock = 1_000_000;
+    const now = () => clock;
+    const rws = new RWS(WS_URL, [], { reconnectInterval: 1000, stableAfterMs: 5000 });
+    withStubs({ now }, () => {
+        opened[opened.length - 1].serverAccept();
+        clock += 100; // dropped after 100 ms
+        let drop = dropAndCapture();
+        assert.equal(drop.delay, 1000);
+        drop.fire();
+        opened[opened.length - 1].serverAccept();
+        clock += 100;
+        drop = dropAndCapture();
+        assert.equal(drop.delay, 1500, 'open->close under stableAfterMs must not reset the counter');
+        drop.fire();
+        opened[opened.length - 1].serverAccept();
+        clock += 100;
+        drop = dropAndCapture();
+        assert.equal(drop.delay, 2250);
+        drop.fire();
+        opened[opened.length - 1].serverAccept();
+        clock += 6000; // stayed up long enough
+        drop = dropAndCapture();
+        assert.equal(drop.delay, 1000, 'a stable open resets the delay');
+    });
+    rws.close();
+});
+
+test('RECONNECT_POLICY: classes use the library option names and cap the critical wait at 10 s', () => {
+    for (const cls of Object.values(RECONNECT_POLICY)) {
+        assert.deepEqual(Object.keys(cls).sort(), ['maxReconnectInterval', 'reconnectDecay', 'reconnectInterval', 'reconnectJitter', 'stableAfterMs']);
+    }
+    assert.equal(RECONNECT_POLICY.critical.maxReconnectInterval, 10000);
+    assert.equal(RECONNECT_POLICY.standard.maxReconnectInterval, 30000);
+    assert.equal(RECONNECT_POLICY.background.reconnectInterval, 5000);
+    assert.equal(RECONNECT_POLICY.background.maxReconnectInterval, 30000, 'no socket recovers slower than the vendored 30 s default cap');
+});
+
+test('api.js: every ReconnectingWebSocket takes a RECONNECT_POLICY class; the dead reload block is gone', () => {
+    const api = fs.readFileSync(new URL('../src/modules/api.js', import.meta.url), 'utf8');
+    const starts = [...api.matchAll(/new ReconnectingWebSocket\(/g)];
+    assert.ok(starts.length >= 14);
+    for (const m of starts) {
+        assert.match(api.slice(m.index, m.index + 400), /\.\.\.RECONNECT_POLICY\.(critical|standard|background)/);
+    }
+    assert.ok(!api.includes('reloading now'));
 });

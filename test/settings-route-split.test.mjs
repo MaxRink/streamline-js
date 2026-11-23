@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { SETTINGS_TREE } from '../src/settings/settings-tree.js';
+import { lowercaseCelsius } from '../src/settings/celsius-label.js';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -27,11 +28,13 @@ test('settings shell keeps quick adjustments out of the legacy module', () => {
     assert.match(shell, /getElementById\('settings-body'\)\?\.parentElement/);
     assert.doesNotMatch(quick, /settings\.js/);
     assert.doesNotMatch(maintenance, /settings\.js/);
-    // Cleaning and descaling share one templated view and one state machine, so
-    // the two cannot drift; air purge keeps its own bespoke flow.
-    assert.match(maintenance, /action === 'clean' \|\| action === 'descale'/);
+    // Cleaning, descaling and transport mode share one templated view and one
+    // state machine, so the three cannot drift. Transport mode used to run its
+    // own bespoke flow with its own toasts: the literal state name is what that
+    // looked like, and its absence is what keeps it folded in.
+    assert.match(maintenance, /action === 'clean' \|\| action === 'descale' \|\| action === 'air-purge'/);
     assert.match(maintenance, /setMachineState\(procedure\.state\)/);
-    assert.match(maintenance, /setMachineState\('airPurge'\)/);
+    assert.doesNotMatch(maintenance, /setMachineState\('airPurge'\)/);
     assert.match(app, /addEventListener\('pointerdown',[\s\S]*prefetchSettingsPage/);
 });
 
@@ -88,4 +91,26 @@ test('maintenance screens exist once, mounted from the extracted module by both 
     assert.doesNotMatch(legacy, /window\.startAirPurge|window\.startDescaling/);
     // A mount left running after navigating away keeps polling the machine.
     assert.match(legacy, /maintenanceCleanup\?\.\(\)/);
+});
+
+test('the settings nav lists its categories in the canonical order, numbered from 1', () => {
+    const html = read('src/settings/settings.html');
+    const buttons = [...html.matchAll(/<button id="(\w+)-btn" class="settings-nav-btn[^"]*">(\d+)\. <span/g)];
+    assert.deepEqual(buttons.map(match => match[1]), Object.keys(SETTINGS_TREE));
+    assert.deepEqual(buttons.map(match => Number(match[2])), Object.keys(SETTINGS_TREE).map((_, index) => index + 1));
+    assert.ok(buttons.every(match => !/\bflex\b/.test(match[0])), 'a flex button drops the space after the number');
+
+    for (const path of ['src/settings/settings-shell.js', 'src/settings/settings.js']) {
+        const subnav = read(path).match(/class="settings-subnav-btn[^"]*"/)[0];
+        assert.doesNotMatch(subnav, /\bflex\b/, `${path}: a flex sub-category button drops the space after its number`);
+        assert.match(read(path), /const prefix = `\$\{index \+ 1\}\. `;/, `${path}: sub-category pages are numbered by position`);
+    }
+});
+
+test('settings labels show celsius in lowercase, whichever symbol the translation uses', () => {
+    assert.equal(lowercaseCelsius('Celsius (°C)'), 'Celsius (°c)');
+    assert.equal(lowercaseCelsius('Température (ºC)'), 'Température (°c)');
+    assert.equal(lowercaseCelsius('水箱溫度（℃）'), '水箱溫度（°c）');
+    assert.equal(lowercaseCelsius('Fahrenheit (°F)'), 'Fahrenheit (°F)');
+    assert.equal(lowercaseCelsius('°Celsius'), '°Celsius');
 });

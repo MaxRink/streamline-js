@@ -104,6 +104,26 @@ export function pluginStatus(plugins, pluginId) {
     return 'enabled';
 }
 
+export const PLUGIN_MANAGEMENT_PROBE_KEY = '__streamline_probe__';
+
+export function pluginManagementProbeTarget(plugins) {
+    if (!Array.isArray(plugins)) return null;
+    const target = plugins.find(plugin => {
+        const settings = plugin?.settings;
+        return typeof plugin?.id === 'string' && settings && typeof settings === 'object'
+            && Object.keys(settings).length > 0 && !(PLUGIN_MANAGEMENT_PROBE_KEY in settings);
+    });
+    return target?.id ?? null;
+}
+
+export function pluginManagementAllowed(probeStatus) {
+    return Number.isInteger(probeStatus) && probeStatus !== 401 && probeStatus !== 403;
+}
+
+export function pluginChangeBlockedByMachine(machineState) {
+    return machineState === 'espresso';
+}
+
 /** Whole minutes since `iso`, or null when it is absent or unparseable. */
 export function minutesSince(iso, now = Date.now()) {
     const at = Date.parse(iso || '');
@@ -171,6 +191,29 @@ export function pluginStatusLabel(status) {
         case 'enabled': return 'Up to date';
         default: return 'Unknown';
     }
+}
+
+export const AUTO_FLOW_CAL_PLUGIN_ID = 'auto-flow-cal.reaplugin';
+
+// A stored boolean wins, then the manifest's own default, then the fallback.
+// GET /plugins/:id/settings answers {} (HTTP 200) for a plugin that is not
+// loaded, so "nothing stored" has to resolve through the manifest defaults.
+function resolvePluginBoolean(plugin, settings, key, fallback) {
+    if (typeof settings?.[key] === 'boolean') return settings[key];
+    const manifestDefault = plugin?.settings?.[key]?.default;
+    return typeof manifestDefault === 'boolean' ? manifestDefault : fallback;
+}
+
+// True when the Auto Flow Calibration plugin is actively adjusting the flow
+// multiplier: loaded, Enabled, and not in DryRun. `loaded` is what keeps an
+// installed-but-off plugin (whose empty settings default to Enabled) from
+// counting as managing.
+export function isFlowCalPluginManaging(plugins, settings) {
+    const plugin = findPlugin(plugins, AUTO_FLOW_CAL_PLUGIN_ID);
+    if (!plugin || plugin.loaded !== true) return false;
+    const enabled = resolvePluginBoolean(plugin, settings, 'Enabled', true);
+    const dryRun = resolvePluginBoolean(plugin, settings, 'DryRun', false);
+    return enabled && !dryRun;
 }
 
 // Category id for a single plugin's own settings page. The Extensions nav grows

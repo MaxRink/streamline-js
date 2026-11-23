@@ -76,12 +76,16 @@ export function initHelpLauncher() {
     button.textContent = '?';
     if (helpHidden()) button.style.display = 'none';
     document.body.appendChild(button);
-    loadStyle('src/css/help-overlay.css').catch(() => {});
+    const styleLoaded = loadStyle('src/css/help-overlay.css');
+    styleLoaded.catch(() => {});
 
     if (isInWebView() && !helpHidden()) {
         document.documentElement.classList.add('help-webview');
         const sync = () => requestAnimationFrame(syncHelpButton);
-        sync();
+        // The anchor slot is only laid out once help-overlay.css applies; measuring
+        // earlier left the button in its round fallback until some unrelated
+        // trigger (e.g. DYE2 touching the main page) re-synced it (#184).
+        styleLoaded.then(sync).catch(() => {});
         window.addEventListener('resize', sync);
         document.addEventListener('streamline:scaleupdate', sync);
         const observer = new MutationObserver(sync);
@@ -105,7 +109,10 @@ export function initHelpLauncher() {
         document.documentElement.classList.toggle('help-webview', !hidden && isInWebView());
         if (!hidden) syncHelpButton();
     };
-    setupPressAndHold(button, activate, () => setHidden(true));
+    // touchAction 'none': the default 'manipulation' still lets a drag that starts on
+    // the button pan the page, which in the WebView reads as the whole UI rubber-banding
+    // (#177). Tap and long-press are pointer events, so they are unaffected.
+    setupPressAndHold(button, activate, () => setHidden(true), { touchAction: 'none' });
 
     window.showHelpButton = () => setHidden(false);
     window.hideHelpButton = () => setHidden(true);

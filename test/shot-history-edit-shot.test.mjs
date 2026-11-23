@@ -1,0 +1,214 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+
+// Tap the shot-history info block -> DYE2's edit-shot page for the shot on screen.
+// history.js cannot be imported under node (chart/idb/DOM at module load), so the tap
+// handler is lifted out and run with its dependencies injected -- the same trick as
+// dye-strip-clear.test.mjs. The wiring around it (which element, which gate) is checked
+// on the source.
+
+const historySrc = readFileSync(new URL('../src/modules/history.js', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const uiSrc = readFileSync(new URL('../src/modules/ui.js', import.meta.url), 'utf8');
+const stripSrc = readFileSync(new URL('../src/modules/dyeStrip.js', import.meta.url), 'utf8');
+
+// Comments name the identifiers asserted on below, so match against code only.
+function stripComments(src) {
+    return src
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .map(line => (line.trim().startsWith('//') ? '' : line.replace(/\s\/\/.*$/, '')))
+        .join('\n');
+}
+
+function liftHandler() {
+    const start = historySrc.indexOf('async function openShotInDye2()');
+    const end = historySrc.indexOf('\nfunction setupHistoryLongPress()', start);
+    assert.ok(start > 0 && end > start, 'openShotInDye2 found');
+    // dyeStrip.js is imported on demand inside the handler -- it is ~90K and
+    // must stay off the boot graph. A Function body cannot resolve a module
+    // specifier, so drop that one line and keep injecting openPluginOverlay;
+    // the dynamic import itself is asserted on the source instead (below).
+    return historySrc.slice(start, end)
+        .replace(/^.*await import\('\.\/dyeStrip\.js'\);$/m, '');
+}
+
+async function runHandler({ enabled, shots, currentShotIndex }) {
+    const calls = { opened: [], toasted: [], refreshed: [] };
+    const fn = new Function(
+        'isDye2Enabled', 'openPluginOverlay', 'showToast', 'getTranslation', 'logger',
+        'shots', 'currentShotIndex', 'refreshShotAfterDye2Edit',
+        `${liftHandler()}\nreturn openShotInDye2;`
+    );
+    const handler = fn(
+        () => enabled,
+        (...args) => calls.opened.push(args),
+        (...args) => calls.toasted.push(args),
+        key => key,
+        { warn: () => {} },
+        shots,
+        currentShotIndex,
+        id => { calls.refreshed.push(id); return Promise.resolve(); }
+    );
+    await handler();
+    return calls;
+}
+
+test('the four text lines live in the info block, outside the arrows', () => {
+    const idAt = html.indexOf('id="shot-history-info"');
+    assert.ok(idAt > 0, 'the info block has a stable hook');
+    const tag = html.slice(html.lastIndexOf('<div', idAt), html.indexOf('>', idAt) + 1);
+    assert.match(tag, /aria-live="polite"/, 'it is the live info block, not the panel');
+    assert.ok(!tag.includes('history-prev-btn') && !tag.includes('history-next-btn'),
+        'the nav arrows are outside it');
+    const block = html.slice(html.indexOf('>', idAt), html.indexOf('id="shot-data-panel"', idAt));
+    for (const id of ['history-date', 'history-profile-name', 'history-dose-in', 'history-grind-size']) {
+        assert.ok(block.includes(`id="${id}"`), `${id} sits inside the info block`);
+    }
+});
+
+test('a tap opens edit-shot for the shot on screen, gated on DYE2', async () => {
+    const off = await runHandler({ enabled: false, shots: [{ id: 'shot-a' }], currentShotIndex: 0 });
+    assert.equal(off.opened.length, 0, 'DYE2 off: the info block is inert');
+
+    const on = await runHandler({ enabled: true, shots: [{ id: 'shot-a' }, { id: 'shot-b' }], currentShotIndex: 1 });
+    assert.equal(on.opened.length, 1, 'DYE2 on: one overlay opens');
+    const [page, params, onClose] = on.opened[0];
+    assert.equal(page, 'edit-shot');
+    assert.deepEqual(params, { shotId: 'shot-b' }, 'the displayed shot travels in the URL');
+    assert.equal(typeof onClose, 'function', 'the caller can repaint when DYE2 returns');
+
+    // Closing without a save must not refetch; coming back through the sentinel must.
+    onClose(false);
+    assert.deepEqual(on.refreshed, [], 'the Close button does not touch history');
+    onClose(true);
+    assert.deepEqual(on.refreshed, ['shot-b'], 'a save/delete refresh targets the opened shot');
+    // DYE2 hands back the shot it was showing on the way out, which wins: the arrows may
+    // have moved the user off the shot the overlay was opened for.
+    onClose(true, 'shot-other');
+    assert.deepEqual(on.refreshed.slice(-1), ['shot-other'], 'the live shot wins over the opened one');
+});
+
+test('no shot on screen says so instead of opening an empty page', async () => {
+    const calls = await runHandler({ enabled: true, shots: [], currentShotIndex: -1 });
+    assert.equal(calls.opened.length, 0);
+    assert.equal(calls.toasted.length, 1);
+    assert.equal(calls.toasted[0][0], 'No shot selected');
+});
+
+// dyeStrip.js is ~90K and history.js is on the boot graph, so importing it for
+// the enabled gate put the whole strip module in every cold start. The gate now
+// comes from dye2-enabled.js and the strip itself loads on tap.
+test('history.js keeps dyeStrip.js off the boot graph', () => {
+    const code = stripComments(historySrc);
+    assert.ok(!/^\s*import[^;]*from '\.\/dyeStrip\.js'/m.test(code),
+        'no static import of dyeStrip.js');
+    assert.match(code, /await import\('\.\/dyeStrip\.js'\)/,
+        'openPluginOverlay arrives through a dynamic import');
+    assert.match(code, /import \{ isDye2Enabled \} from '\.\/dye2-enabled\.js'/,
+        'the gate comes from the small flag module');
+    // The gate must still run BEFORE the 90K import, or DYE2-off taps pay for it.
+    const start = code.indexOf('async function openShotInDye2()');
+    const body = code.slice(start, code.indexOf('\nfunction setupHistoryLongPress()', start));
+    assert.ok(body.indexOf('isDye2Enabled()') < body.indexOf("await import('./dyeStrip.js')"),
+        'DYE2 off costs no fetch at all');
+});
+
+test('the panel routes only the four info lines to the handler', () => {
+    const code = stripComments(historySrc);
+    const declAt = code.indexOf('const SHOT_HISTORY_EDIT_TAP_SELECTOR');
+    assert.ok(declAt > 0, 'the tap target has one named source of truth');
+    const decl = code.slice(declAt, code.indexOf(';', declAt));
+    const ids = [...decl.matchAll(/#([\w-]+)/g)].map(m => m[1]);
+    assert.deepEqual(ids,
+        ['history-date', 'history-profile-name', 'history-dose-in', 'history-grind-size'],
+        'exactly the four text lines, nothing else in the block');
+
+    const start = code.indexOf('function setupHistoryLongPress()');
+    const body = code.slice(start, code.indexOf('\n}\n', start));
+    assert.ok(body.includes('closest?.(SHOT_HISTORY_EDIT_TAP_SELECTOR)'),
+        'the guard uses that list');
+    assert.ok(!body.includes("'#shot-history-info'"),
+        'the block around the lines stays inert, so its gaps and padding do not open DYE2');
+    assert.ok(body.indexOf('closest?.') < body.indexOf('openShotInDye2()'),
+        'the guard runs before the overlay opens');
+});
+
+test('returning from edit-shot repaints the shot that was opened', () => {
+    const code = stripComments(historySrc);
+    const start = code.indexOf('export async function refreshShotAfterDye2Edit(');
+    assert.ok(start > 0, 'refreshShotAfterDye2Edit found');
+    const body = code.slice(start, code.indexOf('\n}\n', start));
+    assert.ok(body.includes('response.status === 404'), 'a delete made in DYE2 is detected');
+    assert.ok(body.includes('historyPager.remove(id)'), 'and the shot leaves the window');
+    assert.ok(body.includes('historyPager.update('), 'an edit is merged in place');
+    assert.ok(body.includes('displayShot('), 'so the panel repaints instead of resetting');
+    // A full reload would walk the user back to the newest page after editing an old shot.
+    assert.ok(!body.includes('loadShotHistory('), 'no window reload');
+});
+
+test('the press-and-hold helper hands the click event to its callback', () => {
+    const code = stripComments(uiSrc);
+    assert.ok(code.includes('return clickCallback(event);'),
+        'a card that owns sub-regions needs the event to tell them apart');
+});
+
+test('the overlay hands the shot DYE2 was showing back to the caller', () => {
+    const code = stripComments(stripSrc);
+    assert.ok(code.includes('export function openPluginOverlay(page, params, onClose)'));
+    const start = code.indexOf('function closePluginOverlay(');
+    const body = code.slice(start, code.indexOf('\n}\n', start));
+    assert.ok(body.includes('hook(!!refresh, editedShotId || null)'),
+        'the caller gets both the save flag and the live shot id');
+    assert.ok(code.includes("searchParams.get('dyeShot')"),
+        'the live shot comes back on the sentinel URL');
+    assert.ok(code.includes("close.addEventListener('click', () => closePluginOverlay(false))"),
+        'the skin Close button must not look like a sentinel return');
+});
+
+// While the machine is pulling espresso the panel belongs to the running shot
+// (see history-nav-gate.test.mjs). The arrows are locked; so are the two ways
+// into the shot on screen, because both end in a repaint of the live chart --
+// DYE2 through refreshShotAfterDye2Edit(), the menu through its own entries.
+test('the espresso lock also closes the DYE2 tap and the press-and-hold menu', () => {
+    const code = stripComments(historySrc);
+    const start = code.indexOf('function setupHistoryLongPress()');
+    const body = code.slice(start, code.indexOf('\n}\n', start));
+
+    const tapAt = body.indexOf('openShotInDye2()');
+    const menuAt = body.indexOf('openContextMenu(');
+    assert.ok(tapAt > 0 && menuAt > tapAt, 'both callbacks found');
+
+    const guards = [...body.matchAll(/if \(navLocked\) return;/g)].map(m => m.index);
+    assert.equal(guards.length, 2, 'one guard per callback');
+    assert.ok(guards[0] < tapAt, 'a tap on the shot lines cannot open DYE2 mid-shot');
+    assert.ok(guards[1] > tapAt && guards[1] < menuAt, 'a long press opens no menu mid-shot');
+});
+
+test('a painted shot drops the i18n keys so translatePage cannot restore the placeholders', () => {
+    const code = stripComments(historySrc);
+    const start = code.indexOf('async function displayShot(index)');
+    const body = code.slice(start, code.indexOf('\n}\n', start));
+    assert.match(body, /if \(doseInEl\) \{\s*doseInEl\.removeAttribute\('data-i18n-key'\);/);
+    assert.match(body, /if \(grindSizeEl\) \{\s*grindSizeEl\.removeAttribute\('data-i18n-key'\);/);
+});
+
+test('emptied history puts the translated placeholders and their keys back', () => {
+    const code = stripComments(historySrc);
+    const pick = (name) => code.match(new RegExp(`(?:export )?function ${name}\\([\\s\\S]*?\\n\\}`))[0].replace(/^export /, '');
+    const element = () => ({ attrs: {}, textContent: 'stale', setAttribute(name, value) { this.attrs[name] = value; } });
+    const elements = { 'shot-history-label': element(), 'history-dose-in': element(), 'history-grind-size': element() };
+    const deletedShot = { 'history-date': element(), 'history-profile-name': element() };
+    new Function('document', 'getTranslation', `${pick('setHistoryLabel')}\n${pick('showEmptyHistoryPlaceholders')}\nshowEmptyHistoryPlaceholders();`)(
+        { getElementById: (id) => elements[id] ?? deletedShot[id] ?? null },
+        (key) => `t:${key}`,
+    );
+    const painted = Object.values(elements).map((el) => [el.attrs['data-i18n-key'], el.textContent]);
+    assert.deepEqual(painted, [['SHOT HISTORY', 't:SHOT HISTORY'], ['Dose In', 't:Dose In'], ['Grind Size', 't:Grind Size']]);
+    assert.deepEqual(Object.values(deletedShot).map((el) => el.textContent), ['', ''], 'the deleted shot leaves no date or profile name');
+
+    const emptyBranches = code.match(/clearShotData\(\);\s*showEmptyHistoryPlaceholders\(\);/g) ?? [];
+    assert.equal(emptyBranches.length, 3, 'DYE2 delete, clear history and delete current shot');
+    assert.match(code, /if \(shots\.length === 0\) showEmptyHistoryPlaceholders\(\);\s*if \(shots\.length > 0 && !isReviewingHistory\(\)\) displayShot\(0\);/);
+});

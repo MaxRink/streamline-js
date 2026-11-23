@@ -10,6 +10,9 @@ import {
     startSettingsData
 } from './settings-data.js';
 import { SETTINGS_TREE as CANONICAL_SETTINGS_TREE } from './settings-tree.js';
+import { timeNav } from '../modules/perf-probe.js';
+import { observeSelects } from '../modules/custom-select.js';
+import { observeCelsiusLabels } from './celsius-label.js';
 
 // [name, category, bengleOnly?] tuples for the pre-legacy-load nav and search,
 // derived from the canonical tree (settings-tree.js) so the two can't drift —
@@ -42,6 +45,8 @@ const CATEGORY_LOADERS = Object.freeze({
 
 let currentRoot = null;
 let currentCleanup = null;
+let selectCleanup = null;
+let celsiusCleanup = null;
 let activeMainCategory = 'quickadjustments';
 let renderSequence = 0;
 let legacyMounted = false;
@@ -80,10 +85,10 @@ function renderSubcategories(mainCategory) {
     const panel = document.getElementById('sub-categories-panel');
     if (!panel) return;
     const items = availableSubcategories(mainCategory);
-    panel.innerHTML = `<ul class="space-y-1">${items.map(([name, category]) => {
-        const prefix = name.match(/^(\d+\.\s*)/)?.[1] || '';
-        const label = prefix ? name.slice(prefix.length) : name;
-        return `<li><button class="settings-subnav-btn w-full text-left px-4 py-3 rounded-lg text-[24px] text-[#959595] hover:text-white hover:bg-[#2c4a7a] flex items-center" data-category="${category}">${prefix}<span data-i18n-key="${label}">${label}</span></button></li>`;
+    panel.innerHTML = `<ul class="space-y-1">${items.map(([name, category], index) => {
+        const label = name.replace(/^\d+\.\s*/, '');
+        const prefix = `${index + 1}. `;
+        return `<li><button class="settings-subnav-btn w-full text-left px-4 py-3 rounded-lg text-[24px] text-[#959595] hover:text-white hover:bg-[#2c4a7a]" data-category="${category}">${prefix}<span data-i18n-key="${label}">${label}</span></button></li>`;
     }).join('')}</ul>`;
     translatePage();
 }
@@ -103,6 +108,7 @@ function renderSkeleton() {
 }
 
 async function renderCategory(mainCategory, category) {
+    const nav = timeNav(`settings/${category}`);
     activeMainCategory = mainCategory;
     currentCleanup?.();
     currentCleanup = null;
@@ -112,6 +118,7 @@ async function renderCategory(mainCategory, category) {
     try {
         const module = await CATEGORY_LOADERS[mainCategory]();
         if (sequence !== renderSequence) return;
+        nav.mark('module');
         currentCleanup = await module.mountSettingsCategory({
             container: content,
             mainCategory,
@@ -120,9 +127,11 @@ async function renderCategory(mainCategory, category) {
                 legacyMounted = true;
             }
         });
+        nav.done();
     } catch (error) {
         if (sequence !== renderSequence) return;
-        content.innerHTML = `<div class="flex flex-col items-center justify-center h-full gap-[24px]" role="alert"><p class="text-red-500 text-[24px]">Failed to load settings</p><button type="button" data-retry-category class="bg-[var(--button-primary-bg)] h-[72px] px-[48px] rounded-[10px] text-white text-[24px] font-bold">Retry</button></div>`;
+        content.innerHTML = `<div class="flex flex-col items-center justify-center h-full gap-[24px]" role="alert"><p class="text-red-500 text-[24px]" data-i18n-key="Failed to load settings">Failed to load settings</p><button type="button" data-retry-category class="bg-[var(--button-primary-bg)] h-[72px] px-[48px] rounded-[10px] text-white text-[24px] font-bold" data-i18n-key="Retry">Retry</button></div>`;
+        translatePage();
         content.querySelector('[data-retry-category]')?.addEventListener('click', () => renderCategory(mainCategory, category), { once: true });
     }
 }
@@ -138,7 +147,7 @@ function selectMainCategory(button, requestedCategory = null) {
         target.click();
     } else {
         const content = document.getElementById('settings-content-area');
-        if (content) content.innerHTML = '<div class="flex items-center justify-center h-full text-[28px] text-[var(--text-primary)]">No matching settings</div>';
+        if (content) content.innerHTML = '<div class="flex items-center justify-center h-full text-[24px] text-[var(--text-primary)]">No matching settings</div>';
     }
 }
 
@@ -191,7 +200,7 @@ function renderSearchResults(searchTerm) {
                 && !label.toLocaleLowerCase().includes(term)) return;
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = 'settings-search-result w-full text-left px-4 py-3 rounded-lg text-[22px] text-[var(--text-primary)] hover:bg-[#2c4a7a] hover:text-white flex items-center gap-[10px]';
+            button.className = 'settings-search-result w-full text-left px-4 py-3 rounded-lg text-[24px] text-[var(--text-primary)] hover:bg-[#2c4a7a] hover:text-white flex items-center gap-[10px]';
             button.dataset.mainCategory = mainCategory;
             button.dataset.category = category;
             button.textContent = `${mainLabel} \u203a ${label}`;
@@ -200,7 +209,7 @@ function renderSearchResults(searchTerm) {
     });
     if (!fragment.childNodes.length) {
         const empty = document.createElement('p');
-        empty.className = 'p-4 text-center text-[22px] text-[var(--text-primary)] opacity-60';
+        empty.className = 'p-4 text-center text-[24px] text-[var(--text-primary)] opacity-60';
         empty.textContent = getTranslation('No settings match your search');
         fragment.appendChild(empty);
     }
@@ -361,6 +370,10 @@ export async function initializeSettingsShell() {
     startSettingsData();
     warmSensorCalibrationInBackground();
     bindShell(root);
+    selectCleanup?.();
+    selectCleanup = observeSelects(document.getElementById('settings-content-area'));
+    celsiusCleanup?.();
+    celsiusCleanup = observeCelsiusLabels(root);
     initResizableSeparators();
     const saved = readSettingsLocation();
     const first = document.getElementById(`${saved?.mainCategory || 'quickadjustments'}-btn`)
@@ -372,6 +385,10 @@ export async function initializeSettingsShell() {
 export function cleanupSettingsShell() {
     currentCleanup?.();
     currentCleanup = null;
+    selectCleanup?.();
+    selectCleanup = null;
+    celsiusCleanup?.();
+    celsiusCleanup = null;
     currentRoot = null;
     legacyMounted = false;
     renderSequence += 1;

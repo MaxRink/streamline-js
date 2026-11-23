@@ -1,15 +1,22 @@
-import { init as initProfileManager, unhideProfile,availableProfiles, assignProfile, setActiveProfile, getActiveProfileId, translateProfileTitle, deleteOrHideProfile, loadAssignments, verifyProfileChange, applyWorkflowToMainPageUI, withSavedBrewTemp, duplicateProfileAsDraft, deleteProfileDraft, lastGrinderSetting, lastTargetDoseWeight, applySavedSteamSettings, DEFAULT_DOSE_WEIGHT } from './profileManager.js';
+import { profileChanges, stepsDiffer } from './profile-version-diff.js';
+import { countLookAlikeTitles, isLookAlike } from './profile-look-alike.js';
+import { init as initProfileManager, unhideProfile,availableProfiles, assignProfile, setActiveProfile, getActiveProfileId, translateProfileTitle, deleteOrHideProfile, loadAssignments, verifyProfileChange, applyWorkflowToMainPageUI, withSavedBrewTemp, duplicateProfileAsDraft, deleteProfileDraft, applySavedSteamSettings } from './profileManager.js';
 import { resolveProfileKeyByTitle } from './active-profile.js';
 import { openDB } from './idb.js';
 import { logger } from './logger.js';
 import { initResizablePanels, showToast, initFullscreenHandler, updateProfileName, setupPressAndHold, flashIconButton } from './ui.js';
 import { sendProfile, getWorkflow, updateWorkflow, deleteProfile, updateProfileVisibility, getProfileLineage } from './api.js';
+import { profileSendBlocked, setPendingProfileSend } from './profile-send-gate.js';
+import { profileSwitchDial } from './profile-overrides.js';
+import { recipeIdPatch } from './dye-selection.js';
+import { currentMachineState } from './api.js';
 import { initChart, plotProfile } from './chart.js';
 import { translatePage, getTranslation } from './i18n.js';
 import { loadPage } from './router.js';
 import { openContextMenu, closeContextMenu } from './context-menu.js';
 import { pluginMenuEntries } from './plugin-menu-items.js';
 import { showProfileQrModal, initQrShareModal } from './qrShare.js';
+import { timeNav } from './perf-probe.js';
 
 const initializedProfileRoots = new WeakSet();
 // True when the pre-selected profile is just "the first row" rather than the
@@ -97,12 +104,6 @@ async function hideOrDeleteProfile(key, profileRecord) {
     if (profileRecord.isDraft) document.dispatchEvent(new CustomEvent('profiles-updated'));
 }
 
-// Short, human-readable summary of what a Reset to `other` would actually
-// change versus `current` -- shown next to each row's date so picking a
-// version isn't a blind guess from timestamps alone. Execution fields only
-// (steps, shot parameters) -- the same fields REA hashes into the profile
-// id -- so a title-only rename never shows up here, matching the
-// PRESENTATION_FIELDS split profile_editor.js's saveProfile uses.
 const DIFF_FIELD_LABELS = [
     ['target_weight', 'target weight'],
     ['target_volume', 'target volume'],
@@ -120,7 +121,7 @@ function summarizeProfileDiff(current, other) {
     } else {
         let changed = 0;
         for (let i = 0; i < stepsA.length; i++) {
-            if (JSON.stringify(stepsA[i]) !== JSON.stringify(stepsB[i])) changed++;
+            if (stepsDiffer(stepsA[i], stepsB[i])) changed++;
         }
         if (changed) parts.push(`${changed} step${changed === 1 ? '' : 's'} changed`);
     }
@@ -130,74 +131,142 @@ function summarizeProfileDiff(current, other) {
     return parts.length ? parts.join(', ') : 'No changes';
 }
 
-// Version picker for the Reset flow. Returns the chosen ProfileRecord, or
-// null on cancel. Picking a row selects it; Confirm applies it -- a row used
-// to restore on the single tap that selected it, which put an unconfirmed,
-// destructive profile swap one stray tap away. `currentProfile` is what a
-// row's date-and-summary line is diffed against -- the profile Reset would
-// actually replace.
+function appendLookAlikeStamp(leftSide, profileRecord) {
+    const saved = new Date(profileRecord.updatedAt ?? profileRecord.createdAt);
+    if (isNaN(saved.getTime())) return;
+    const stamp = document.createElement('span');
+    stamp.className = 'text-[18px] text-[var(--low-contrast-white)] whitespace-nowrap';
+    stamp.textContent = saved.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    leftSide.appendChild(stamp);
+}
+
+function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+}
+
+const VERSION_ROW_BASE = 'w-full text-left rounded-[14px] px-[22px] py-[18px] border-2 cursor-pointer flex flex-col gap-[6px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--mimoja-blue-v2)]';
+const VERSION_ROW_IDLE = `${VERSION_ROW_BASE} border-transparent bg-[var(--bgmain-color)]`;
+const VERSION_ROW_SELECTED = `${VERSION_ROW_BASE} border-[var(--mimoja-blue-v2)] bg-[var(--button-primary-tint)]`;
+
+const STEP_SEGMENT_BASE = 'flex-1 min-w-[44px] h-[52px] rounded-[10px] flex items-center justify-center text-[20px] font-semibold tabular-nums';
+const STEP_SEGMENT = {
+    unchanged: `${STEP_SEGMENT_BASE} bg-[var(--button-grey)] text-[var(--low-contrast-white)]`,
+    changed: `${STEP_SEGMENT_BASE} bg-[var(--mimoja-blue-v2)] text-white`,
+    added: `${STEP_SEGMENT_BASE} border-2 border-dashed border-[var(--mimoja-blue-v2)] text-[var(--text-primary)]`,
+    removed: `${STEP_SEGMENT_BASE} border-2 border-dashed border-[var(--low-contrast-white)] text-[var(--low-contrast-white)] line-through`,
+};
+
+function formatVersionDate(createdAt) {
+    const when = new Date(createdAt);
+    if (isNaN(when.getTime())) return { day: '', time: '' };
+    return {
+        day: when.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+        time: when.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+    };
+}
+
+function renderStepStrip(currentProfile, changes) {
+    const statusByIndex = new Map(changes.steps.map(step => [step.index, step.status]));
+    const count = Math.max(currentProfile?.steps?.length || 0, ...changes.steps.map(step => step.index + 1));
+    const strip = el('div', 'flex gap-[8px] w-full');
+    strip.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < count; i++) {
+        strip.appendChild(el('div', STEP_SEGMENT[statusByIndex.get(i) || 'unchanged'], String(i + 1)));
+    }
+    return strip;
+}
+
+function renderChangeTable(changes) {
+    const table = el('div', 'grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-[20px] gap-y-[10px] items-baseline w-full text-[20px] tabular-nums');
+    const cell = (className, text) => table.appendChild(el('div', className, text));
+    const heading = (text) => cell('col-span-4 pt-[14px] first:pt-0 text-[22px] font-semibold text-[var(--text-primary)]', text);
+    const value = (text) => (text === 'None' ? getTranslation('None') : text);
+    const row = ({ label, from, to }) => {
+        cell('pl-[18px] text-[var(--low-contrast-white)]', getTranslation(label));
+        cell('text-right text-[var(--low-contrast-white)]', value(from));
+        cell('text-[var(--low-contrast-white)]', '→');
+        cell('font-semibold text-[var(--text-primary)]', value(to));
+    };
+
+    for (const step of changes.steps) {
+        heading(`${getTranslation('Step')} ${step.index + 1}${step.name ? `  ${step.name}` : ''}`);
+        if (step.status === 'added') row({ label: 'Name', from: 'None', to: step.name || '—' });
+        else if (step.status === 'removed') row({ label: 'Name', from: step.name || '—', to: 'None' });
+        else step.fields.forEach(row);
+    }
+    if (changes.profile.length) {
+        heading(getTranslation('Profile settings'));
+        changes.profile.forEach(row);
+    }
+    return table;
+}
+
+function renderVersionDetail(host, currentProfile, version) {
+    const changes = profileChanges(currentProfile, version.profile);
+    host.replaceChildren();
+    host.appendChild(renderStepStrip(currentProfile, changes));
+    if (changes.steps.length || changes.profile.length) host.appendChild(renderChangeTable(changes));
+}
+
 function promptVersionRestore(versions, currentProfile) {
     return new Promise((resolve) => {
-        const ROW_BASE     = 'text-left px-[16px] py-[14px] rounded-[10px] border-2 bg-[var(--box-color)] cursor-pointer';
-        const ROW_IDLE     = `${ROW_BASE} border-[var(--border-color)] hover:border-[var(--mimoja-blue-v2)]`;
-        const ROW_SELECTED = `${ROW_BASE} border-[var(--mimoja-blue-v2)]`;
-
-        const dlg = document.createElement('dialog');
-        dlg.className = 'pe-history-dialog rounded-[16px] bg-[var(--box-color)] p-0 border border-[var(--border-color)] max-w-[560px] w-[90vw] shadow-2xl';
-        dlg.style.marginTop = '8vh';
+        const dlg = el('dialog', 'pe-history-dialog rounded-[20px] bg-[var(--box-color)] p-0 border border-[var(--border-color)] w-[min(1180px,94vw)] max-w-none shadow-2xl text-[var(--text-primary)]');
+        dlg.style.marginTop = '4vh';
         dlg.style.marginBottom = 'auto';
 
-        dlg.innerHTML = `
-            <div class="flex flex-col gap-[16px] p-[24px]">
-                <h3 class="text-[24px] font-bold text-[var(--text-primary)]">${getTranslation('Version')}</h3>
-                <div data-rows class="flex flex-col gap-[10px] max-h-[46vh] overflow-y-auto"></div>
-                <div class="flex flex-wrap justify-end gap-[12px] mt-[8px]">
-                    <button type="button" data-act="cancel" class="px-[18px] py-[10px] rounded-[10px] bg-[var(--button-grey)] text-[var(--text-primary)] text-[20px] font-semibold cursor-pointer">${getTranslation('Cancel')}</button>
-                    <button type="button" data-act="ok" class="hidden px-[18px] py-[10px] rounded-[10px] bg-[var(--button-primary-bg)] text-white text-[20px] font-semibold cursor-pointer">${getTranslation('Confirm')}</button>
-                </div>
-            </div>`;
+        const frame = el('div', 'flex flex-col gap-[28px] p-[36px]');
+        const header = el('div', 'flex flex-col gap-[6px]');
+        header.appendChild(el('h3', 'text-[30px] font-semibold leading-[1.2]', getTranslation('Version')));
+        header.appendChild(el('p', 'text-[20px] text-[var(--low-contrast-white)]', translateProfileTitle(currentProfile?.title) || ''));
 
-        const rowsHost  = dlg.querySelector('[data-rows]');
-        const confirmBtn = dlg.querySelector('[data-act="ok"]');
+        const body = el('div', 'grid grid-cols-[360px_minmax(0,1fr)] gap-[28px] h-[min(600px,50vh)]');
+        const list = el('div', 'flex flex-col gap-[10px] overflow-y-auto pr-[6px]');
+        list.setAttribute('role', 'listbox');
+        const detail = el('div', 'flex flex-col gap-[28px] overflow-y-auto rounded-[16px] bg-[var(--bgmain-color)] p-[28px]');
+        body.append(list, detail);
+
+        const footer = el('div', 'flex justify-end gap-[14px]');
+        const cancelBtn = el('button', 'px-[28px] h-[60px] rounded-[30px] bg-[var(--button-grey)] text-[var(--text-primary)] text-[22px] font-semibold cursor-pointer', getTranslation('Cancel'));
+        const restoreBtn = el('button', 'px-[32px] h-[60px] rounded-[30px] bg-[var(--button-primary-bg)] text-white text-[22px] font-semibold cursor-pointer', getTranslation('Confirm'));
+        cancelBtn.type = restoreBtn.type = 'button';
+        footer.append(cancelBtn, restoreBtn);
+
+        frame.append(header, body, footer);
+        dlg.appendChild(frame);
+
         let selected = null;
+        const rows = versions.map((version) => {
+            const { day, time } = formatVersionDate(version.createdAt);
+            const row = el('button', VERSION_ROW_IDLE);
+            row.type = 'button';
+            row.setAttribute('role', 'option');
 
-        // Rows are built as DOM, not interpolated markup: the title is
-        // user-supplied text and this dialog is rendered with innerHTML.
-        const rowBtns = versions.map((v, i) => {
-            const when  = new Date(v.createdAt);
-            const label = isNaN(when.getTime()) ? '' : when.toLocaleString();
-            const summary = summarizeProfileDiff(currentProfile, v.profile);
+            const stamp = el('div', 'flex items-baseline gap-[12px] tabular-nums');
+            stamp.append(el('span', 'text-[24px] font-semibold', day), el('span', 'text-[20px] text-[var(--low-contrast-white)]', time));
+            row.appendChild(stamp);
+            if (version.profile?.title && version.profile.title !== currentProfile?.title) {
+                row.appendChild(el('div', 'text-[20px] text-[var(--text-primary)]', translateProfileTitle(version.profile.title)));
+            }
+            row.appendChild(el('div', 'text-[18px] text-[var(--low-contrast-white)]', summarizeProfileDiff(currentProfile, version.profile)));
 
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = ROW_IDLE;
-            btn.dataset.idx = String(i);
-            btn.setAttribute('aria-pressed', 'false');
-
-            const title = document.createElement('div');
-            title.className = 'text-[20px] font-semibold text-[var(--text-primary)]';
-            title.textContent = v.profile?.title || 'Untitled';
-
-            const stamp = document.createElement('div');
-            stamp.className = 'text-[16px] text-[var(--text-primary)]';
-            stamp.style.opacity = '0.6';
-            stamp.textContent = summary ? `${label} · ${summary}` : label;
-
-            btn.appendChild(title);
-            btn.appendChild(stamp);
-            btn.addEventListener('click', () => {
-                selected = v;
-                rowBtns.forEach((b) => {
-                    const on = b === btn;
-                    b.className = on ? ROW_SELECTED : ROW_IDLE;
-                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-                });
-                confirmBtn.classList.remove('hidden');
-            });
-
-            rowsHost.appendChild(btn);
-            return btn;
+            row.addEventListener('click', () => select(version, row));
+            list.appendChild(row);
+            return row;
         });
+
+        function select(version, row) {
+            selected = version;
+            rows.forEach((r) => {
+                const on = r === row;
+                r.className = on ? VERSION_ROW_SELECTED : VERSION_ROW_IDLE;
+                r.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            renderVersionDetail(detail, currentProfile, version);
+            detail.scrollTop = 0;
+        }
 
         function done(result) {
             try { dlg.close(); } catch (_) {}
@@ -205,10 +274,11 @@ function promptVersionRestore(versions, currentProfile) {
             resolve(result);
         }
 
-        dlg.querySelector('[data-act="cancel"]').addEventListener('click', () => done(null));
-        confirmBtn.addEventListener('click', () => done(selected));
+        cancelBtn.addEventListener('click', () => done(null));
+        restoreBtn.addEventListener('click', () => done(selected));
         dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(null); });
 
+        select(versions[0], rows[0]);
         document.body.appendChild(dlg);
         dlg.showModal();
     });
@@ -268,19 +338,20 @@ async function handleConfirm() {
         showToast(`An error occurred: selected profile not found.`, 3000, 'alert');
         return;
     }
+    // Never write profile frames into a shot the machine is running -- see
+    // profile-send-gate.js. Hold the switch; app.js sends it when the shot ends.
+    if (profileSendBlocked(currentMachineState)) {
+        setPendingProfileSend(profileRecord);
+        showToast(getTranslation('The machine is brewing — this profile loads when the shot ends.'), 4000, 'info');
+        return;
+    }
     const profile = profileRecord.profile;
     const meta = profileRecord.metadata || {};
-    // Same fallback chains as the favourite buttons (profileManager
-    // applyProfileToMachine) -- keep the two in step. Neither dose nor grind is a
-    // profile field (see DEFAULT_DOSE_WEIGHT), so behind the user's saved override
-    // for this profile there is only the last number they set anywhere. Yield is a
-    // profile field, so the recipe answers for it.
-    const savedGrind = meta.grinderSetting ?? lastGrinderSetting();
-    const grindContext = savedGrind != null ? { grinderSetting: savedGrind } : { grinderSetting: null };
-    const targetDoseWeight = meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT;
-    const effectiveYield = meta.targetYield        ?? parseFloat(profile.target_weight);
-    // Same saved-override fold the favourite buttons do (profileManager
-    // applyProfileToMachine) -- this page is the other way into a profile
+    // The same dial-in rule as every other way into a profile switch: this
+    // profile's saved dose and grind, nothing where it has none so the live
+    // values stand, and the yield the profile itself asks for.
+    const dial = profileSwitchDial(meta, profile.target_weight);
+    // Same saved-override fold sendProfileRecordToMachine does -- this page is the other way into a profile
     // switch, and without it a brew-temp edit is lost coming through here.
     const profileToSend = withSavedBrewTemp(profile, meta);
 
@@ -316,23 +387,11 @@ async function handleConfirm() {
             }
         }
 
-        // Update workflow with profile's target weight before sending the profile
-        // This ensures that the target weight from the profile is applied to the workflow
-        if (profile.target_weight) {
-            const workflowUpdate = {
-                profile: profileToSend,
-                context: {
-                    targetDoseWeight,
-                    targetYield: effectiveYield,
-                    ...grindContext
-                }
-            };
-
-            sentworkflow = await updateWorkflow(workflowUpdate);
-        } else {
-            const displayYield = isNaN(effectiveYield) ? 0 : effectiveYield;
-            sentworkflow = await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield: displayYield, ...grindContext } });
-        }
+        sentworkflow = await updateWorkflow({
+            profile: profileToSend,
+            // Profile change: release the recipe (dye2#36).
+            context: { ...dial, ...recipeIdPatch(null) },
+        }, 'profile.send');
 
         const verified = sentworkflow.profile.title === profile.title;
         if (verified) {
@@ -344,7 +403,7 @@ async function handleConfirm() {
             applyWorkflowToMainPageUI(sentworkflow);
             // Steam rides its own setters, not the workflow context, so the
             // paint above cannot carry it -- same call the favourite buttons
-            // make (profileManager applyProfileToMachine). Without it a profile
+            // make (profileManager applySavedSteamSettings). Without it a profile
             // switched through this page kept the previous profile's steam.
             await applySavedSteamSettings(meta);
             if (!assignWasRejected) {
@@ -363,6 +422,7 @@ async function handleConfirm() {
 }
 
 function handleCancel() {
+    sessionStorage.removeItem('pendingAssignmentIndex');
     loadPage('index.html');
 }
 
@@ -399,9 +459,9 @@ function updateResetButtonVisibility(profileRecord) {
 }
 
 function updateSelectedProfileView(profileItem) {
-    console.log('updateSelectedProfileView: Updating selected profile view');
+    logger.debug('updateSelectedProfileView: Updating selected profile view');
     if (!profileItem) {
-        console.log('updateSelectedProfileView: No profile item, clearing view');
+        logger.debug('updateSelectedProfileView: No profile item, clearing view');
         // Clear the view if nothing is selected
         const titleElement = document.getElementById('selected_profile_name');
         if (titleElement) {
@@ -417,7 +477,7 @@ function updateSelectedProfileView(profileItem) {
         return;
     }
 
-    console.log('updateSelectedProfileView: Profile item found:', profileItem.textContent);
+    logger.debug('updateSelectedProfileView: Profile item found:', profileItem.textContent);
     // Update title — prefer explicit data attr so badge/decoration text doesn't leak in
     const profileTitle = profileItem.dataset.profileTitle
         || translateProfileTitle(availableProfiles[profileItem.dataset.profileKey]?.profile?.title)
@@ -425,30 +485,30 @@ function updateSelectedProfileView(profileItem) {
     const titleElement = document.getElementById('selected_profile_name');
     if (titleElement) {
         titleElement.textContent = profileTitle;
-        console.log('updateSelectedProfileView: Updated profile name to', profileTitle);
+        logger.debug('updateSelectedProfileView: Updated profile name to', profileTitle);
     }
     selectedProfileKey = profileItem.dataset.profileKey;
-    console.log('updateSelectedProfileView: Selected profile key set to', selectedProfileKey);
+    logger.debug('updateSelectedProfileView: Selected profile key set to', selectedProfileKey);
 
     const profileRecord = availableProfiles[selectedProfileKey];
-    console.log('updateSelectedProfileView: Profile record found:', !!profileRecord);
+    logger.debug('updateSelectedProfileView: Profile record found:', !!profileRecord);
     updateResetButtonVisibility(profileRecord);
 
     if (profileRecord && profileRecord.profile) {
         const profile = profileRecord.profile;
-        console.log('updateSelectedProfileView: Updating with profile:', profile.title);
+        logger.debug('updateSelectedProfileView: Updating with profile:', profile.title);
         // Update notes
         const notesElement = document.getElementById('profile_notes');
         if (notesElement) {
             renderProfileNotes(notesElement, profile.notes);
-            console.log('updateSelectedProfileView: Updated profile notes');
+            logger.debug('updateSelectedProfileView: Updated profile notes');
         }
 
         // Update chart
-        console.log('updateSelectedProfileView: Calling plotProfile with profile data');
+        logger.debug('updateSelectedProfileView: Calling plotProfile with profile data');
         plotProfile(profile);
     } else {
-        console.log('updateSelectedProfileView: Profile record or profile data not found');
+        logger.debug('updateSelectedProfileView: Profile record or profile data not found');
     }
 }
 
@@ -470,16 +530,21 @@ function showProfileContextMenu(key, profileRecord, anchorEl) {
             const pr = availableProfiles[key];
             if (pr?.profile) {
                 const meta = pr.metadata || {};
-                // Same chain as handleConfirm and the favourite buttons: the user's
-                // override for this profile, then the last dose they set anywhere.
-                const targetDoseWeight = meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT;
-                const yieldVal = meta.targetYield ?? parseFloat(pr.profile.target_weight);
-                const grind    = meta.grinderSetting ?? lastGrinderSetting();
-                try {
+                // Same rule as handleConfirm and the favourite buttons.
+                const dial = profileSwitchDial(meta, pr.profile.target_weight);
+                // ...and the same mid-shot guard, for the same reason: this is a
+                // profile switch, so it would rewrite the frames of a running
+                // shot (profile-send-gate.js). Hold it for the end of the shot.
+                if (profileSendBlocked(currentMachineState)) {
+                    // The assignment itself already landed, so only the switch is
+                    // held -- fall through to the "assigned" toast below.
+                    setPendingProfileSend(pr);
+                    showToast(getTranslation('The machine is brewing — this profile loads when the shot ends.'), 4000, 'info');
+                } else try {
                     // Assigning from here switches the machine to the profile, so it
                     // owes the same saved overrides as the other two ways in: the
                     // brew temp folded onto the profile, and steam pushed after.
-                    await updateWorkflow({ profile: withSavedBrewTemp(pr.profile, meta), context: { targetDoseWeight, targetYield: isNaN(yieldVal) ? 0 : yieldVal, grinderSetting: grind } });
+                    await updateWorkflow({ profile: withSavedBrewTemp(pr.profile, meta), context: { ...dial, ...recipeIdPatch(null) } }, 'profile.send');
                     await applySavedSteamSettings(meta);
                     setActiveProfile(key);
                     updateProfileName(pr.profile.title);
@@ -503,6 +568,7 @@ function showProfileContextMenu(key, profileRecord, anchorEl) {
             label: getTranslation('Edit'),
             onSelect: () => {
                 window.__pendingEditProfile = profileRecord;
+                sessionStorage.setItem('lastEditedProfileKey', key);
                 loadPage('src/profiles/profile_editor.html');
             },
         },
@@ -546,20 +612,27 @@ function findActiveProfileKey() {
 }
 
 function renderProfiles() {
-    console.log('renderProfiles: Starting to render profiles, isShowingHidden =', isShowingHidden);
+    logger.debug('renderProfiles: Starting to render profiles, isShowingHidden =', isShowingHidden);
     logger.info('Profile Editor: Rendering profiles...');
     try {
         const container = document.getElementById('profile-list');
         if (!container) {
             logger.error('Profile Editor: Profile list container not found.');
-            console.error('renderProfiles: Profile list container not found');
+            logger.error('renderProfiles: Profile list container not found');
             return;
         }
         container.innerHTML = ''; // Clear static content
-        console.log('renderProfiles: Container cleared');
+        logger.debug('renderProfiles: Container cleared');
+
+        // Rows are built into a fragment and attached in one go. Appending each
+        // row straight to the live #profile-list meant ~77 rows x several
+        // elements of separate insertions into a laid-out tree; on the tablet
+        // the two render passes of a visit cost 206 ms between them. A fragment
+        // is not in the document, so building it invalidates nothing.
+        const frag = document.createDocumentFragment();
 
         const profileEntries = Object.entries(availableProfiles);
-        console.log('renderProfiles: Available profiles count:', profileEntries.length);
+        logger.debug('renderProfiles: Available profiles count:', profileEntries.length);
 
         const sortedProfiles = profileEntries.sort(([, a], [, b]) => {
             if (a.profile && a.profile.title && b.profile && b.profile.title) {
@@ -569,7 +642,7 @@ function renderProfiles() {
         });
 
         if (sortedProfiles.length === 0) {
-            console.log('renderProfiles: No profiles to render');
+            logger.debug('renderProfiles: No profiles to render');
             container.textContent = 'No profiles found.';
             updateSelectedProfileView(null); // Clear right panel
             return;
@@ -577,11 +650,13 @@ function renderProfiles() {
 
         let visibleProfileCount = 0;
 
+        let sectionHeaderCount = 0;
         const renderSectionHeader = (label) => {
             const h = document.createElement('div');
-            h.className = 'px-3 pt-4 pb-1 text-[16px] uppercase tracking-wider text-[var(--low-contrast-white)] select-none';
+            const spacing = sectionHeaderCount++ === 0 ? 'pt-4' : 'border-t border-[var(--border-primary)] mt-3 pt-5';
+            h.className = `px-3 ${spacing} pb-1 text-[20px] font-semibold uppercase tracking-wider text-[var(--text-primary)] select-none`;
             h.textContent = label;
-            container.appendChild(h);
+            frag.appendChild(h);
         };
 
         // A family with no real profile named just the base ("A-Flow") gets
@@ -593,30 +668,30 @@ function renderProfiles() {
             h.className = 'px-3 py-[15.75px] leading-[1.2] text-[30px] text-[var(--text-primary)] select-none';
             h.setAttribute('role', 'presentation');
             h.textContent = base;
-            container.appendChild(h);
+            frag.appendChild(h);
         };
 
-        // Group profiles that share a name family: either a common prefix
-        // before a "/", "•" or ":" separator ("A-Flow / default-dark",
-        // "A-Flow / default-light", ... -> family "A-Flow"), or -- when there
-        // is no separator -- an auto-suffixed duplicate title ("Adaptive v2"
-        // / "Adaptive v2 (2)" -> family "Adaptive v2"). Pure title match,
-        // unrelated to parentId/clone lineage -- the "from X" badge below
-        // still covers that separately.
+        // Group profiles that share a name family: a common prefix before a
+        // "/", "•" or ":" separator ("A-Flow / default-dark", "A-Flow /
+        // default-light", ... -> family "A-Flow"). Pure title match, unrelated
+        // to parentId lineage -- the "from X" badge covers that.
         const isProfileVisible = (rec) => isShowingHidden || rec.visibility !== 'hidden';
         const familyBaseTitle = (title) => {
             const t = title || '';
             const sep = t.match(/^(.*?)\s*[/•:]\s*\S.*$/);
-            if (sep) return sep[1].trim();
-            return t.replace(/\s*\(\d+\)\s*$/, '').trim();
+            return sep ? sep[1].trim() : t.trim();
         };
         const familyGroups = new Map();
+        const visibleTitles = [];
         for (const [key, rec] of sortedProfiles) {
             const title = translateProfileTitle(rec.profile?.title) || rec.profile?.title || '';
             const base = familyBaseTitle(title);
-            if (!familyGroups.has(base)) familyGroups.set(base, []);
-            familyGroups.get(base).push([key, rec, title]);
+            const groupKey = `${rec.isDefault === true}|${base}`;
+            if (!familyGroups.has(groupKey)) familyGroups.set(groupKey, { base, members: [] });
+            familyGroups.get(groupKey).members.push([key, rec, title]);
+            if (isProfileVisible(rec)) visibleTitles.push(title);
         }
+        const titleCounts = countLookAlikeTitles(visibleTitles);
         // Headed family: one member's own title IS the bare base name, so it
         // renders normally at depth 0 and the rest nest under it (existing
         // profile as head). Headless family (no member is titled just the
@@ -624,16 +699,17 @@ function renderProfiles() {
         // label row stands in as the head instead.
         const childrenByFamily = new Map();
         const syntheticFamilies = new Map();
-        for (const [base, members] of familyGroups) {
+        for (const [groupKey, { base, members }] of familyGroups) {
             const visibleMembers = members.filter(([, rec]) => isProfileVisible(rec));
-            if (visibleMembers.length < 2) continue;
+            if (visibleMembers.length < 2 || visibleMembers.every(([, , title]) => title === base)) continue;
             const headIdx = visibleMembers.findIndex(([, , title]) => title === base);
             if (headIdx !== -1) {
                 const [headKey] = visibleMembers[headIdx];
                 const children = visibleMembers.filter((_, i) => i !== headIdx).map(([k, rec]) => [k, rec]);
                 if (children.length > 0) childrenByFamily.set(headKey, children);
             } else {
-                syntheticFamilies.set(base, {
+                syntheticFamilies.set(groupKey, {
+                    base,
                     members: visibleMembers.map(([k, rec]) => [k, rec]),
                     isDefault: visibleMembers[0][1].isDefault === true,
                 });
@@ -652,14 +728,14 @@ function renderProfiles() {
             if (!profile) return;
 
             const isHidden = profileRecord.visibility === 'hidden';
-            console.log('renderProfiles: Processing profile', profile.title, 'isHidden:', isHidden);
+            logger.debug('renderProfiles: Processing profile', profile.title, 'isHidden:', isHidden);
 
             if (!isShowingHidden && isHidden) {
-                console.log('renderProfiles: Skipping hidden profile', profile.title);
+                logger.debug('renderProfiles: Skipping hidden profile', profile.title);
                 return;
             }
             visibleProfileCount++;
-            console.log('renderProfiles: Adding profile to list', profile.title);
+            logger.debug('renderProfiles: Adding profile to list', profile.title);
 
             const displayTitle = translateProfileTitle(profile.title) || 'Untitled Profile';
 
@@ -700,12 +776,11 @@ function renderProfiles() {
             titleSpan.textContent = displayTitle;
             leftSide.appendChild(titleSpan);
 
-            // Lineage badge only when this row could not be nested under its
-            // parent (parent hidden/filtered out) -- otherwise tree position
-            // already conveys it.
+            if (isLookAlike(titleCounts, displayTitle)) appendLookAlikeStamp(leftSide, profileRecord);
+
             const parentRecord = profileRecord.parentId ? availableProfiles[profileRecord.parentId] : null;
             const parentTitle = parentRecord?.profile?.title;
-            if (parentTitle && !nestedChildKeys.has(key)) {
+            if (parentTitle && (parentRecord.isDefault || parentTitle !== profile.title)) {
                 const badge = document.createElement('span');
                 badge.className = 'text-[16px] px-2 py-0.5 rounded-full bg-white/15 whitespace-nowrap';
                 badge.textContent = `from ${translateProfileTitle(parentTitle)}`;
@@ -743,7 +818,7 @@ function renderProfiles() {
 
                 unhideButton.addEventListener('click', async (e) => {
                     e.stopPropagation();
-                    console.log('renderProfiles: Unhide button clicked for profile', key);
+                    logger.debug('renderProfiles: Unhide button clicked for profile', key);
                     await unhideProfileEntry(key);
                     renderProfiles();
                 });
@@ -761,7 +836,7 @@ function renderProfiles() {
             }
 
             const selectItem = () => {
-                console.log('renderProfiles: Profile item clicked:', profile.title);
+                logger.debug('renderProfiles: Profile item clicked:', profile.title);
                 const clickedItem = div;
 
                 const allItems = clickedItem.parentElement.querySelectorAll('[data-profile-key]');
@@ -809,7 +884,7 @@ function renderProfiles() {
                 openMenu();
             });
 
-            container.appendChild(div);
+            frag.appendChild(div);
 
             const kids = childrenByFamily.get(key);
             if (kids) kids.forEach(child => renderProfileItem(child, depth + 1));
@@ -860,8 +935,8 @@ function renderProfiles() {
             const title = translateProfileTitle(rec.profile?.title) || rec.profile?.title || '';
             topLevelEntries.push({ type: 'profile', key, rec, sortLabel: title, isDefault: rec.isDefault === true });
         }
-        for (const [base, info] of syntheticFamilies) {
-            topLevelEntries.push({ type: 'family', base, members: info.members, sortLabel: base, isDefault: info.isDefault });
+        for (const info of syntheticFamilies.values()) {
+            topLevelEntries.push({ type: 'family', base: info.base, members: info.members, sortLabel: info.base, isDefault: info.isDefault });
         }
         topLevelEntries.sort((a, b) => a.sortLabel.localeCompare(b.sortLabel));
 
@@ -889,7 +964,12 @@ function renderProfiles() {
             defaultsList.forEach(renderTopLevelEntry);
         }
 
-        console.log('renderProfiles: Total visible profiles:', visibleProfileCount);
+        // One insertion, and it has to happen before the lookup and the two
+        // layout reads below -- a fragment's children are not query-able or
+        // measurable until they are in the document.
+        container.appendChild(frag);
+
+        logger.debug('renderProfiles: Total visible profiles:', visibleProfileCount);
         if (justAutoSelected) {
             const selectedEl = container.querySelector(`[data-profile-key="${CSS.escape(selectedProfileKey)}"]`);
             if (selectedEl) {
@@ -916,7 +996,7 @@ function renderProfiles() {
         logger.info(`Profile Editor: Rendered ${visibleProfileCount} profiles.`);
 
     } catch (error) {
-        console.error('renderProfiles: Error rendering profiles:', error);
+        logger.error('renderProfiles: Error rendering profiles:', error);
         logger.error('Profile Editor: Failed to render profiles.', error);
         const container = document.getElementById('profile-list');
         if(container) {
@@ -1047,11 +1127,11 @@ function initProfileListScrollThumb() {
 }
 
 function initDeleteButton() {
-    console.log('initDeleteButton: Starting initialization');
+    logger.debug('initDeleteButton: Starting initialization');
     const deleteButton = document.getElementById('delete_profile');
-    console.log('initDeleteButton: deleteButton found:', !!deleteButton);
+    logger.debug('initDeleteButton: deleteButton found:', !!deleteButton);
     if (!deleteButton) {
-        console.error('initDeleteButton: delete_profile button not found');
+        logger.error('initDeleteButton: delete_profile button not found');
         return;
     }
 
@@ -1064,16 +1144,16 @@ function initDeleteButton() {
     const button = newDeleteButton;
 
     button.addEventListener('click', async () => {
-        console.log('initDeleteButton: Delete button clicked');
+        logger.debug('initDeleteButton: Delete button clicked');
         if (!selectedProfileKey) {
-            console.log('initDeleteButton: No profile selected');
+            logger.debug('initDeleteButton: No profile selected');
             showToast("No profile selected to delete.", 3000, 'error');
             return;
         }
 
         const profileRecord = availableProfiles[selectedProfileKey];
         if (!profileRecord || !profileRecord.profile) {
-            console.log('initDeleteButton: Profile record or data missing');
+            logger.debug('initDeleteButton: Profile record or data missing');
             showToast("Cannot delete profile: data missing.", 3000, 'error');
             return;
         }
@@ -1084,13 +1164,13 @@ function initDeleteButton() {
             ? `Are you sure you want to hide '${displayTitle}'?`
             : `Are you sure you want to permanently delete '${displayTitle}'?`;
 
-        console.log('initDeleteButton: Showing confirmation dialog');
+        logger.debug('initDeleteButton: Showing confirmation dialog');
         if (!confirm(confirmationText)) {
-            console.log('initDeleteButton: Confirmation cancelled');
+            logger.debug('initDeleteButton: Confirmation cancelled');
             return;
         }
 
-        console.log('initDeleteButton: Proceeding with delete/hide operation');
+        logger.debug('initDeleteButton: Proceeding with delete/hide operation');
         const keyToActOn = selectedProfileKey; // Preserve key
 
         if (profileRecord.isDraft) {
@@ -1109,27 +1189,27 @@ function initDeleteButton() {
             const itemToReselect = container.querySelector(`[data-profile-key="${keyToActOn}"]`);
             if (itemToReselect) {
                 // Clicking it will handle selection style and update the right pane view
-                console.log('initDeleteButton: Re-selecting item after delete/hide');
+                logger.debug('initDeleteButton: Re-selecting item after delete/hide');
                 itemToReselect.click();
             } else {
                 // The item was deleted, not hidden, so clear the view
-                console.log('initDeleteButton: Item was deleted, clearing view');
+                logger.debug('initDeleteButton: Item was deleted, clearing view');
                 updateSelectedProfileView(null);
             }
         }
     });
-    console.log('initDeleteButton: Event listener attached');
+    logger.debug('initDeleteButton: Event listener attached');
 }
 
 function initViewButton() {
-    console.log('initViewButton: Starting initialization');
+    logger.debug('initViewButton: Starting initialization');
     const viewButton = document.getElementById('view_profile');
     const page_title = document.getElementById("page_title");
-    console.log('initViewButton: viewButton found:', !!viewButton);
-    console.log('initViewButton: page_title found:', !!page_title);
+    logger.debug('initViewButton: viewButton found:', !!viewButton);
+    logger.debug('initViewButton: page_title found:', !!page_title);
 
     if (!viewButton) {
-        console.error('initViewButton: view_profile button not found');
+        logger.error('initViewButton: view_profile button not found');
         return;
     }
 
@@ -1149,10 +1229,10 @@ function initViewButton() {
     button.setAttribute('aria-label', 'Show hidden profiles');
     button.title = 'Show hidden profiles';
     button.classList.remove("bg-[var(--button-primary-bg)]");
-    console.log('initViewButton: Initial state set');
+    logger.debug('initViewButton: Initial state set');
 
     button.addEventListener('click', () => {
-        console.log('initViewButton: View button clicked, toggling isShowingHidden');
+        logger.debug('initViewButton: View button clicked, toggling isShowingHidden');
         isShowingHidden = !isShowingHidden;
 
         if (isShowingHidden) {
@@ -1168,7 +1248,7 @@ function initViewButton() {
             if (page_title) {
                 page_title.textContent = "All Profiles";
             }
-            console.log('initViewButton: Now showing hidden profiles');
+            logger.debug('initViewButton: Now showing hidden profiles');
         } else {
             // State: HIDING hidden profiles -> default background, blue icon
             button.innerHTML = getEyeOffIconSVG('currentColor', BIG_ICON);
@@ -1180,7 +1260,7 @@ function initViewButton() {
             if (page_title) {
                 page_title.textContent = "Profiles";
             }
-            console.log('initViewButton: Now hiding hidden profiles');
+            logger.debug('initViewButton: Now hiding hidden profiles');
         }
 
         // Force a reflow to ensure style changes are applied
@@ -1189,14 +1269,14 @@ function initViewButton() {
         // Re-run an active search under the new scope instead of dropping it.
         const searchInput = document.getElementById('profile-search-input');
         if (isSearching && searchInput?.value) {
-            console.log('initViewButton: Re-filtering active search');
+            logger.debug('initViewButton: Re-filtering active search');
             filterProfiles(searchInput.value.toLowerCase());
         } else {
-            console.log('initViewButton: Calling renderProfiles');
+            logger.debug('initViewButton: Calling renderProfiles');
             renderProfiles();
         }
     });
-    console.log('initViewButton: Event listener attached');
+    logger.debug('initViewButton: Event listener attached');
 }
 
 // Tap feedback for the toolbar's icon buttons. One delegated listener on the
@@ -1216,19 +1296,19 @@ function initIconFlash() {
 }
 
 function initSearchButton() {
-    console.log('initSearchButton: Starting initialization');
+    logger.debug('initSearchButton: Starting initialization');
     const searchButton = document.getElementById('search_profile');
     const deleteButton = document.getElementById('delete_profile');
-    console.log('initSearchButton: searchButton found:', !!searchButton);
-    console.log('initSearchButton: deleteButton found:', !!deleteButton);
+    logger.debug('initSearchButton: searchButton found:', !!searchButton);
+    logger.debug('initSearchButton: deleteButton found:', !!deleteButton);
 
     if (!searchButton) {
-        console.error('initSearchButton: search_profile button not found');
+        logger.error('initSearchButton: search_profile button not found');
         return;
     }
 
     if (!deleteButton) {
-        console.error('initSearchButton: delete_profile button not found');
+        logger.error('initSearchButton: delete_profile button not found');
         return;
     }
 
@@ -1243,12 +1323,12 @@ function initSearchButton() {
     // Set initial state on load (default bg, blue icon)
     button.innerHTML = getSearchIconSVG();
     button.classList.remove("bg-[var(--button-primary-bg)]");
-    console.log('initSearchButton: Initial state set');
+    logger.debug('initSearchButton: Initial state set');
 
     let searchInput = null;
 
     button.addEventListener('click', () => {
-        console.log('initSearchButton: Search button clicked, toggling search mode');
+        logger.debug('initSearchButton: Search button clicked, toggling search mode');
         isSearching = !isSearching;
 
         if (isSearching) {
@@ -1314,7 +1394,7 @@ function initSearchButton() {
                     // Set new timeout to debounce search
                     searchTimeout = setTimeout(() => {
                         const searchTerm = e.target.value.toLowerCase();
-                        console.log('initSearchButton: Searching for:', searchTerm);
+                        logger.debug('initSearchButton: Searching for:', searchTerm);
 
                         // Filter profiles based on search term
                         filterProfiles(searchTerm);
@@ -1326,7 +1406,7 @@ function initSearchButton() {
                 // Enter as a fallback for keyboards that send it instead.
                 const runSearchAndDismiss = (e) => {
                     const searchTerm = e.target.value.toLowerCase();
-                    console.log('initSearchButton: Searching for (search key):', searchTerm);
+                    logger.debug('initSearchButton: Searching for (search key):', searchTerm);
                     filterProfiles(searchTerm);
                     searchInput.blur();
                 };
@@ -1350,13 +1430,13 @@ function initSearchButton() {
             exitSearchMode();
         }
     });
-    console.log('initSearchButton: Event listener attached');
+    logger.debug('initSearchButton: Event listener attached');
 }
 
 function exitSearchMode(originalTitle = null) {
     const searchButton = document.getElementById('search_profile');
     const page_title = document.getElementById("page_title");
-    console.log('exitSearchMode: Exiting search mode');
+    logger.debug('exitSearchMode: Exiting search mode');
 
     // Reset the global search state
     isSearching = false;
@@ -1396,11 +1476,11 @@ function highlightTitle(text, term) {
 }
 
 function filterProfiles(searchTerm) {
-    console.log('filterProfiles: Filtering profiles for term:', searchTerm);
+    logger.debug('filterProfiles: Filtering profiles for term:', searchTerm);
 
     const container = document.getElementById('profile-list');
     if (!container) {
-        console.error('filterProfiles: Profile list container not found');
+        logger.error('filterProfiles: Profile list container not found');
         return;
     }
 
@@ -1432,12 +1512,16 @@ function filterProfiles(searchTerm) {
     });
 
     if (sortedProfiles.length === 0) {
-        console.log('filterProfiles: No profiles match the search term');
+        logger.debug('filterProfiles: No profiles match the search term');
         container.textContent = 'No profiles found.';
         updateSelectedProfileView(null); // Clear right panel
         syncProfileListScrollThumb();
         return;
     }
+
+    const titleCounts = countLookAlikeTitles(
+        sortedProfiles.map(([, rec]) => translateProfileTitle(rec.profile?.title) || rec.profile?.title || '')
+    );
 
     // Add filtered profiles to the container
     for (const [key, profileRecord] of sortedProfiles) {
@@ -1445,7 +1529,7 @@ function filterProfiles(searchTerm) {
         if (!profile) continue;
 
         const isHidden = profileRecord.visibility === 'hidden';
-        console.log('filterProfiles: Adding profile to filtered list', profile.title, 'isHidden:', isHidden);
+        logger.debug('filterProfiles: Adding profile to filtered list', profile.title, 'isHidden:', isHidden);
 
         const displayTitle = translateProfileTitle(profile.title) || 'Untitled Profile';
 
@@ -1463,9 +1547,11 @@ function filterProfiles(searchTerm) {
         titleSpan.innerHTML = highlightTitle(displayTitle, searchTerm);
         leftSide.appendChild(titleSpan);
 
+        if (isLookAlike(titleCounts, displayTitle)) appendLookAlikeStamp(leftSide, profileRecord);
+
         const parentRecord = profileRecord.parentId ? availableProfiles[profileRecord.parentId] : null;
         const parentTitle = parentRecord?.profile?.title;
-        if (parentTitle) {
+        if (parentTitle && (parentRecord.isDefault || parentTitle !== profile.title)) {
             const badge = document.createElement('span');
             badge.className = 'text-[16px] px-2 py-0.5 rounded-full bg-white/15 whitespace-nowrap';
             badge.textContent = `from ${translateProfileTitle(parentTitle)}`;
@@ -1483,7 +1569,7 @@ function filterProfiles(searchTerm) {
 
             unhideButton.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                console.log('filterProfiles: Unhide button clicked for profile', key);
+                logger.debug('filterProfiles: Unhide button clicked for profile', key);
                 await unhideProfileEntry(key);
                 filterProfiles(searchTerm); // Re-filter after unhiding
             });
@@ -1493,7 +1579,7 @@ function filterProfiles(searchTerm) {
         }
 
         div.addEventListener('click', (e) => {
-            console.log('filterProfiles: Profile item clicked:', profile.title);
+            logger.debug('filterProfiles: Profile item clicked:', profile.title);
             const clickedItem = e.currentTarget;
 
             const allItems = clickedItem.parentElement.querySelectorAll('[data-profile-key]');
@@ -1530,13 +1616,17 @@ function filterProfiles(searchTerm) {
     // Clear selection since we're in search mode
     selectedProfileKey = null;
 
-    console.log('filterProfiles: Added', sortedProfiles.length, 'profiles to filtered list');
+    logger.debug('filterProfiles: Added', sortedProfiles.length, 'profiles to filtered list');
     syncProfileListScrollThumb();
 }
 
 
 // Main initialization function that can be called externally
 export async function initializeProfileSelector() {
+    // Timed here rather than in the router: on the tablet this is 0.5-0.75s,
+    // the longest wait in the skin, and the total alone does not say which of
+    // the fetch, the chart or the list owns it.
+    const nav = timeNav('profile_selector:init');
     // Module state outlives the page: clear any search left over from a
     // previous mount so its document listener can't fire against the new DOM.
     if (searchOutsideHandler) {
@@ -1544,7 +1634,7 @@ export async function initializeProfileSelector() {
         searchOutsideHandler = null;
     }
     isSearching = false;
-    console.log('initializeProfileSelector: Starting initialization');
+    logger.debug('initializeProfileSelector: Starting initialization');
 
     const pageRoot =
         document.querySelector('div[role="dialog"][aria-labelledby="page_title"]')
@@ -1557,7 +1647,8 @@ export async function initializeProfileSelector() {
     selectionIsFallback = false;
 
     translatePage();
-    console.log('initializeProfileSelector: i18n translated');
+    nav.mark('translate');
+    logger.debug('initializeProfileSelector: i18n translated');
     initQrShareModal();
 
     // Suppress browser-default selection/long-press/drag/callout across the whole
@@ -1575,11 +1666,13 @@ export async function initializeProfileSelector() {
     // The router injects the page HTML and awaits a requestAnimationFrame before
     // calling us (router.js), so the element is already in the DOM -- the old
     // retry ladder was guarding a race that no longer exists.
+    nav.mark('fetchSent');
     if (document.getElementById('plotly-chart')) {
         initChart();
     } else {
-        console.warn('Chart element not found; skipping chart init');
+        logger.warn('Chart element not found; skipping chart init');
     }
+    nav.mark('chart');
 
     // availableProfiles is module state in profileManager.js and isn't cleared
     // until the fetch above actually resolves (see loadAvailableProfiles), so
@@ -1589,10 +1682,12 @@ export async function initializeProfileSelector() {
     // appear on every nav in/out. Reconciled below once the real fetch lands.
     if (Object.keys(availableProfiles).length > 0) {
         renderProfiles();
+        nav.mark('stalePaint');
     }
 
     const profileLoadStatus = await profilePromise;
-    console.log('initializeProfileSelector: Profile manager initialized, status:', profileLoadStatus);
+    nav.mark('fetched');
+    logger.debug('initializeProfileSelector: Profile manager initialized, status:', profileLoadStatus);
 
     if (profileLoadStatus?.profilesFrom === 'API') {
         logger.info('Profiles loaded successfully from API.');
@@ -1602,8 +1697,9 @@ export async function initializeProfileSelector() {
         showToast('Error: Could not load any profiles.', 3000, 'error');
     }
 
-    console.log('initializeProfileSelector: Rendering profiles...');
+    logger.debug('initializeProfileSelector: Rendering profiles...');
     renderProfiles();
+    nav.mark('render');
 
     // findActiveProfileKey only answers once the main page has bound the active
     // profile, and that runs off loadInitialData, which waits on the DE1
@@ -1628,7 +1724,7 @@ export async function initializeProfileSelector() {
     // Wire up add profile button
     const originalAddProfileButton = document.getElementById('add_profile');
     if (originalAddProfileButton) {
-        console.log('initializeProfileSelector: Setting up add profile button');
+        logger.debug('initializeProfileSelector: Setting up add profile button');
         // Remove any existing click listeners to prevent duplicates
         const newAddProfileButton = originalAddProfileButton.cloneNode(true);
         originalAddProfileButton.parentNode.replaceChild(newAddProfileButton, originalAddProfileButton);
@@ -1689,16 +1785,17 @@ export async function initializeProfileSelector() {
                     ],
                 },
             };
+            if (selectedProfileKey) sessionStorage.setItem('lastEditedProfileKey', selectedProfileKey);
             loadPage('src/profiles/profile_editor.html');
         });
     }
 
     ensureProfilesUpdatedListener();
 
-    console.log('initializeProfileSelector: Initializing resizable panels');
+    logger.debug('initializeProfileSelector: Initializing resizable panels');
     initResizablePanels('separator');
     initProfileListScrollThumb();
-    console.log('initializeProfileSelector: Setting up confirm button');
+    logger.debug('initializeProfileSelector: Setting up confirm button');
     const confirmBtn = document.getElementById('confirm-profile-btn');
     if (confirmBtn) {
         // Remove any existing click listeners to prevent duplicates
@@ -1708,7 +1805,7 @@ export async function initializeProfileSelector() {
         applyConfirmButtonLabel(newConfirmBtn);
     }
 
-    console.log('initializeProfileSelector: Setting up cancel button');
+    logger.debug('initializeProfileSelector: Setting up cancel button');
     const cancelBtn = document.getElementById('cancel-profile-btn');
     if (cancelBtn) {
         // Remove any existing click listeners to prevent duplicates
@@ -1716,21 +1813,21 @@ export async function initializeProfileSelector() {
         cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
         newCancelBtn.addEventListener('click', handleCancel);
     }
-    console.log('initializeProfileSelector: Initializing delete button');
+    logger.debug('initializeProfileSelector: Initializing delete button');
     initDeleteButton();
-    console.log('initializeProfileSelector: Initializing view button');
+    logger.debug('initializeProfileSelector: Initializing view button');
     initViewButton();
-    console.log('initializeProfileSelector: Initializing search button');
+    logger.debug('initializeProfileSelector: Initializing search button');
     initSearchButton();
     initIconFlash();
-    console.log('initializeProfileSelector: Initializing fullscreen handler');
+    logger.debug('initializeProfileSelector: Initializing fullscreen handler');
     initFullscreenHandler();
 
 
     const wireEditTrigger = (id) => {
         const raw = document.getElementById(id);
         if (!raw) {
-            console.warn(`[EditBtn] #${id} not found in DOM`);
+            logger.warn(`[EditBtn] #${id} not found in DOM`);
             return;
         }
         const clone = raw.cloneNode(true);
@@ -1743,6 +1840,7 @@ export async function initializeProfileSelector() {
             const profileRecord = availableProfiles[selectedProfileKey];
             if (!profileRecord) return;
             window.__pendingEditProfile = profileRecord;
+            sessionStorage.setItem('lastEditedProfileKey', selectedProfileKey);
             loadPage('src/profiles/profile_editor.html');
         });
     };
@@ -1781,7 +1879,7 @@ export async function initializeProfileSelector() {
             try {
                 lineage = await getProfileLineage(selectedProfileKey);
             } catch (e) {
-                showToast('Could not load version history', 3000, 'error');
+                showToast('Could not load version history.', 3000, 'error');
                 return;
             }
             // /lineage returns the whole chain -- parents AND children -- so
@@ -1857,13 +1955,14 @@ export async function initializeProfileSelector() {
                 updateSelectedProfileView(nextItem);
                 showToast('Profile reset.', 2500, 'success');
             } catch (e) {
-                console.error('[ResetProfile] delete failed:', e);
+                logger.error('[ResetProfile] delete failed:', e);
                 showToast(`Failed to reset profile: ${e.message}`, 4000, 'error');
             }
         });
     }
 
-    console.log('initializeProfileSelector: Initialization complete');
+    logger.debug('initializeProfileSelector: Initialization complete');
+    nav.done();
 }
 
 // Call initialization when DOM is ready for traditional page loads

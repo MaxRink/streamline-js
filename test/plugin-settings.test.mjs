@@ -11,7 +11,36 @@ import {
     pluginCategoryFor,
     pluginIdFromCategory,
     isPluginSettingVisible,
+    isFlowCalPluginManaging,
+    AUTO_FLOW_CAL_PLUGIN_ID,
+    pluginManagementAllowed,
+    pluginManagementProbeTarget,
+    PLUGIN_MANAGEMENT_PROBE_KEY,
+    pluginChangeBlockedByMachine,
 } from '../src/settings/plugin-view.js';
+
+test('plugin management opens only when the probe gets past the auth gate', () => {
+    for (const status of [200, 400, 404, 500]) assert.equal(pluginManagementAllowed(status), true, String(status));
+    for (const status of [401, 403, null, undefined]) assert.equal(pluginManagementAllowed(status), false, String(status));
+});
+
+test('the probe targets a plugin whose manifest rejects the probe key before any write', () => {
+    assert.equal(pluginManagementProbeTarget([
+        { id: 'bare.reaplugin', settings: {} },
+        { id: 'claims-key.reaplugin', settings: { [PLUGIN_MANAGEMENT_PROBE_KEY]: { type: 'boolean' } } },
+        { id: 'grinder.reaplugin', settings: { MockGrinder: { type: 'boolean' } } },
+    ]), 'grinder.reaplugin');
+    for (const plugins of [null, undefined, [], [{ id: 'bare.reaplugin' }], [{ settings: { A: {} } }]]) {
+        assert.equal(pluginManagementProbeTarget(plugins), null, JSON.stringify(plugins));
+    }
+});
+
+test('plugin changes wait for espresso and nothing else', () => {
+    assert.equal(pluginChangeBlockedByMachine('espresso'), true);
+    for (const state of ['idle', 'steam', 'flush', 'sleeping', null, undefined]) {
+        assert.equal(pluginChangeBlockedByMachine(state), false, String(state));
+    }
+});
 
 // plugin-view.js is the pure metadata -> view-model layer the generic plugin
 // settings card (settings.js renderPluginCard/setupPluginCard) is built on.
@@ -244,4 +273,29 @@ test('an unreachable bridge yields no rows instead of throwing', () => {
 test('a malformed entry in the list does not take the whole nav down', () => {
     const rows = pluginNavEntries([null, { name: 'no id' }, { id: 'ok.reaplugin', name: 'Ok' }]);
     assert.deepEqual(rows.map(r => r.pluginId), ['ok.reaplugin']);
+});
+
+test('isFlowCalPluginManaging resolves loaded + Enabled + !DryRun', () => {
+    const manifest = { Enabled: { type: 'boolean', default: true }, DryRun: { type: 'boolean', default: false } };
+    const plugin = (extra = {}) => ({ id: AUTO_FLOW_CAL_PLUGIN_ID, loaded: true, settings: manifest, ...extra });
+
+    assert.equal(isFlowCalPluginManaging([plugin()], { Enabled: true, DryRun: false }), true);
+    assert.equal(isFlowCalPluginManaging([{ id: 'other.reaplugin', loaded: true }], { Enabled: true }), false);
+    assert.equal(isFlowCalPluginManaging([], {}), false);
+    assert.equal(isFlowCalPluginManaging(null, {}), false);
+    assert.equal(isFlowCalPluginManaging([plugin({ loaded: false })], { Enabled: true, DryRun: false }), false);
+    assert.equal(isFlowCalPluginManaging([plugin()], { Enabled: false }), false);
+    assert.equal(isFlowCalPluginManaging([plugin()], { Enabled: true, DryRun: true }), false);
+    // {} = no stored settings -> manifest defaults
+    assert.equal(isFlowCalPluginManaging([plugin()], {}), true);
+    assert.equal(isFlowCalPluginManaging([plugin({ loaded: false })], {}), false);
+    // manifest default Enabled=false with nothing stored
+    const offByDefault = plugin({ settings: { ...manifest, Enabled: { type: 'boolean', default: false } } });
+    assert.equal(isFlowCalPluginManaging([offByDefault], {}), false);
+    assert.equal(isFlowCalPluginManaging([offByDefault], { Enabled: true }), true);
+    // null / undefined settings behave like {}
+    assert.equal(isFlowCalPluginManaging([plugin()], null), true);
+    assert.equal(isFlowCalPluginManaging([plugin()], undefined), true);
+    // no manifest settings at all -> Enabled true, DryRun false
+    assert.equal(isFlowCalPluginManaging([{ id: AUTO_FLOW_CAL_PLUGIN_ID, loaded: true }], undefined), true);
 });

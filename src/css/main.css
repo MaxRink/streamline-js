@@ -86,9 +86,16 @@
     min-height: 0;
 }
 
+/* Basis 0 so the chart absorbs the free space the band and footer leave, and a
+   floor well under the 643px design height so it also GIVES space back when the
+   canvas is shorter than 1200 rows (16:9 and 1340x800 panels). The band above it
+   positions its name/telemetry absolutely and so cannot shrink without clipping
+   them, which is what happened while this floor was 643: the band lost the rows
+   instead. scaling.js keeps the canvas at or above MIN_CANVAS_HEIGHT, which is
+   derived from this floor. */
 #chart-wrap {
     flex: 1 1 0;
-    min-height: 643px;   /* the design height -- never shrink below it */
+    min-height: 450px;
 }
 
 /* Scoped to the main page on purpose: profile_selector.html reuses the
@@ -151,6 +158,11 @@
 
 html, body {
     overflow: hidden;
+    /* Android 12+ WebViews play the stretch overscroll animation even on a page
+       that cannot scroll, so a drag anywhere reads as the whole UI rubber-banding
+       (#177, decaid#963). The skin letterboxes its own canvas and never scrolls
+       the root, so nothing here wants that gesture. */
+    overscroll-behavior: none;
 }
 
 * {
@@ -244,6 +256,7 @@ body {
     --button-primary-bg: #385a92;
     --button-primary-tint: rgba(56, 90, 146, 0.15); /* 15% of --button-primary-bg; no color-mix for older WebViews */
     --button-primary-text: #ffffff;
+    --dye-toggle-inactive-bg: #D7DEE9; /* Figma Action.Primary.Inactive (2386:1119): DYE strip P/F/R idle pill */
     --button-secondary-bg: #e8e8e8;
     --button-secondary-text: #121212;
     /* bg colors in profile editor */
@@ -320,6 +333,7 @@ body {
     --button-primary-bg: #415996;
     --button-primary-tint: rgba(65, 89, 150, 0.15); /* 15% of --button-primary-bg; no color-mix for older WebViews */
     --button-primary-text: #e8e8e8;
+    --dye-toggle-inactive-bg: #292c38; /* dark Buttons/Primary.Background.Inactive */
     --button-secondary-bg: #292c38;
     --button-secondary-text: #e8e8e8;
 }
@@ -352,6 +366,35 @@ body {
     font-weight: 600;
     font-size: 33px;
     color: var(--status-red-color);
+}
+
+/* A toast that does something when tapped. The solid alert-info fill read as a
+   notice with nowhere to act, so a tappable one takes the skin's blue action
+   colour on the card surface instead -- the same invitation
+   .status-msg-clickable below gives the machine status line. Two classes, so it
+   wins over .alert-info whatever order the sheets load in. */
+.alert.toast-tappable {
+    background-color: var(--card-bg);
+    border: 1px solid var(--status-clickable-color);
+    color: var(--status-clickable-color);
+    cursor: pointer;
+}
+
+#app-toast .alert-info:not(.toast-tappable) {
+    background-color: var(--mimoja-blue-v2);
+    border-color: var(--mimoja-blue-v2);
+    color: #fff;
+}
+
+#app-toast {
+    min-width: 0;
+    width: max-content;
+    max-width: calc(100vw - 2rem);
+    white-space: normal;
+}
+
+#app-toast-message {
+    overflow-wrap: anywhere;
 }
 
 .status-msg-clickable {
@@ -806,136 +849,6 @@ textarea,
   --led-muted: #9aa0ad;
   --led-tint: rgba(65, 89, 150, 0.22);
 }
-.led-muted { color: var(--led-muted); }
-.led-label {
-  color: var(--left-label-text);
-  font-weight: 700;
-}
-
-/* Page-level tabs. A recessed track with one raised active pill, deliberately
-   a different shape from the flat side-by-side Zone/State segments below it,
-   so the two levels of navigation do not read as the same control. */
-.led-tabs {
-  display: flex;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 14px;
-  background-color: var(--box-color);
-  border: 1px solid var(--led-hairline);
-}
-.led-tab {
-  flex: 1;
-  min-height: 64px;
-  padding: 0 32px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--led-muted);
-  font-weight: 700;
-  font-size: 26px;
-  cursor: pointer;
-  transition: background-color 0.15s ease-out, color 0.15s ease-out;
-}
-.led-tab[aria-selected='true'] {
-  background-color: var(--button-primary-bg);
-  color: #fff;
-}
-.led-tab:focus-visible { outline: 3px solid var(--mimoja-blue-v2); outline-offset: 2px; }
-
-/* Transport bar -- the one loud element on the Sequence tab. It carries the
-   play control, the loop switch, and the colours that are on the strip RIGHT
-   NOW, so the page shows what the machine is doing instead of only describing
-   it. The swatches are patched live by ledSeqPaintActiveStep. */
-.led-transport {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding: 18px 22px;
-  border-radius: 14px;
-  background-color: var(--box-color);
-  border: 1px solid var(--led-hairline);
-}
-.led-transport-btn {
-  min-height: 64px;
-  padding: 0 40px;
-  border: 0;
-  border-radius: 32px;
-  background-color: var(--button-primary-bg);
-  color: #fff;
-  font-size: 22px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.led-transport-btn[data-mode='stop'] { background-color: var(--status-red-color); }
-.led-transport-btn:disabled { opacity: 0.4; cursor: default; }
-.led-now {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.led-now-swatch {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  border: 2px solid var(--led-hairline);
-}
-
-/* Step rows. The two colours of a step are the front and rear of ONE moment,
-   so they sit together in a single bordered cell split by a hairline rather
-   than floating as two unrelated inputs. */
-.led-step {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 12px 16px;
-  border: 2px solid var(--led-hairline);
-  border-left: 6px solid var(--led-hairline);
-  border-radius: 12px;
-  transition: border-color 0.15s ease-out, background-color 0.15s ease-out;
-}
-/* Toggled by the runner directly (ledSeqPaintActiveStep), not a re-render --
-   the playback tick must never rebuild the page under the user's fingers. */
-.led-step.led-seq-step-active {
-  border-color: var(--mimoja-blue-v2);
-  border-left-color: var(--mimoja-blue-v2);
-  background-color: var(--led-tint);
-}
-.led-step-index {
-  width: 32px;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--led-muted);
-  font-variant-numeric: tabular-nums;
-}
-.led-step-colors {
-  display: flex;
-  border: 2px solid var(--led-hairline);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.led-step-colors input[type='color'] {
-  width: 56px;
-  height: 44px;
-  border: 0;
-  padding: 0;
-  background: none;
-  cursor: pointer;
-}
-.led-step-colors input[type='color'] + input[type='color'] {
-  border-left: 2px solid var(--led-hairline);
-}
-.led-step-duration {
-  width: 108px;
-  height: 44px;
-  padding: 0 10px;
-  font-size: 18px;
-  border-radius: 8px;
-  border: 2px solid var(--led-hairline);
-  background-color: var(--profile-button-background-color);
-  color: var(--text-primary);
-}
 .led-icon-btn {
   width: 44px;
   height: 44px;
@@ -948,32 +861,143 @@ textarea,
   cursor: pointer;
 }
 .led-icon-btn:disabled { opacity: 0.3; cursor: default; }
+/* The preset row sits against 48px chips and the name field, so its + and x
+   match those rather than the 44px controls inside a step row. */
+.led-icon-btn[data-size='lg'] { width: 48px; height: 48px; font-size: 22px; }
 .led-icon-btn[data-variant='remove'] {
   border-color: var(--status-red-color);
   color: var(--status-red-color);
 }
 
-/* Auto-run state chips. */
-.led-chip {
-  min-height: 48px;
-  padding: 0 22px;
-  border-radius: 24px;
-  border: 1px solid var(--led-hairline);
-  background-color: var(--box-color);
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+/* One card per physical strip. The card is the unit the owner thinks in, so
+   it owns everything that strip can do: its two colours and its brightness. */
+.led-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  width: 100%;
 }
-.led-chip[aria-pressed='true'] {
-  background-color: var(--button-primary-bg);
-  border-color: var(--button-primary-bg);
-  color: #fff;
+.led-card {
+  flex: 1 1 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px;
+  border-radius: 14px;
+  background-color: var(--box-color);
+  border: 1px solid var(--led-hairline);
+}
+.led-card-title {
+  color: var(--left-label-text);
+  font-size: 26px;
+  font-weight: 700;
+}
+.led-card-swatches {
+  display: flex;
+  gap: 18px;
+}
+.led-pick-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.led-pick-cap {
+  color: var(--led-muted);
+  font-size: 18px;
+  font-weight: 600;
+}
+/* The colour IS the button: tapping one opens the wheel on it. Sized to be a
+   comfortable touch target rather than a readout. */
+.led-pick {
+  height: 76px;
+  border-radius: 12px;
+  border: 2px solid var(--led-hairline);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.led-pick[aria-pressed='true'] {
+  border-color: var(--mimoja-blue-v2);
+  box-shadow: 0 0 0 3px var(--led-tint);
+}
+/* A black swatch and an empty slot look identical, so an off strip gets a
+   diagonal rule through it. */
+.led-pick-off {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    to bottom right, transparent calc(50% - 1px), var(--led-muted) 50%, transparent calc(50% + 1px));
+}
+.led-bright {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.led-bright-icon { color: var(--led-muted); font-size: 24px; }
+.led-bright-slider { flex: 1; width: auto; }
+.led-bright-val {
+  width: 72px;
+  text-align: right;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
 }
 
+/* The wheel, summoned by a tap on a colour and dismissed the same way. Three
+   columns that each hold something -- presets, wheel, readout -- so the tall
+   wheel does not leave a dead corner beside a short stack of controls. */
+.led-picker-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 22px 24px;
+  border-radius: 14px;
+  background-color: var(--box-color);
+  border: 2px solid var(--mimoja-blue-v2);
+}
+/* Three columns of presets reads as a block beside the wheel; nine in a row
+   stretched the panel and left the space under them empty. */
+.led-swatches {
+  display: grid;
+  grid-template-columns: repeat(3, 72px);
+  gap: 16px;
+}
+.led-swatch {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  border: 2px solid var(--led-hairline);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease-out;
+}
+.led-swatch[aria-pressed='true'] {
+  box-shadow: 0 0 0 3px var(--button-primary-bg);
+}
+.led-picker-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  align-self: stretch;
+}
+/* Close sits at the top of its column, the readout rides the middle. */
+.led-picker-side > :nth-child(2) { margin-top: auto; }
+.led-picker-side > :last-child { margin-bottom: auto; }
+.led-picker-current {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  border: 2px solid var(--led-hairline);
+}
+.led-pick:focus-visible,
+.led-swatch:focus-visible { outline: 3px solid var(--mimoja-blue-v2); outline-offset: 2px; }
+
 @media (prefers-reduced-motion: reduce) {
-  .led-tab, .led-step, .led-chip { transition: none; }
+  .led-pick, .led-swatch { transition: none; }
 }
 
 /* Profile editor CARDS icons — SVGs rendered as a CSS mask so the glyph picks
@@ -988,4 +1012,126 @@ textarea,
   mask-position: center;
   -webkit-mask-size: contain;
   mask-size: contain;
+}
+
+/* Full-screen chart (TCL "zoomed" page): chart.js toggles .chart-zoomed on
+   #main-page. Header and telemetry band stay; the machine-button column, the
+   dashboard and the dial-in sidebar go, and the zoomed chart takes the plot's
+   place out to the full width and down to the bottom of the screen (#chart-wrap
+   is already the flex item that absorbs free space). */
+/* #expanded-chart's h-full was measured against the wrap, so it hung past the
+   bottom of the screen and took the x tick labels with it. Column flex + flex:1
+   makes it take exactly what the wrap has. */
+#main-page.chart-zoomed #chart-wrap {
+    display: flex;
+    flex-direction: column;
+}
+
+#main-page.chart-zoomed #expanded-chart {
+    display: block !important;
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+}
+
+#main-page.chart-zoomed #plotly-chart,
+#main-page.chart-zoomed #shot-settings,
+#main-page.chart-zoomed #shot-history-panel,
+#main-page.chart-zoomed #shot-data-panel {
+    display: none;
+}
+
+/* The machine-button column goes behind the zoomed chart: on a non-GHC machine
+   it is a 172px flex sibling of the chart column, so leaving it in place keeps
+   that width off the plot. Hidden by the class, never by the inline style that
+   showGhcControls()/scaling.js read, so the layout returns untouched on exit. */
+#main-page.chart-zoomed #ghc-controls {
+    display: none !important;
+}
+
+#main-page.chart-zoomed main {
+    padding-bottom: 0;
+}
+
+/* The dial-in line of the zoomed page: the hidden sidebar's values, in the
+   telemetry row's own idiom (label in the card-title colour, value in mono).
+   It sits inside the header band between the profile name and the machine
+   readings, the order the TCL zoomed page uses (skin.tcl:907-908). The band is
+   a fixed 150px, so the telemetry row gives up its 40px top gap to make room —
+   the two lines together cost no more than the one did. */
+#zoom-dialin {
+    display: none;
+}
+
+#main-page.chart-zoomed #zoom-dialin {
+    display: flex;
+    align-items: center;
+    gap: 34px;
+    padding-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+/* The row below needs real air, not just a box boundary: its own box used to
+   start exactly where the strip's ended, which put the readings' ascenders up
+   against the dial-in descenders. */
+#main-page.chart-zoomed #telemetry-row {
+    padding-top: 12px;
+}
+
+/* Cups is a Bengle-only field and the zoomed line is the dense one; it goes,
+   leaving the width to the readings that matter mid-shot. !important for the
+   same reason as Group below — app.js owns the inline display. */
+#main-page.chart-zoomed #cupwarmer-info-container {
+    display: none !important;
+}
+
+/* The zoomed page names the two temperatures as the TCL skin does — Mix and
+   Group, not Water and the shot-only Puck — so both labels live in the markup
+   and the layout class picks one. Swapping textContent instead would be undone
+   by the next re-translation, which rewrites from data-i18n-key. */
+.tele-label-zoomed {
+    display: none;
+}
+
+#main-page.chart-zoomed .tele-label-plain {
+    display: none;
+}
+
+#main-page.chart-zoomed .tele-label-zoomed {
+    display: inline;
+}
+
+/* Group stays in the zoomed line even when no shot is pulling, as the TCL
+   zoomed page has it, so the row never reflows mid-shot. !important because
+   ui.updateMachineStatus owns the element's inline display for the normal
+   page, where the field is still espresso-only; leaving on exit hands it
+   straight back. */
+#main-page.chart-zoomed #puck-info-container {
+    display: block !important;
+}
+
+.zoom-dialin-pair {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+/* 28px, not the telemetry row's 24px: #zoom-dialin clips its overflow to keep a
+   long line off the chart, and a 24px line box lets 22.5px descenders hang past
+   its own bottom edge, where the clip shaved them. */
+.zoom-dialin-label {
+    color: var(--data-card-title-text-color);
+    font-family: 'Inter', sans-serif;
+    font-size: 22.5px;
+    font-weight: 600;
+    line-height: 28px;
+}
+
+.zoom-dialin-value {
+    color: var(--text-primary);
+    font-family: 'NotoSansMono', monospace;
+    font-size: 22.5px;
+    font-weight: 600;
+    line-height: 28px;
 }

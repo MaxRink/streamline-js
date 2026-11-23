@@ -44,6 +44,22 @@ Preserve:
 - cached-first paint followed by network refresh;
 - cancellation or staleness checks when the visible history item changes.
 
+The main-page history arrows are locked while the machine state is `espresso`:
+`src/modules/history-nav-gate.js` owns the state list, `history.updateHistoryNavLock()`
+paints it, and `app.js` calls that on each machine-state change. Locking also returns
+the panel to the newest shot, because `app.js` holds the live chart and data panel back
+for as long as `isReviewingHistory()` is true. It ends the review inline rather than
+calling `displayShot(0)`: it runs from `handleData()`, and plotting a past shot there
+leaves the live frames of the shot now starting appending to that shot's arrays.
+The lock fires on entering `espresso`, before preinfusion, so `displayShot()` refuses past
+shots while locked and the shot-start branch in `app.js` calls `endHistoryReview()` before
+it clears the chart.
+
+Shot index 0 is a position -- "newest" -- not a particular shot, so `applyHistoryPage()`
+only follows the selection by id above index 0. Following it at 0 shifted a user sitting
+on NEWEST to index 1 whenever a shot landed, which left `isReviewingHistory()` true for
+good and silently killed the live chart for every later shot.
+
 ## Durable Preferences
 
 `src/modules/settingsSync.js` keeps localStorage as the synchronous working copy and mirrors selected keys into Decaid KV so preferences survive WebView storage replacement.
@@ -53,7 +69,7 @@ Startup order matters:
 - the module is loaded before `app.js`;
 - it installs the Storage mirror once;
 - it hydrates from KV;
-- KV wins a conflict;
+- KV wins a conflict, except keys the user changed while the write gate was shut (a late hydrate keeps and pushes those; the retry ladder then continues every 60 s);
 - local values seed missing remote values;
 - `settingsReady` resolves even when Decaid is unavailable;
 - `app.js` waits before reading synchronized preferences.
@@ -112,6 +128,7 @@ Browser and KV storage can contain profile names, notes, machine information, fe
 ```sh
 npm test
 node --test test/history-pager.test.mjs
+node --test test/history-nav-gate.test.mjs
 node --test test/settings-persistence.test.mjs
 node --test test/settings-data-race.test.mjs
 ```

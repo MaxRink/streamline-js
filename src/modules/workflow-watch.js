@@ -8,6 +8,20 @@
 // focus/visibility regain and on a slow timer; these functions decide whether
 // that re-read is worth repainting for.
 //
+import { profileFingerprint } from './dye-selection.js';
+
+// A tile press is pushed to Decaid after this debounce (ui.js imports it).
+// A burst still costs one PUT, the press-and-hold repeat included, because each
+// press restarts the wait: the number only buys how long a settled value waits.
+// It was 1000 ms, which Decent Sync paid for twice -- once on the machine that
+// set the dose, once reading it back on the other -- for nothing Decaid or the
+// plugins need (see issue #174).
+export const API_DEBOUNCE_MS = 300;
+// A press this recent has not reached Decaid yet: repainting from a read now
+// would reassign the variable the pending push is about to send. Derived from
+// the debounce so the two cannot drift apart.
+export const WORKFLOW_EDIT_GUARD_MS = API_DEBOUNCE_MS + 100;
+
 // Only the values the main-page tiles actually show are compared. Diffing whole
 // documents would fire on profile internals the sidebar never renders.
 
@@ -16,6 +30,10 @@ export function workflowTileValues(workflow) {
     const context = workflow.context;
     return {
         profileTitle: workflow.profile?.title,
+        // Same title, different steps (an edit/save) must still reach the chart's
+        // step tracking. Brew temperature and limiter-noise are excluded by the
+        // fingerprint, so a temp tile edit is not a profile change.
+        profileSig: profileFingerprint(workflow.profile) ?? undefined,
         grind: context?.grinderSetting ?? workflow.grinderData?.setting,
         dose: context?.targetDoseWeight ?? workflow.doseData?.doseIn,
         yield: context?.targetYield ?? workflow.doseData?.drinkOut,
@@ -54,8 +72,8 @@ export function changedTileValues(previous, next) {
 // Tiles repainted even when the baseline says they are unchanged. After a plugin
 // said it wrote the workflow, our baseline may already hold the plugin's value (a
 // tile edit or an earlier poll read it) while the tile still shows something
-// else, so a diff alone would never repaint. profileTitle is not here: a title
-// change runs the heavier loadInitialData path, which a force must not trigger.
+// else, so a diff alone would never repaint. profileTitle/profileSig are not here: a
+// profile change runs the heavier loadInitialData path, which a force must not trigger.
 export const FORCED_KEYS = ['dose', 'yield', 'grind', 'brewTemp',
     'steamDuration', 'steamFlow', 'milkStop', 'hotWaterVolume', 'hotWaterTemp', 'flush'];
 
@@ -67,4 +85,11 @@ export function tilesToPaint(previous, next, { force = false } = {}) {
         if (next?.[key] != null) changed[key] = next[key];
     }
     return changed;
+}
+
+// Does this diff mean the profile itself changed (title or steps)? That needs the
+// heavier loadInitialData path (chart step tracking, active-profile record,
+// favourite highlight), not just a tile repaint.
+export function profileChanged(changed) {
+    return !!changed && ('profileTitle' in changed || 'profileSig' in changed);
 }

@@ -1,19 +1,23 @@
 import * as chart from './chart.js';
 import { logger } from './logger.js';
-import { openDB, getLatestShotSummaries, getLatestCachedShotSummaries, getLatestCachedShot, getShot, addShot, addShots, deleteShot as idbDeleteShot, clearShots } from './idb.js';
-import { API_BASE_URL, getPlugins } from './api.js';
-import { createHistoryPager } from './history-pager.js';
-import { renderPastShot, clearShotData } from './shotData.js';
+import { openDB, getLatestShotSummaries, getLatestCachedShotSummaries, getLatestCachedShot, getShot, addShot, addShots, deleteShot as idbDeleteShot, pruneShotsInRange, clearShots } from './idb.js';
+import { API_BASE_URL, getPlugins, getPluginSettings, callPluginEndpoint } from './api.js';
+import { createHistoryPager, isShotAlreadyDeleted } from './history-pager.js';
+import { renderPastShot, clearShotData, setPaintSuspended } from './shotData.js';
 import { getTranslation } from './i18n.js';
 import { translateProfileTitle } from './profileManager.js';
 import { generateShotSummary } from './shotSummary.js';
 import { openContextMenu } from './context-menu.js';
 import { showToast, setupPressAndHold } from './ui.js';
 import { pluginMenuEntries } from './plugin-menu-items.js';
-import { isVisualizerEnabled, uploadShotToVisualizer } from './visualizer.js';
 import { ASSISTED_DIALIN_PLUGIN_ID, findAssistedDialInPlugin, buildAssistedDialInUrl } from './assisted-dialin.js';
 import { openBeanScaleCaptureModal } from './bean-scale-modal.js';
 import { openBeanSelectionModal } from './bean-selection-modal.js';
+import { VISUALIZER_PLUGIN_ID, visualizerAccountConfigured } from './visualizer-account.js';
+// Gate only -- the 90K dyeStrip.js that owns openPluginOverlay is imported at
+// tap time below, so it stays off the boot graph.
+import { isDye2Enabled } from './dye2-enabled.js';
+import { historyNavBlocked } from './history-nav-gate.js';
 
 const PAGE_SIZE = 20;
 let shots = [];
@@ -88,13 +92,31 @@ const historyPager = createHistoryPager({
         return data;
     },
     fetchSummaryPage: (offset, limit) => getLatestShotSummaries(limit, offset),
-    fetchCachedPage: (offset, limit) => getLatestCachedShotSummaries(limit, offset)
+    fetchCachedPage: (offset, limit) => getLatestCachedShotSummaries(limit, offset),
+    pruneShots: pruneShotsInRange
 });
 
 function applyHistoryPage(page) {
-    const selectedId = shots[currentShotIndex]?.id;
+    // Index 0 is a position -- "newest" -- not a particular shot. Following it
+    // by id shifted a user sitting on NEWEST to index 1 the moment a shot
+    // landed, which made isReviewingHistory() true for good: the panel never
+    // returned to 0 and app.js silently held the live chart back for the next
+    // shot until the user stepped through history and back.
+    const selectedId = currentShotIndex > 0 ? shots[currentShotIndex]?.id : null;
     shots = page.shots;
-    if (selectedId) currentShotIndex = shots.findIndex(shot => shot.id === selectedId);
+    if (selectedId) {
+        const index = shots.findIndex(shot => shot.id === selectedId);
+        if (index !== -1) {
+            currentShotIndex = index;
+        } else if (shots.length === 0) {
+            currentShotIndex = -1;
+        } else {
+            // Selected shot was pruned: land on the neighbour AND repaint it so
+            // the on-screen shot is the one Delete/edit act on.
+            currentShotIndex = Math.min(currentShotIndex, shots.length - 1);
+            displayShot(currentShotIndex).catch(error => logger.warn('Could not repaint neighbour shot:', error));
+        }
+    }
     historyHasMore = page.hasMore;
     page.errors.forEach(error => logger.warn('Could not load shot history source:', error));
 }
@@ -128,19 +150,44 @@ async function loadFullShot(shot) {
     }
 }
 
+export function setHistoryLabel(key) {
+    const label = document.getElementById('shot-history-label');
+    if (!label) return;
+    label.setAttribute('data-i18n-key', key);
+    label.textContent = getTranslation(key);
+}
+
+function showEmptyHistoryPlaceholders() {
+    setHistoryLabel('SHOT HISTORY');
+    for (const [id, key] of [['history-dose-in', 'Dose In'], ['history-grind-size', 'Grind Size']]) {
+        const element = document.getElementById(id);
+        if (!element) continue;
+        element.setAttribute('data-i18n-key', key);
+        element.textContent = getTranslation(key);
+    }
+    for (const id of ['history-date', 'history-profile-name']) {
+        const element = document.getElementById(id);
+        if (element) element.textContent = '';
+    }
+}
+
 async function displayShot(index) {
+    if (navLocked && index > 0) return;
     if (index < 0 || index >= shots.length) {
         logger.warn('Invalid shot index', index);
         return;
     }
 
     currentShotIndex = index;
+    // Anything but the newest shot means the user asked to look at a past one:
+    // stop the live shot repainting the chart and the data panel over it
+    // (a cleaning profile runs as espresso frames, so this bites mid-cycle).
+    setPaintSuspended(index > 0);
     const shot = shots[currentShotIndex];
 
     // Update footer text
     const dateEl = document.getElementById('history-date');
     const profileNameEl = document.getElementById('history-profile-name');
-    const historyLabelEl = document.getElementById('shot-history-label');
 
     if (dateEl) {
         const date = new Date(shot.timestamp);
@@ -154,20 +201,13 @@ async function displayShot(index) {
     if (profileNameEl && shot.workflow && shot.workflow.profile) {
         profileNameEl.textContent = translateProfileTitle(shot.workflow.profile.title);
     }
-    if (historyLabelEl) {
-        if (index === 0) {
-            historyLabelEl.textContent = getTranslation('NEWEST');
-        } else if (index === shots.length - 1 && !historyHasMore) {
-            historyLabelEl.textContent = getTranslation('OLDEST');
-        } else {
-            historyLabelEl.textContent = getTranslation('HISTORY');
-        }
-    }
+    setHistoryLabel(index === 0 ? 'NEWEST' : index === shots.length - 1 && !historyHasMore ? 'OLDEST' : 'HISTORY');
 
     const doseInEl = document.getElementById('history-dose-in');
     const grindSizeEl = document.getElementById('history-grind-size');
 
     if (doseInEl) {
+        doseInEl.removeAttribute('data-i18n-key');
         const doseIn = shot.annotations?.actualDoseWeight
             ?? shot.workflow?.context?.targetDoseWeight
             ?? shot.workflow?.doseData?.doseIn;
@@ -179,6 +219,7 @@ async function displayShot(index) {
     }
 
     if (grindSizeEl) {
+        grindSizeEl.removeAttribute('data-i18n-key');
         const grindSetting = shot.workflow?.context?.grinderSetting ?? shot.workflow?.grinderData?.setting;
         if (typeof grindSetting !== 'undefined' && grindSetting !== null) {
             const settingFloat = parseFloat(grindSetting);
@@ -246,6 +287,36 @@ export function refreshCurrentShot() {
     } else {
         chart.clearChart();
     }
+}
+
+// After DYE2's edit-shot page closes, bring just that shot up to date instead of
+// reloading the whole window (the user may be pages deep in history). A 404 is a
+// delete made there; anything else is the saved record, whose profile/dose/grind
+// this panel shows. Keeps the selected position, so returning lands where they left.
+export async function refreshShotAfterDye2Edit(id) {
+    if (!id) return;
+    const response = await fetch(`${API_BASE_URL}/shots/${id}`);
+    if (response.status === 404) {
+        await idbDeleteShot(id);
+        shots = historyPager.remove(id);
+        if (shots.length === 0) {
+            chart.clearChart();
+            clearShotData();
+            showEmptyHistoryPlaceholders();
+            document.getElementById('history-prev-btn')?.classList.add('invisible');
+            document.getElementById('history-next-btn')?.classList.add('invisible');
+        } else {
+            await displayShot(Math.min(currentShotIndex, shots.length - 1));
+        }
+        return;
+    }
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const updated = await response.json();
+    const index = shots.findIndex(shot => shot.id === id);
+    if (index === -1) return;
+    shots = historyPager.update({ ...shots[index], ...updated });
+    await addShots([shots.find(shot => shot.id === id)]);
+    await displayShot(shots.findIndex(shot => shot.id === id));
 }
 
 // Ensure the current shot has its measurements loaded (the list endpoint
@@ -322,6 +393,14 @@ async function copyMd(md) {
     showToast(getTranslation(ok ? 'Summary copied to clipboard' : 'Could not copy summary'), 2400, ok ? 'success' : 'error');
 }
 
+// The Derek chat's way out of the webview: the whole conversation as markdown,
+// ready to paste into notes, a mail or Derek's own web page.
+async function copyConversation(text) {
+    if (!text) { showToast(getTranslation('Nothing to copy yet'), 2400, 'warning'); return; }
+    const ok = await copyText(text);
+    showToast(getTranslation(ok ? 'Conversation copied to clipboard' : 'Could not copy conversation'), 2400, ok ? 'success' : 'error');
+}
+
 // Long-press the shot history panel -> options menu. Reuses the shared
 // setupPressAndHold helper (same one profile cards use). The nav arrows stop
 // their own press from bubbling so navigation taps still work.
@@ -331,6 +410,44 @@ async function copyMd(md) {
 let dialInAvailable = false;
 function refreshDialInAvailability() {
     getPlugins().then(plugins => { dialInAvailable = !!findAssistedDialInPlugin(plugins); });
+}
+
+// Manual Visualizer upload is offered only to someone actually logged in: the
+// plugin owns the account, so its own settings are the test. Same cached shape
+// as the dial-in flag above, so the menu never waits on a request to open.
+let visualizerLoggedIn = false;
+function refreshVisualizerAvailability() {
+    getPluginSettings(VISUALIZER_PLUGIN_ID)
+        .then(settings => { visualizerLoggedIn = visualizerAccountConfigured(settings); })
+        .catch(() => { visualizerLoggedIn = false; }); // not installed, or unreachable
+}
+
+// The four text lines are the only tap target: DYE2's edit page opens from them, while
+// the block around them is layout and the arrows keep their own buttons.
+const SHOT_HISTORY_EDIT_TAP_SELECTOR =
+    '#history-date, #history-profile-name, #history-dose-in, #history-grind-size';
+
+// Tap a shot-history text line -> DYE2's edit-shot page for the shot on screen.
+// Gated on the DYE2 master switch, so with DYE2 off the panel keeps its long-press
+// menu only. DYE2 saves/deletes and comes back through the overlay's `return` URL;
+// the close hook then repaints this panel with whatever actually landed on the bridge.
+async function openShotInDye2() {
+    if (!isDye2Enabled()) return;
+    const shot = shots[currentShotIndex];
+    if (!shot?.id) {
+        showToast(getTranslation('No shot selected'), 2400, 'warning');
+        return;
+    }
+    // ponytail: imported here, not at module scope -- this is dyeStrip.js's only
+    // use on the main page, and the gate above already proved DYE2 is on.
+    const { openPluginOverlay } = await import('./dyeStrip.js');
+    openPluginOverlay('edit-shot', { shotId: shot.id }, (refresh, editedShotId) => {
+        if (!refresh) return;
+        // DYE2 hands back the shot it was showing on the way out: the arrows may have
+        // moved it off the one we opened, so refresh that row, not our opening shot.
+        refreshShotAfterDye2Edit(editedShotId || shot.id).catch(error =>
+            logger.warn('Could not repaint the shot after editing it in DYE2:', error));
+    });
 }
 
 function setupHistoryLongPress() {
@@ -347,18 +464,38 @@ function setupHistoryLongPress() {
     });
 
     refreshDialInAvailability();
-    setupPressAndHold(panel, () => {}, () => {
+    refreshVisualizerAvailability();
+    setupPressAndHold(panel, (event) => {
+        // Not while the machine is pulling espresso: DYE2 owns the whole screen,
+        // and closing it runs refreshShotAfterDye2Edit() -> displayShot(), which
+        // repaints the chart the running shot is drawing on. Same reason the
+        // arrows are locked (see updateHistoryNavLock).
+        if (navLocked) return;
+        // Only the four info lines open DYE2: an arrow tap bubbles here too, and the
+        // block's own padding is not a control. A long press is swallowed by
+        // setupPressAndHold.
+        if (!event?.target?.closest?.(SHOT_HISTORY_EDIT_TAP_SELECTOR)) return;
+        // Async now that dyeStrip.js loads on demand: catch, or a failed import
+        // surfaces as an unhandled rejection instead of a log line.
+        openShotInDye2().catch(error => logger.warn('Could not open the shot in DYE2:', error));
+    }, () => {
+        // Locked during espresso too: half the menu (DYE2 analysis, dial-in,
+        // Visualizer upload, plugin entries) acts on the shot on screen, and
+        // several of those paths repaint the chart mid-shot.
+        if (navLocked) return;
         // Dial-in entries only appear when the plugin is installed and loaded, so
         // nobody taps one just to get a "not installed" toast. Uses the cached
         // answer so the menu opens instantly; the refresh catches installs for next time.
         const hasDialIn = dialInAvailable;
+        const canUpload = visualizerLoggedIn;
         refreshDialInAvailability();
+        refreshVisualizerAvailability();
         const items = [
             {
                 label: getTranslation('Discuss with Derek'),
                 onSelect: async () => {
                     const md = await buildCurrentShotSummary();
-                    if (md != null) import('./derek-modal.js').then((m) => m.openDerekModal(md, { onOpenExternal: () => copyMd(md) }));
+                    if (md != null) import('./derek-modal.js').then((m) => m.openDerekModal(md, { onCopyText: copyConversation }));
                 },
             },
             {
@@ -368,18 +505,18 @@ function setupHistoryLongPress() {
                     if (md != null) copyMd(md);
                 },
             },
-            {
-                label: getTranslation('Select coffee batch for next shot'),
-                onSelect: () => openBeanSelectionModal({
-                    onSaved: () => showToast(getTranslation('Coffee for next shot updated'), 2400, 'success'),
-                }).catch(error => {
-                    logger.warn('Coffee batch selection failed:', error);
-                    showToast(getTranslation('Could not open coffee selection'), 4000, 'error');
-                }),
-            },
         ];
         if (hasDialIn) {
             items.push(
+                {
+                    label: getTranslation('Select coffee batch for next shot'),
+                    onSelect: () => openBeanSelectionModal({
+                        onSaved: () => showToast(getTranslation('Coffee for next shot updated'), 2400, 'success'),
+                    }).catch(error => {
+                        logger.warn('Coffee batch selection failed:', error);
+                        showToast(getTranslation('Could not open coffee selection'), 4000, 'error');
+                    }),
+                },
                 { label: getTranslation('Assisted dial-in analysis'), onSelect: () => openAssistedDialIn('analyze') },
                 { label: getTranslation('Assisted dial-in feedback'), onSelect: () => openAssistedDialIn('feedback') },
                 {
@@ -393,10 +530,9 @@ function setupHistoryLongPress() {
                 },
             );
         }
-        // Manual upload: the one on screen, whichever the user has paged to.
-        // Offered whenever Visualizer is switched on — with auto-upload off this
-        // is the only way up, and with it on it re-sends a shot that was missed.
-        if (isVisualizerEnabled()) {
+        // Only for an account that logged in: without one the upload can only fail
+        // with a credentials error, and the plugin's settings already say so.
+        if (canUpload) {
             items.push({
                 label: getTranslation('Upload to Visualizer'),
                 onSelect: () => uploadCurrentShotToVisualizer(),
@@ -409,21 +545,68 @@ function setupHistoryLongPress() {
     });
 }
 
-// Upload the shot on screen. The plugin fetches it from Decaid by id, so the
-// measurements do not have to be loaded here.
+// Upload the shot on screen now, whatever the plugin's auto-upload setting is.
+// The plugin fetches the shot from Decaid by id and pushes it on; its own error
+// message (too short, offline, credentials) is what the user sees.
 async function uploadCurrentShotToVisualizer() {
     const shot = shots[currentShotIndex];
-    if (!shot?.id) { showToast(getTranslation('No shot selected'), 2400, 'warning'); return; }
+    if (!shot?.id) return;
     showToast(getTranslation('Uploading to Visualizer…'), 2000, 'info');
     try {
-        await uploadShotToVisualizer(shot.id);
+        await callPluginEndpoint(VISUALIZER_PLUGIN_ID, 'upload', { shotId: shot.id });
         showToast(getTranslation('Shot uploaded to Visualizer'), 2400, 'success');
     } catch (error) {
         logger.warn('Manual Visualizer upload failed:', error);
-        // The plugin's own reason is the useful part: too short, bad credentials,
-        // offline. It arrives inside the api.js wrapper's message.
         showToast(`${getTranslation('Upload to Visualizer failed')}: ${error.message}`, 4000, 'error');
     }
+}
+
+// Live-shot navigation lock. While the machine is pulling espresso the panel
+// and the chart belong to the running shot, so the arrows are dimmed and inert
+// (matching how ui.js dims the sidebar groups for the running state). The flag
+// is the authority; the DOM is only its paint, so it survives displayShot()
+// re-toggling the arrows' own `invisible` class.
+let navLocked = false;
+
+function paintNavLock() {
+    for (const id of ['history-prev-btn', 'history-next-btn']) {
+        const btn = document.getElementById(id);
+        if (!btn) continue;
+        // `disabled` rather than pointer-events:none: the arrows' own
+        // stopPropagation listeners must keep running, or a touch over a
+        // locked arrow reaches the panel and opens its press-and-hold menu.
+        btn.disabled = navLocked;
+        btn.style.opacity = navLocked ? '0.25' : '';
+    }
+}
+
+export function endHistoryReview() {
+    if (!isReviewingHistory()) return false;
+    currentShotIndex = 0;
+    setPaintSuspended(false);
+    paintedShotId = null;
+    setHistoryLabel('NEWEST');
+    return true;
+}
+
+// Called from app.js on every machine-state change.
+export function updateHistoryNavLock(state) {
+    const next = historyNavBlocked(state);
+    if (next === navLocked) return;
+    navLocked = next;
+    // Locking while the user is pages deep would strand them on a past shot
+    // with no way back and no live chart (app.js holds the live feed while
+    // isReviewingHistory()), so end the review here.
+    //
+    // Synchronous, and it does not touch the chart: displayShot(0) would plot
+    // the past shot's curves, and because this runs from handleData() the live
+    // frames of the shot now starting append straight onto those arrays. Ending
+    // the review inline instead lets the same frame's shot-start branch clear
+    // the chart and draw the running shot from empty. The footer keeps the old
+    // shot's date and profile until the shot ends and refreshToNewestShot()
+    // repaints -- the same one-shot staleness a user who never reviewed sees.
+    if (navLocked) endHistoryReview();
+    paintNavLock();
 }
 
 export async function initHistory() {
@@ -440,6 +623,7 @@ export async function initHistory() {
     const nextBtn = document.getElementById('history-next-btn');
 
     prevBtn.onclick = async () => {
+        if (navLocked) return;
         if (currentShotIndex < shots.length - 1) {
             displayShot(currentShotIndex + 1);
         } else if (historyHasMore) {
@@ -451,10 +635,13 @@ export async function initHistory() {
     };
 
     nextBtn.onclick = () => {
+        if (navLocked) return;
         if (currentShotIndex > 0) {
             displayShot(currentShotIndex - 1);
         }
     };
+
+    paintNavLock();
 
     // Paint instantly from whatever's cached locally, then confirm/correct it
     // against the network in parallel with the slower list+IDB sync below --
@@ -484,23 +671,44 @@ export function getNewestShotId() {
     return shots[0]?.id ?? null;
 }
 
+// The user has stepped back off the newest shot, so the panel and the chart
+// belong to that shot, not to whatever the machine is doing. app.js stops
+// feeding the live chart while this is true; tapping -> back to NEWEST ends it.
+export function isReviewingHistory() {
+    return currentShotIndex > 0;
+}
+
 // After a shot finishes, REA can take several seconds to persist it to /shots.
 // A single fixed-delay reload races that write and silently shows the previous
 // shot. Poll the list until a shot newer than `knownNewestId` appears, then
 // render it. ponytail: fixed retry budget, not a server-side watcher.
-export async function refreshToNewestShot(knownNewestId, tries = 6, intervalMs = 2000, expectedId = null) {
+let newestRefreshInFlight = null;
+
+export function refreshToNewestShot(knownNewestId, tries = 6, intervalMs = 2000, expectedId = null) {
+    if (newestRefreshInFlight) return newestRefreshInFlight;
+    newestRefreshInFlight = runRefreshToNewestShot(knownNewestId, tries, intervalMs, expectedId)
+        .finally(() => { newestRefreshInFlight = null; });
+    return newestRefreshInFlight;
+}
+
+async function runRefreshToNewestShot(knownNewestId, tries, intervalMs, expectedId) {
     for (let i = 0; i < tries; i++) {
         await loadShotHistory();
         // Success = the expected shot id is on top (exact, from the shotState
         // feed) — or, without one, any id newer than what we knew before.
         if (shots.length > 0 && (expectedId ? shots[0].id === expectedId : shots[0].id !== knownNewestId)) {
-            await displayShot(0); // labels itself NEWEST
+            // The list is refreshed either way; the jump is not. A cleaning
+            // profile finishes five times, and each one would drag the user off
+            // the shot they are reading. applyHistoryPage keeps their selection
+            // by id, so the new shot just shifts it along.
+            if (!isReviewingHistory()) await displayShot(0); // labels itself NEWEST
             return;
         }
         await new Promise(r => setTimeout(r, intervalMs));
     }
     // Gave up waiting — show whatever is newest so the panel isn't left stale.
-    if (shots.length > 0) displayShot(0);
+    if (shots.length === 0) showEmptyHistoryPlaceholders();
+    if (shots.length > 0 && !isReviewingHistory()) displayShot(0);
 }
 
 export async function clearShotHistory() {
@@ -516,10 +724,7 @@ export async function clearShotHistory() {
         } else {
             chart.clearChart();
             clearShotData();
-            const dateEl = document.getElementById('history-date');
-            const profileNameEl = document.getElementById('history-profile-name');
-            if (dateEl) dateEl.textContent = '';
-            if (profileNameEl) profileNameEl.textContent = '';
+            showEmptyHistoryPlaceholders();
             document.getElementById('history-prev-btn')?.classList.add('invisible');
             document.getElementById('history-next-btn')?.classList.add('invisible');
         }
@@ -547,12 +752,13 @@ export async function updateShot(id, updates) {
 export async function deleteCurrentShot() {
     const shot = shots[currentShotIndex];
     const response = await fetch(`${API_BASE_URL}/shots/${shot.id}`, { method: 'DELETE' });
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    if (!response.ok && !isShotAlreadyDeleted(response.status)) throw new Error(`HTTP error! status: ${response.status}`);
     await idbDeleteShot(shot.id);
     shots = historyPager.remove(shot.id);
     if (shots.length === 0) {
         chart.clearChart();
         clearShotData();
+        showEmptyHistoryPlaceholders();
         document.getElementById('history-prev-btn')?.classList.add('invisible');
         document.getElementById('history-next-btn')?.classList.add('invisible');
     } else {

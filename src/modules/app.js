@@ -1,4 +1,4 @@
-import { connectWebSocket, getWorkflow, connectScaleWebSocket, ensureGatewayModeTracking, reconnectingWebSocket, getDevices, reconnectDevice, scanForDevices,connectShotSettingsWebSocket, getDe1AdvancedSettings, updateShotSettingsCache, getDe1Settings, MachineState, getShotIds, getShots, getValueFromStore, verifyVisualizerCredentials, connectScaleDevice, tareScale, connectTimeToReadyWebSocket, connectShotStateWebSocket, sendDeviceCommand, saveScaleDeviceId, getScaleDeviceId, getDeviceWebSocket, initDeviceWebSocketWithCallback, connectDeviceWebSocket, connectDisplayWebSocket, restoreBrightnessFromStorage, getMachineInfo, getMachineState, setMachineState, getReaSettings, getAppInfo, getCachedRefillKitSetting, getSensors, connectSensorSnapshotWebSocket, closeSensorSnapshotWebSocket } from './api.js';
+import { connectWebSocket, getWorkflow, connectScaleWebSocket, ensureGatewayModeTracking, reconnectingWebSocket, getDevices, reconnectDevice, scanForDevices,connectShotSettingsWebSocket, getDe1AdvancedSettings, updateShotSettingsCache, getDe1Settings, MachineState, getShots, connectScaleDevice, tareScale, connectTimeToReadyWebSocket, connectShotStateWebSocket, sendDeviceCommand, saveScaleDeviceId, getScaleDeviceId, getDeviceWebSocket, initDeviceWebSocketWithCallback, connectDeviceWebSocket, connectDisplayWebSocket, restoreBrightnessFromStorage, getMachineInfo, getMachineState, setMachineState, getReaSettings, getAppInfo, getCachedRefillKitSetting, getSensors, connectSensorSnapshotWebSocket, closeSensorSnapshotWebSocket, getGrinder } from './api.js';
 import { initScaling } from './scaling.js';
 import * as chart from './chart.js';
 import * as ui from './ui.js';
@@ -7,32 +7,38 @@ import { initI18n, getTranslation, fitTelemetry } from './i18n.js';
 import { settingsReady } from './settingsSync.js';
 import { initUnits, formatTemp, fromDisplayTemp } from './units.js';
 import * as history from './history.js';
+import { shouldReloadForLatestShot } from './history-pager.js';
 import * as shotData from './shotData.js';
 import * as profileManager from './profileManager.js';
 import * as api from './api.js';
-import { loadPage, initRouter, isSubPage, prefetchSettingsPage } from './router.js';
+import { loadPage, initRouter, isSubPage, prefetchSettingsPage, prefetchSubpages } from './router.js';
+import { writeSettingsLocation } from '../settings/settings-location.js';
 import { initWaterTankSocket } from './waterTank.js';
 import { logger } from './logger.js';
+import { endPerfShot, initPerfProbe, measure, startPerfShot } from './perf-probe.js';
+import { workflowGrindStep, workflowGrindRange } from './grinder-sync.js';
+import { isDye2Enabled } from './dye2-enabled.js';
 import { deriveScreensaverAction, isMachineAsleep, isScreensaverSuppressed } from './screensaver-policy.js';
-import { onMachineStateChange as ledStripOnMachineStateChange, forceStop as ledStripForceStop } from './led-strip-runner.js';
 import { createMachineLinkWatcher, machineFromDevicesPayload } from './machine-link.js';
 import { resolveProfileKeyByTitle } from './active-profile.js';
 import { setMachineModel, isBengleMachine, setRefillKitPresent, isRefillKitPresent } from './machine.js';
 import { classifyStopReason, canonicalStopReason, STOP_TARGET_WEIGHT, STOP_TARGET_VOLUME, STOP_PROFILE_ENDED } from './stop-reason.js';
-import { resolveMilkProbePresence, MILK_PROBE_ABSENT_AFTER_MS, selectMilkProbeSensorId } from './steam-mode.js';
+import { resolveMilkProbePresence, MILK_PROBE_ABSENT_AFTER_MS, selectMilkProbeSensorId, steamDurationResyncable } from './steam-mode.js';
 import { readTimeToReadyFrame, heatingSecondsLeft } from './heating-countdown.js';
-import { workflowTileValues, tilesToPaint } from './workflow-watch.js';
+import { workflowTileValues, tilesToPaint, profileChanged, WORKFLOW_EDIT_GUARD_MS } from './workflow-watch.js';
 import { isCupWarmerOn, readCupWarmerTarget, resolvePrewarm, getCupWarmerState, setCupWarmerState, patchCupWarmerState, invalidateCupWarmerState, onCupWarmerStateChange, CUP_WARMER_TARGET_KEY } from './cup-warmer.js';
-import { openDB, setSetting } from './idb.js';
+import { openDB, getSetting, setSetting } from './idb.js';
 import { openContextMenu } from './context-menu.js';
 import { shouldHandleMachineShortcut } from './machine-shortcut.js';
 import { initEcoSteam, noteEcoSteamActivity } from './eco-steam.js';
 import { loadStyle } from './vendor-loader.js';
 import { loadECharts } from './echarts-loader.js';
 import { initHelpLauncher } from './help-launcher.js';
-import { clearDyeWorkflowContext } from './dyeStrip.js';
-import { SLEEP_PROFILE_KEY, sleepProfileMark, shouldApplyWakeProfile } from './wake-profile.js';
-import { isVisualizerEnabled, isAutoUploadEnabled } from './visualizer.js';
+import { noteClearContext } from './workflow-note.js';
+import { sleepProfileMark, shouldApplyWakeProfile, createSleepMarkStore } from './wake-profile.js';
+import { legacyKeysToPurge, LEGACY_VISUALIZER_PURGED_FLAG } from './legacy-credentials-purge.js';
+import { shouldPromptReload } from './skin-version.js';
+import { APP_VERSION, SKIN_ID } from '../version.js';
 
 window.app = { api, ui, chart };
 
@@ -68,6 +74,54 @@ function initClockTicker() {
     }, msToNextMinute);
 }
 
+// ── "New version available" prompt (streamline-js #196) ──────────────────────
+// Decaid updates the skin's files on disk in the background, on its own timer.
+// The page running in the WebView keeps the OLD modules in memory, so a user who
+// never opens Settings stays on the old build indefinitely -- today the manual
+// "Check for skin updates" button is the only thing that ever reloads.
+//
+// Costs nothing on GitHub's quota: this only reads what Decaid already has on
+// disk (GET /webui/skins), never api.github.com. See skin-version.js.
+const SKIN_UPDATE_FIRST_CHECK_MS = 30_000;          // let boot traffic settle first
+const SKIN_UPDATE_POLL_MS = 12 * 60 * 60 * 1000;    // matches Decaid's own check interval
+const SKIN_UPDATE_TOAST_MS = 20_000;
+
+let skinUpdateWatchStarted = false;
+
+async function checkSkinUpdate() {
+    try {
+        const skins = await api.getAllSkins();
+        const disk = skins?.find(s => s.id === SKIN_ID)?.version;
+        if (!shouldPromptReload({ running: APP_VERSION, disk })) return;
+        logger.info(`Skin update on disk: running v${APP_VERSION}, disk v${disk}`);
+        ui.showToast(getTranslation('New version available — tap to reload'), SKIN_UPDATE_TOAST_MS, 'info', {
+            onClick: () => {
+                // Changed query string so the document is re-requested rather
+                // than served from the WebView's cache; keeps ?page= so a reload
+                // from a sub-page comes back to that sub-page.
+                // ponytail: module URLs are unversioned, so a stubborn cache can
+                // still hand back old modules -- same exposure as the existing
+                // Settings reload path. Hash the module URLs if that shows up.
+                const url = new URL(window.location.href);
+                url.searchParams.set('v', String(Date.now()));
+                window.location.replace(url.toString());
+            },
+        });
+    } catch (error) {
+        // Decaid unreachable or the skin not registered: ask again next tick.
+        logger.info(`Skin update check skipped: ${error.message || error}`);
+    }
+}
+
+function initSkinUpdateWatch() {
+    if (skinUpdateWatchStarted) return;
+    skinUpdateWatchStarted = true;
+    setTimeout(() => {
+        void checkSkinUpdate();
+        setInterval(() => { void checkSkinUpdate(); }, SKIN_UPDATE_POLL_MS);
+    }, SKIN_UPDATE_FIRST_CHECK_MS);
+}
+
 function initMobileValueInputs({ openModal, shouldUseNumpad }) {
     if (!shouldUseNumpad()) return;
     
@@ -97,7 +151,13 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
             if ((type === 'steam-duration' || type === 'steam-flow') && ui.isAutoSteamMode()) return;
             e.preventDefault();
             e.stopPropagation();
-            
+
+            // The steam tile's duration slot holds the milk auto-stop target
+            // while that stop is armed on a Bengle, so resolve the field here
+            // rather than at wire time -- otherwise a tap on "60°c" opened the
+            // STEAM DURATION pad and wrote seconds.
+            const field = type === 'steam-duration' ? ui.steamSlotField() : type;
+
             const currentValue = el.textContent.replace(/[^0-9.]/g, '') || '0';
             
             const mockInput = {
@@ -110,7 +170,8 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                         // unit (the numpad was seeded from el.textContent) — convert to
                         // Celsius before writing/displaying so the writer always gets Celsius.
                         const tempC = fromDisplayTemp(parseFloat(newVal));
-                        el.textContent = type === 'temperature' ? formatTemp(tempC, 0) :
+                        el.textContent = field === 'milk-stop' ? formatTemp(tempC, 0) :
+                                        type === 'temperature' ? formatTemp(tempC, 0) :
                                         type === 'grind' ? newVal :
                                         type === 'steam-duration' ? window.app.ui.formatSteamDuration((newVal === '' || isNaN(parseFloat(newVal))) ? 0 : parseFloat(newVal)) :
                                         type === 'steam-flow' ? newVal :
@@ -119,7 +180,9 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                                         type === 'hot-water-temp' ? formatTemp(tempC, 0) :
                                         `${newVal}g`;
 
-                        if (type === 'dose-in') {
+                        if (field === 'milk-stop') {
+                            window.app.ui.applyMilkStopTarget(tempC);
+                        } else if (type === 'dose-in') {
                             window.app.ui.updateDoseValue('in', newVal);
                             window.app.ui.updateDrinkRatio();
                         } else if (type === 'drink-out') {
@@ -129,20 +192,21 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                             window.app.ui.updateTemperatureValue(tempC);
                         } else if (type === 'steam-duration') {
                             // The numpad blanks a bare "0" to '' — treat empty/NaN as 0.
-                            // 0 = steam off. Duration alone does NOT touch the heater
-                            // (rest_v1.yml: SteamSettings.duration "does not control
-                            // steam-heater preheating") — api.setTargetSteamDuration
-                            // sends targetTemperature 0 alongside it, and restores the
-                            // remembered temperature when steam is re-armed.
+                            // 0 switches the steam heater off: api.setTargetSteamDuration
+                            // routes it to the heater switch, which also remembers the
+                            // duration to come back to.
                             const v = (newVal === '' || isNaN(parseFloat(newVal))) ? 0 : parseFloat(newVal);
                             window.app.ui.updateSteamDisplay({ targetSteamDuration: v });
-                            window.app.ui.pushSteamSetting('duration', window.app.api.setTargetSteamDuration(v));
+                            window.app.ui.pushSteamSetting('duration', window.app.api.setTargetSteamDuration(v, { rearm: true }));
                             // Per-profile save, same call the tile's +/- and presets make
                             // (ui.js) — this full-screen numpad entry point is mobile/tablet
                             // only (initMobileValueInputs guards on shouldUseNumpad()) and
                             // was missing it entirely, so a value typed here never stuck
                             // across a profile switch even though +/- worked fine.
-                            window.app?.saveContextToActiveProfile?.({ targetSteamDuration: v });
+                            // Off is a machine state, not a per-profile steam time: saving
+                            // 0 here would switch the heater off every time this profile
+                            // loaded.
+                            if (v > 0) window.app?.saveContextToActiveProfile?.({ targetSteamDuration: v });
                         } else if (type === 'steam-flow') {
                             // Numpad blanks a bare "0" to ''. Unlike duration, 0 steam
                             // flow has no meaning (steam is gated on duration, not flow),
@@ -169,7 +233,7 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
                         } else if (type === 'grind') {
                             window.app.ui.updateGrindValue(newVal);
                         }
-                        ui.syncPresetsAfterManualEntry(type);
+                        ui.syncPresetsAfterManualEntry(field);
                     }
                 }
             };
@@ -177,7 +241,8 @@ function initMobileValueInputs({ openModal, shouldUseNumpad }) {
             openModal(mockInput, {
                 previousValues: [],
                 onConfirm: (val) => {},
-                fieldType: type
+                fieldType: field,
+                ...(field === 'milk-stop' ? { config: ui.milkStopNumpadConfig() } : {}),
             });
         });
     });
@@ -211,6 +276,7 @@ let shotEndedAt = null;
 // A counter that only ever increases has no such collision.
 let shotGeneration = 0;
 const SHOT_RESTART_COOLDOWN_MS = 5000;
+let liveShotId = null;
 let dataTimeout;
 let de1DeviceId = null;
 let isDe1Connected = false;
@@ -234,6 +300,12 @@ let isScaleScanning = false;
 let isInWakeGracePeriod = false;
 let wakeGraceTimeout = null;
 const WAKE_RECONNECT_GRACE_MS = 4000;
+
+// Which profile the machine was left on when it went to sleep, so a wake can
+// tell a profile chosen during sleep from the one it was sleeping on. Survives
+// a reload (sessionStorage), and is read lazily so a private-mode WebView with
+// no sessionStorage at all cannot break module load.
+const sleepMarks = createSleepMarkStore(() => window.sessionStorage);
 
 // Whether the devices feed currently lists any scale-type entry, connected or
 // not (see handleDeviceWsData). This is what decides whether the not-connected
@@ -472,7 +544,18 @@ function handleDeviceWsData(data) {
 }
 
 function onScaleReconnect() {
-    logger.info('Scale WebSocket reconnected.');
+    // Decaid's {"status":"connected"} frame: the authoritative scale link signal,
+    // so a settled scale that sends no weight (Acaia at 0.0 g) still reads connected.
+    // ponytail: wiring only, no new test; scaleAutoRetryDecision stays covered in test/scale-connect.test.mjs.
+    logger.info('Scale connected (status frame).');
+    isScaleKnown = true;
+    if (!isScaleConnected) {
+        isScaleConnected = true;
+        window.onScaleConnectionChange?.(true);
+    }
+    clearScaleAutoRetry();
+    const info = document.getElementById('scale-info-container');
+    if (info) info.style.display = '';
 }
 
 function onScaleDisconnect() {
@@ -485,12 +568,17 @@ function onScaleDisconnect() {
     scaleAutoRetryTimer = setTimeout(attemptScaleAutoRetry, SCALE_AUTO_RETRY_INTERVAL_MS);
 }
 
+// Each value is the English CSV key as well as the English text, so these are
+// translated like every other string -- they used to reach the toast raw, which
+// left them in English in every language. adapterOff deliberately reuses the
+// 'Bluetooth is not on' row that already exists, translated, rather than adding
+// a near-duplicate of it.
 const deviceErrorCopy = {
     scaleConnectFailed: 'Scale did not connect. Wake it and retry.',
-    machineConnectFailed: 'DE1 did not connect. Retry scan.',
+    machineConnectFailed: 'Machine did not connect. Retry scan.',
     scaleDisconnected: 'Scale dropped. Retry scan.',
-    machineDisconnected: 'DE1 dropped. Retry scan.',
-    adapterOff: 'Bluetooth is off. Turn it on to continue.',
+    machineDisconnected: 'Connection dropped. Retry scan.',
+    adapterOff: 'Bluetooth is not on',
     bluetoothPermissionDenied: 'Grant Bluetooth permission to continue.',
     scanFailed: 'Scan could not start. Retry.',
 };
@@ -511,7 +599,10 @@ function handleDeviceConnectionError(err) {
     // machine is NOT connected the banner still shows, since BT may genuinely be
     // the missing piece.
     if ((err.kind === 'adapterOff' || err.kind === 'bluetoothPermissionDenied') && isDe1Connected) return;
-    const msg = deviceErrorCopy[err.kind] ?? `${err.message}${err.suggestion ? `\n${err.suggestion}` : ''}`;
+    // Only our own copy is translatable; the fallback is whatever the failure
+    // itself said, which has no key.
+    const copy = deviceErrorCopy[err.kind];
+    const msg = copy ? getTranslation(copy) : `${err.message}${err.suggestion ? `\n${err.suggestion}` : ''}`;
     ui.showToast(msg, 5000, 'error');
 }
 
@@ -521,6 +612,38 @@ function handleDeviceConnectionError(err) {
 function onMachineSnapshotSocketOpen() {
     logger.info('Machine snapshot WebSocket (re)opened. Awaiting a frame to confirm the machine.');
     isDe1Connected = false; // the first frame re-confirms it (handleData)
+    // Decaid replays only its latest frame on connect, so a shot pulled while
+    // we were away shows no espresso->idle edge. Check after that first frame
+    // has refreshed previousState.
+    setTimeout(checkForMissedShot, 1500);
+}
+
+// Picks up a shot that finished while this client was disconnected or
+// backgrounded. Id-only probe; guarded against concurrent runs and bursts of
+// focus/visibility/reopen events.
+const MISSED_SHOT_MIN_INTERVAL_MS = 5000;
+let lastMissedShotCheckAt = 0;
+let missedShotCheckInFlight = false;
+
+async function checkForMissedShot() {
+    if (missedShotCheckInFlight) return;
+    if (Date.now() - lastMissedShotCheckAt < MISSED_SHOT_MIN_INTERVAL_MS) return;
+    missedShotCheckInFlight = true;
+    lastMissedShotCheckAt = Date.now();
+    try {
+        const latest = await api.getLatestShotSummary();
+        // Read the live state after the await: it may have changed meanwhile.
+        const shotLive = previousState?.state === MachineState.ESPRESSO;
+        const knownId = history.getNewestShotId();
+        if (shouldReloadForLatestShot(latest?.id, knownId, shotLive)) {
+            logger.info('Newer shot on the server than the local history; refreshing.');
+            history.refreshToNewestShot(knownId, 3, 1500, latest.id);
+        }
+    } catch (e) {
+        logger.warn('Missed-shot check failed:', e);
+    } finally {
+        missedShotCheckInFlight = false;
+    }
 }
 
 // A silent snapshot socket is NOT proof of a disconnected machine — it is exactly
@@ -534,6 +657,11 @@ let devicesProbeInFlight = false;
 function markMachineDisconnected() {
     ui.updateMachineStatus({ status: "disconnected" });
     isDe1Connected = false;
+    // handleData() has stopped running, so the machine state is frozen at
+    // whatever arrived last. Left alone, a socket that falls silent mid-shot
+    // would strand the history arrows locked until frames resume. Release
+    // them; the per-frame call above re-locks if the shot is in fact still on.
+    history.updateHistoryNavLock(null);
 }
 
 async function probeMachineOnSilentSocket() {
@@ -573,47 +701,6 @@ function resetDataTimeout() {
 
 function isHeatingState(state, substate) {
     return state === MachineState.HEATING || (state === MachineState.IDLE && substate === 'preparingForShot');
-}
-
-async function pollForUploadConfirmation(shotId, timeout = 30000) {
-    // Only wait on a confirmation the plugin is actually going to produce: with
-    // auto-upload off, nothing uploads by itself and the poll would end in a
-    // "Upload to Visualizer Failed." toast after every shot.
-    if (!isAutoUploadEnabled()) {
-        logger.info('Visualizer auto-upload is off. Skipping upload confirmation for shot ID:', shotId);
-        return Promise.resolve(false); // Return resolved promise with false to indicate no upload happened
-    }
-    
-    logger.info(`Polling for upload confirmation for shot ID: ${shotId}`);
-    const pollInterval = 3000; // 3 seconds
-    const startTime = Date.now();
-
-    const checkUploadStatus = async (resolve, reject) => {
-        if (Date.now() - startTime > timeout) {
-            logger.warn(`Polling timed out for shot ${shotId}.`);
-            ui.showToast(`Upload to Visualizer Failed.`, 3000, 'error');
-            return reject(new Error('Polling timed out'));
-        }
-
-        try {
-            const lastUploadedShotId = await getValueFromStore('visualizer.reaplugin', 'lastUploadedShot');
-            logger.debug(`Polled lastUploadedShotId: ${lastUploadedShotId}`);
-
-            if (lastUploadedShotId === shotId) {
-                logger.info(`Successfully confirmed upload for shot ${shotId}.`);
-                ui.showToast('Shot uploaded successfully!', 3000, 'success');
-                return resolve(true);
-            } else {
-                setTimeout(() => checkUploadStatus(resolve, reject), pollInterval);
-            }
-        } catch (error) {
-            logger.error('Error during polling for upload confirmation:', error);
-            // Don't reject immediately, let it retry until timeout
-            setTimeout(() => checkUploadStatus(resolve, reject), pollInterval);
-        }
-    };
-
-    return new Promise(checkUploadStatus);
 }
 
 // Records the estimate only — handleData does the painting.
@@ -750,6 +837,30 @@ function currentMilkProbeReading() {
     return latestSensorTemp;
 }
 
+// The dashboard's pure-paint writers (GHC stop button, sidebar dimming, shot
+// strip, temperatures) skip frames while a sub-page covers it; the last frame
+// is replayed on return. Fed by the router's events, so no per-frame DOM read.
+let mainPageShown = document.getElementById('main-page')?.style.display !== 'none';
+let lastMainPageFrame = null;
+
+function paintMainPageStrip({ data, state, activeStep }) {
+    paintShotStrip({ sample: data, weight: isScaleConnected || isBengleMachine() ? latestScaleWeight : null, state,
+        // Same source as the chart's weight-flow trace (no local EMA fallback: absent shows '-').
+        weightFlow: isBengleMachine() ? (data.weightFlow ?? null) : latestScaleWeightFlow,
+        step: activeStep });
+}
+
+document.addEventListener('streamline:mainpagehidden', () => { mainPageShown = false; });
+document.addEventListener('streamline:mainpagevisible', () => {
+    mainPageShown = true;
+    if (!lastMainPageFrame) return;
+    const { data, state, isActiveState } = lastMainPageFrame;
+    ui.updateGhcStopButton(isActiveState);
+    ui.updateSidebarOverlay(state);
+    paintMainPageStrip(lastMainPageFrame);
+    ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature });
+});
+
 function handleData(data) {
     if (!data?.state) {
         logger.warn('Received WebSocket message with missing state:', data);
@@ -823,10 +934,13 @@ function handleData(data) {
     // Remember which profile the machine went to sleep with, so waking can tell a
     // profile chosen during sleep from the one it was left on.
     if (state === MachineState.SLEEPING && previousState.state !== MachineState.SLEEPING) {
-        getWorkflow().then(wf => {
-            const mark = sleepProfileMark(wf);
-            try { if (mark) sessionStorage.setItem(SLEEP_PROFILE_KEY, mark); } catch (e) { /* private mode */ }
-        }).catch(() => {});
+        // commit() publishes THIS sleep's answer. An unreadable workflow commits
+        // null, which clears the key: leaving the previous sleep's mark behind
+        // made the next wake compare against an unrelated profile and skip the
+        // wake profile. A commit that lands after the machine already woke is
+        // dropped by the store's generation token.
+        const commit = sleepMarks.beginSleep();
+        getWorkflow().then(wf => commit(sleepProfileMark(wf))).catch(() => commit(null));
     }
 
     // Reload data when machine wakes from sleep
@@ -835,15 +949,20 @@ function handleData(data) {
         logger.info('Machine woke from sleep. Reloading initial data.');
         loadInitialData();
 
+        // Consume the mark on every wake, feature on or off: one left behind
+        // would be compared against a later, unrelated sleep.
+        const mark = sleepMarks.takeOnWake();
         if (api.isWakeProfileEnabled()) {
             const wakeProfileId = api.getWakeProfileId();
             if (wakeProfileId) {
-                let mark = null;
-                try { mark = sessionStorage.getItem(SLEEP_PROFILE_KEY); sessionStorage.removeItem(SLEEP_PROFILE_KEY); } catch (e) { /* private mode */ }
-                getWorkflow().then(wf => {
+                // The fallback is scoped to the workflow READ (an unreadable live
+                // workflow still wakes onto the profile). Catching the whole chain
+                // instead meant a throw from loadProfileForWake ran it a second
+                // time -- another PUT /workflow and another steam-settings apply.
+                getWorkflow().catch(() => null).then(wf => {
                     if (shouldApplyWakeProfile(mark, wf)) return profileManager.loadProfileForWake(wakeProfileId);
                     logger.info('Wake profile skipped: a different profile was chosen while the machine slept.');
-                }).catch(() => profileManager.loadProfileForWake(wakeProfileId));
+                }).catch(error => logger.warn('Wake profile load failed:', error));
             }
         }
 
@@ -903,47 +1022,23 @@ function handleData(data) {
             // TIME is decided first.
             ui.showToast(fallbackStopToast(), 6000, 'info');
 
-            // Start polling for upload confirmation
-            setTimeout(async () => {
-                try {
-                    const shotIds = await getShotIds();
-                    if (shotIds && shotIds.length > 0) {
-                        const latestShotId = shotIds[shotIds.length - 1];
-                        pollForUploadConfirmation(latestShotId);
-                    } else {
-                        logger.warn('Could not get latest shot ID to confirm upload.');
-                    }
-                } catch (error) {
-                    logger.error('Failed to initiate upload polling:', error);
-                }
-            }, 2000); // Delay to ensure shot is saved on server
-
             // Capture the current newest id NOW (before the new shot lands) so
             // the refresh knows which record is the just-finished one to wait for.
             const previousNewestId = history.getNewestShotId();
             history.refreshToNewestShot(previousNewestId);
 
-            // The shot record has the workflow baked in by now, so the bean /
-            // barista / note identity in the live context has done its job —
-            // leave it there and it stamps every later shot too. DYE2 restates
-            // it per shot when the user means it (see dyeStrip.js).
-            clearDyeWorkflowContext();
+            // No context clear here: bean/barista identity persists across shots, and the
+            // per-shot note is cleared once, on the record-persisted frame below.
         })();
     }
 
-    // Bengle LED colour-sequence trigger (led-strip-runner.js): reacts to the
-    // SAME snapshot stream this function already owns rather than opening a
-    // second subscription -- only on an actual state change, not every frame
-    // at ~10 Hz. A no-op for non-Bengle machines (the Lighting settings page
-    // that configures triggerStates is Bengle-only, so there is nothing to
-    // resolve) and for a machine with no sequence mapped to this state. On
-    // ERROR (the machine link itself is down, per isDe1Connected above) stop
-    // unconditionally -- manual or trigger -- rather than resolve a trigger
-    // for a state nothing should ever be mapped to.
-    if (state !== previousState.state) {
-        if (state === MachineState.ERROR) ledStripForceStop();
-        else ledStripOnMachineStateChange(state);
-    }
+    // Shot-history arrows: inert while the machine is pulling espresso, so a
+    // step back cannot repaint the chart the running shot is drawing on. Every
+    // frame, not just the state-change edge: markMachineDisconnected() releases
+    // the lock while frames are absent, and a resumed shot arrives on frames
+    // that do not change `state`, so an edge-only call would leave it unlocked.
+    // The lock returns early when nothing changed, so this costs one comparison.
+    history.updateHistoryNavLock(state);
 
     previousState = data.state; // Update previous state
 
@@ -955,33 +1050,34 @@ function handleData(data) {
     // steam -- without this, a steam pulled from the GHC leaves the tablet
     // untouched and the boiler drops as if the machine had sat idle.
     if (isActiveState) noteEcoSteamActivity();
-    ui.updateGhcStopButton(isActiveState);
-    ui.updateSidebarOverlay(state);
+    // The running profile step, resolved once. The active record follows favourite
+    // switches; the chart's profile is only set on page load.
+    const activeStep = (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())
+        ?.steps?.[data.profileFrame] || null;
+    lastMainPageFrame = { data, state, isActiveState, activeStep };
+    if (mainPageShown) {
+        ui.updateGhcStopButton(isActiveState);
+        ui.updateSidebarOverlay(state);
+    }
 
     // Update UI elements
     // Pass detailed status information to match the enhanced updateMachineStatus function
-    ui.updateMachineStatus({
+    measure('status', () => ui.updateMachineStatus({
         status: statusString,
         state: state,
         substate: substate,
         stepName: formatStateString(substate), // Use formatted substate as step name
-        // The running profile step's own name. The active record follows favourite
-        // switches; the chart's profile is only set on page load.
-        profileStepName: (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())
-            ?.steps?.[data.profileFrame]?.name?.trim() || '',
+        // The running profile step's own name.
+        profileStepName: activeStep?.name?.trim() || '',
         timeValue: data.elapsedTime, // Use elapsed time from data if available
         isClickable: (substate === 'preinfusion' || substate === 'pouring'), // Make preinfusion/pouring steps clickable
         isHeating: isHeating, // Pass heating state to UI
         isHeatingFromTimeToReady: heatingSeconds > 0, // countdown available -> render the two-colour form
         steamTemperature: data.steamTemperature // Steam boiler temp — gates the steam "Heating" message
-    });
-    paintShotStrip({ sample: data, weight: isScaleConnected || isBengleMachine() ? latestScaleWeight : null, state,
-        // Same source as the chart's weight-flow trace (no local EMA fallback: absent shows '-').
-        weightFlow: isBengleMachine() ? (data.weightFlow ?? null) : latestScaleWeightFlow,
-        // The active record follows favourite switches; the chart's profile is only set on page load.
-        step: (profileManager.getActiveProfileRecord()?.profile ?? chart.getCurrentProfile())?.steps?.[data.profileFrame] || null });
-    ui.updateSleepButton(state);
-    ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature });
+    }));
+    if (mainPageShown) measure('strip', () => paintMainPageStrip(lastMainPageFrame));
+    measure('sleepButton', () => ui.updateSleepButton(state));
+    if (mainPageShown) measure('temps', () => ui.updateTemperatures({ mix: data.mixTemperature, group: data.groupTemperature, steam: data.steamTemperature }));
     updateMilkProbeFromSnapshot(currentMilkProbeReading());
 
     // Update Chart and Shot Data Table
@@ -999,12 +1095,13 @@ function handleData(data) {
                 // gateway mode so the fallback heuristics run at shot end.
                 seqTrackedShot = false;
                 seqStopToastShown = false;
+                if (history.endHistoryReview()) {
+                    logger.warn('Shot started while a past shot was under review; returning to the live chart.');
+                }
                 chart.clearChart();
                 shotData.clearShotData();
-                const historyLabelEl = document.getElementById('shot-history-label');
-                if (historyLabelEl) {
-                    historyLabelEl.textContent = getTranslation('NEWEST');
-                }
+                history.setHistoryLabel('NEWEST');
+                startPerfShot();
             }
             // Bengle: use the machine's true gravimetric flow (GFlow) straight from
             // the snapshot — no local delta+EMA smoothing. Non-Bengle keeps the
@@ -1012,29 +1109,32 @@ function handleData(data) {
             // `?? null` (not || 0): 0 is a real GFlow value; only an ABSENT field
             // may fall through to the chart's local EMA.
             const chartWeightFlow = isBengleMachine() ? (data.weightFlow ?? null) : latestScaleWeightFlow;
-            chart.updateChart(shotStartTime, data, latestScaleWeight, chartWeightFlow);
-            shotData.updateShotData(data, latestScaleWeight);
+            // The live chart renders from the same arrays plotHistoricalShot()
+            // empties, so feeding it while the user reviews a past shot repaints
+            // over that shot ~10x a second — the reported "prev does nothing".
+            // shotData keeps accumulating (totals and the stop toast stay true);
+            // only its paint is held, inside the module.
+            if (!history.isReviewingHistory()) {
+                measure('chart', () => chart.updateChart(shotStartTime, data, latestScaleWeight, chartWeightFlow));
+            }
+            measure('shotData', () => shotData.updateShotData(data, latestScaleWeight));
         }
     } else {
         if (shotStartTime) {
             shotEndedAt = Date.now();
-            // Clear before finalizing, and guard the finalize itself. A throw
-            // in there used to unwind past the reset and strand shotStartTime:
-            // every later idle frame retried the same failing finalize, and --
-            // because the next shot's reset hangs off `if (!shotStartTime)` --
-            // that shot appended to the previous shot's arrays instead of
-            // starting clean. Issue #73, where a 3s flush reported 72995s
-            // because it was still measuring from a shot 20 hours earlier.
-            // The catch also keeps the blame local: uncaught, this surfaced in
-            // the WebView console as "Error parsing WebSocket message", which
-            // points at the JSON parser rather than the chart.
-            shotStartTime = null;
-            try {
-                chart.finalizeLiveChart();
-            } catch (error) {
-                logger.error('finalizeLiveChart failed; shot ended without final labels:', error);
-            }
+            endLiveShot();
         }
+    }
+}
+
+function endLiveShot() {
+    shotStartTime = null;
+    liveShotId = null;
+    endPerfShot(shotData.getTotalTime());
+    try {
+        chart.finalizeLiveChart(!history.isReviewingHistory());
+    } catch (error) {
+        logger.error('finalizeLiveChart failed; shot ended without final labels:', error);
     }
 }
 
@@ -1075,9 +1175,8 @@ function handleScaleData(data) {
         }
     }
 
-    // Receiving any message means the websocket and BLE link are up.
-    // The timeout in api.js will trigger a disconnect if data stops flowing.
-
+    // Connected state comes from onScaleReconnect (status frame); a weight frame
+    // is only a belt-and-braces fallback here.
     if (currentWeight !== null && currentWeight !== undefined) {
         // We have a weight, so we are fully connected.
         if (!isScaleConnected) {
@@ -1139,8 +1238,8 @@ async function handleWeightClick() {
                     sendDeviceCommand({ command: 'scan', connect: true });
                 },
                 handleDeviceWsData,
-                () => {},
-                () => {},
+                null,
+                null,
                 handleDeviceConnectionError
             );
         } else {
@@ -1222,7 +1321,6 @@ let seqTrackedShot = false;   // sequencer emitted frames for the current shot
 let seqLastState = 'idle';
 let seqScaleLostWarned = false;
 let seqHistoryRefreshed = false;
-let seqUploadPolled = false;
 let seqStopToastShown = false; // a stop/abort/terminal toast fired for this shot
 
 // Reconstruct the stop toast from the finished shot. Used when no sequencer
@@ -1262,7 +1360,7 @@ function scheduleStopToastBackstop() {
     }, STOP_TOAST_BACKSTOP_MS);
 }
 
-// Refresh the history panel to the finished shot and confirm its upload.
+// Refresh the history panel to the finished shot.
 // Fired from stop/terminal AND finalize (first one wins): the feed replays
 // only its latest frame on reconnect, so a socket blip at shot end can
 // swallow the finalize frame — hanging the refresh on it alone left the
@@ -1271,10 +1369,6 @@ function seqRefreshHistory(shotId) {
     if (!seqHistoryRefreshed) {
         seqHistoryRefreshed = true;
         history.refreshToNewestShot(history.getNewestShotId(), 6, 2000, shotId ?? null);
-    }
-    if (shotId && !seqUploadPolled) {
-        seqUploadPolled = true;
-        pollForUploadConfirmation(shotId);
     }
 }
 
@@ -1370,6 +1464,15 @@ let seqWeightStop = null; // { shotId, gen } | null
 function handleShotStateEvent(frame) {
     if (!frame?.event) return;
 
+    if (shotStartTime && frame.shotId) {
+        if (liveShotId && frame.shotId !== liveShotId) {
+            logger.warn(`Decaid reports shot ${frame.shotId} while ${liveShotId} is still open; starting a new shot.`);
+            endLiveShot();
+        } else {
+            liveShotId = frame.shotId;
+        }
+    }
+
     const active = frame.state && frame.state !== 'idle' && frame.state !== 'finished';
     // Any active-shot or decision frame proves the sequencer is running this
     // shot, so handleData's fallback heuristics stand down.
@@ -1377,7 +1480,6 @@ function handleShotStateEvent(frame) {
     if (active && (seqLastState === 'idle' || seqLastState === 'finished')) {
         seqScaleLostWarned = false;
         seqHistoryRefreshed = false;
-        seqUploadPolled = false;
         seqStopToastShown = false;
     }
     seqLastState = frame.state ?? seqLastState;
@@ -1434,9 +1536,12 @@ function handleShotStateEvent(frame) {
                 }).catch(error => logger.warn('Could not fetch actualYield for finalized shot:', error));
             }
             seqRefreshHistory(frame.shotId);
-            // Record persisted — the context it captured is now history, so clear
-            // it rather than let it label the next shot (see dyeStrip.js).
-            clearDyeWorkflowContext();
+            // Record persisted — the note it captured is now history; everything else in
+            // the context persists on purpose (see workflow-note.js).
+            getWorkflow().then(live => {
+                const clear = noteClearContext(live?.context);
+                return clear && api.updateWorkflow({ context: clear }, 'shot.clearNote');
+            }).catch(error => logger.warn('Could not clear the shot note:', error));
             break;
         // advance frames: chart already tracks step changes via profileFrame
     }
@@ -1486,6 +1591,10 @@ function resyncDriftedShotSettings(data) {
         const value = data[field];
         if (value === undefined || value === lastSeenShotSettings[field]) continue;
         lastSeenShotSettings[field] = value;
+        // The heater's off state reports a steam duration of 0, which is not a
+        // time and must not be adopted over the one to come back to (issue #191)
+        // -- the same rule resyncSteamFromStore applies while steam is off.
+        if (field === 'targetSteamDuration' && !steamDurationResyncable(value)) continue;
         if (now - (lastResyncAt[field] ?? 0) < RESYNC_COOLDOWN_MS) continue;
         // Claimed before the await, not after: at frame rate a dozen more frames
         // arrive before this resolves, and every one of them would pass the
@@ -1519,6 +1628,7 @@ async function loadInitialData() {
 
         const workflow = await getWorkflow();
         logger.debug("Workflow data received:", workflow);
+        syncWorkflowGrindStep(workflow);
 
         const profile = workflow?.profile;
         const context = workflow?.context;
@@ -1670,15 +1780,23 @@ async function loadInitialData() {
         } else if (grinderData?.setting) {
             ui.updateGrindDisplay(grinderData);
         } else {
+            // A dash, not a 0: a recipe naming no grind clears the field (#189), and 0
+            // reads as a real dial position. Nothing is set, so say nothing is set.
             const grindEl = document.getElementById('grind-value');
-            if (grindEl) grindEl.textContent = '0';
+            if (grindEl) grindEl.textContent = '—';
         }
         logger.debug("Dose data received:", context || doseData);
         
         const doseInValue = context?.targetDoseWeight ?? doseData?.doseIn;
         const doseOutValue = context?.targetYield ?? doseData?.doseOut;
         
-        if (doseInValue !== undefined) ui.updateDoseInDisplay(doseInValue);
+        if (doseInValue != null) ui.updateDoseInDisplay(doseInValue);
+        else {
+            // Same as the grind tile above: the recipe named no dose and the machine has
+            // none either, so the tile shows nothing rather than the last recipe's number.
+            const doseInEl = document.getElementById('dose-in-value');
+            if (doseInEl) doseInEl.textContent = '—';
+        }
         if (doseOutValue !== undefined) ui.updateDrinkOut(doseOutValue);
         ui.updateDrinkRatio();
 
@@ -1750,9 +1868,13 @@ async function loadInitialData() {
         // Outside the guard: an absent steamSettings is not a reason to drop the
         // user's remembered targets. The milk stop keeps its own armed-only
         // guard — 0/absent there means the stop is off, a real choice.
-        api.resyncIfDrifted(api.STEAM_DURATION_LAST_VALUE_KEY, steamsettings?.duration, api.setTargetSteamDuration)
-            .then(v => { if (v != null) ui.updateSteamDisplay({ targetSteamDuration: v }); })
-            .catch(e => logger.warn('Steam duration resync failed:', e));
+        // Steam off reports duration 0: adopting it would lose the remembered
+        // time and the heater would come back at 1 s (issue #191).
+        if (steamDurationResyncable(steamsettings?.duration)) {
+            api.resyncIfDrifted(api.STEAM_DURATION_LAST_VALUE_KEY, steamsettings?.duration, api.setTargetSteamDuration)
+                .then(v => { if (v != null) ui.updateSteamDisplay({ targetSteamDuration: v }); })
+                .catch(e => logger.warn('Steam duration resync failed:', e));
+        }
         api.resyncIfDrifted(api.STEAM_FLOW_LAST_VALUE_KEY, steamsettings?.flow, api.setTargetSteamFlow)
             .then(v => { if (v != null) ui.updateSteamDisplay({ targetSteamFlow: v }); })
             .catch(e => logger.warn('Steam flow resync failed:', e));
@@ -1805,13 +1927,35 @@ async function loadInitialData() {
 // the title together.
 const WORKFLOW_POLL_MS = 20_000;
 const WORKFLOW_REFRESH_MIN_GAP_MS = 250; // focus + visibilitychange can both fire
-// A tile press is pushed after a one second debounce, so a press this recent has
-// not reached Decaid yet: painting now would reassign the very variable the
-// pending push is about to send.
-const WORKFLOW_EDIT_GUARD_MS = 1100;
+// A press inside WORKFLOW_EDIT_GUARD_MS (the tile debounce plus slack) has not
+// reached Decaid yet: painting now would reassign the variable the pending push
+// is about to send.
 const WORKFLOW_READBACK_FOLLOWUP_MS = 1500; // a plugin reacting to our write
 const tileEditPending = () => ui.msSinceTileInteraction() < WORKFLOW_EDIT_GUARD_MS || api.hasWorkflowWriteInFlight();
 let lastWorkflowTiles = null;
+
+// The workflow's grinder id last looked up; the poll calls this every tick, so only a change fetches.
+// ponytail: keyed on the id alone, so a grinder whose step is edited in Decaid while it stays
+// selected reaches the tile at the next restart. Watch the grinder itself if that matters.
+let lastWorkflowGrinderId;
+// Feed the Grind tile the small step of the grinder the workflow names. Never throws.
+async function syncWorkflowGrindStep(workflow) {
+    const id = workflow?.context?.grinderId || null;
+    if (id === lastWorkflowGrinderId) return;
+    lastWorkflowGrinderId = id;
+    if (!id) { ui.setWorkflowGrindStep(null); ui.setWorkflowGrindRange(null); return; }
+    try {
+        const grinder = await getGrinder(id);
+        ui.setWorkflowGrindStep(workflowGrindStep(grinder));
+        ui.setWorkflowGrindRange(workflowGrindRange(grinder));
+    } catch (e) {
+        // Drop the memo so the next poll retries: Decaid can 503 while it is still
+        // warming up, which is exactly when loadInitialData asks. Holding the id here
+        // would leave the tile on the default step for the rest of the session.
+        lastWorkflowGrinderId = undefined;
+        logger.warn('Grinder lookup for the grind step failed:', e);
+    }
+}
 let lastWorkflowRefreshAt = 0;
 let workflowWatchStarted = false;
 // Set by a plugin's workflow-refresh; cleared only once a read has succeeded, so
@@ -1873,9 +2017,14 @@ async function refreshWorkflowTiles() {
         workflow = await getWorkflow();
     } catch (e) {
         logger.warn('Workflow refresh failed:', e);
+        if (pendingForcedRefresh && !tileEditPending()) {
+            const confirmed = tilesToPaint(lastWorkflowTiles, lastWorkflowTiles, { force: true });
+            for (const key of Object.keys(confirmed)) WORKFLOW_TILE_PAINTERS[key]?.(confirmed[key]);
+        }
         return;
     }
     if (!workflow) return;
+    syncWorkflowGrindStep(workflow);
 
     // The user touched a tile while the read was in flight. Painting (or moving
     // the baseline) would overwrite that edit with the older server value, so
@@ -1892,8 +2041,8 @@ async function refreshWorkflowTiles() {
     if (keys.length === 0) return;
 
     logger.info(`Workflow changed elsewhere: ${keys.join(', ')}`);
-    if ('profileTitle' in changed) {
-        // A profile switch moves more than the tiles: the chart's step tracking,
+    if (profileChanged(changed)) {
+        // A profile switch or step edit moves more than the tiles: the chart's step tracking,
         // the active-profile record and the favourite highlight all follow it.
         // loadInitialData is the path that does all of that -- dyeStrip's
         // refreshAfterApply picks it for the same reason -- and it re-seeds the
@@ -1909,13 +2058,16 @@ function startWorkflowWatch() {
     workflowWatchStarted = true;
     setInterval(refreshWorkflowTiles, WORKFLOW_POLL_MS);
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') refreshWorkflowTiles();
+        if (document.visibilityState === 'visible') { refreshWorkflowTiles(); checkForMissedShot(); }
     });
-    window.addEventListener('focus', refreshWorkflowTiles);
+    window.addEventListener('focus', () => { refreshWorkflowTiles(); checkForMissedShot(); });
     // A plugin that changed the workflow and said so (plugin surfaces' `live`).
     // The skin wrote to Decaid: read it back now, and once more shortly after for a
     // plugin that answers the write by changing the workflow itself.
     api.onWorkflowUpdated(() => {
+        // The profile selector / editor write from a sub-page, where the refresh is
+        // skipped; remember it so the return to the dashboard re-reads.
+        if (isSubPage()) pendingForcedRefresh = true;
         refreshWorkflowTilesSoon();
         setTimeout(refreshWorkflowTilesSoon, WORKFLOW_READBACK_FOLLOWUP_MS);
     });
@@ -2159,42 +2311,32 @@ async function initializeDe1Connection() {
     }
 }
 
-async function initVisualizer() {
-    if (!isVisualizerEnabled()) {
-        logger.info('Visualizer is disabled. Skipping initialization.');
-        return;
-    }
-    
-    logger.info('Initializing Visualizer connection...');
-    const username = localStorage.getItem('visualizerUsername');
-    const encodedPassword = localStorage.getItem('visualizerPassword');
+// A profile switch asked for during a shot is held rather than written into the
+// frames the machine is running (profile-send-gate.js). Send it when the shot
+// ends. Bound once: initMainPageOnce is the only caller.
+let pendingProfileSendBound = false;
+function bindPendingProfileSendFlush() {
+    if (pendingProfileSendBound) return;
+    pendingProfileSendBound = true;
+    document.addEventListener('streamline:espresso-end', () => {
+        import('./profileManager.js')
+            .then(m => m.flushPendingProfileSend())
+            .catch(err => logger.warn('Could not send the held profile:', err));
+    });
+}
 
-    if (username && encodedPassword) {
-        try {
-            const password = atob(encodedPassword); // Decode password
-            const { valid: isValid } = await verifyVisualizerCredentials(username, password);
-            if (isValid) {
-                logger.info('Saved Visualizer credentials are valid.');
-
-            } else {
-                logger.warn('Saved Visualizer credentials failed to validate. Please check your settings.');
-                // Clearing the invalid credentials
-                localStorage.removeItem('visualizerUsername');
-                localStorage.removeItem('visualizerPassword');
-            }
-        } catch (e) {
-            logger.error('Failed to decode or verify saved credentials', e);
-            // Clear potentially corrupted credentials
-            localStorage.removeItem('visualizerUsername');
-            localStorage.removeItem('visualizerPassword');
-        }
-    } else {
-        logger.info('No saved Visualizer credentials found.');
-    }
+// One-time removal of the Visualizer login the skin used to keep in
+// localStorage. Guarded by an IndexedDB flag so it runs once per device; the
+// flag is set only after the removals, so a failure retries on the next boot.
+async function purgeLegacyVisualizerCredentials() {
+    const keys = legacyKeysToPurge(await getSetting(LEGACY_VISUALIZER_PURGED_FLAG));
+    if (!keys.length) return;
+    for (const key of keys) localStorage.removeItem(key);
+    await setSetting(LEGACY_VISUALIZER_PURGED_FLAG, true);
 }
 
 // Resolves as soon as history.initHistory() has populated the shots array --
-// long before the rest of initMainPageOnce() (DE1 connect, visualizer, six+
+// long before the rest of initMainPageOnce() (DE1 connect, six+
 // websockets) finishes. The router awaits this alone to repaint the chart
 // ASAP on return from a sub-page, instead of blocking on unrelated work.
 let resolveHistoryReady;
@@ -2212,6 +2354,9 @@ async function initMainPageOnce() {
         window.app.saveGrindToActiveProfile = (val) => profileManager.saveGrindToActiveProfile(val);
         window.app.saveContextToActiveProfile = (fields) => profileManager.saveContextToActiveProfile(fields);
         window.app.getActiveProfileRecord = () => profileManager.getActiveProfileRecord();
+        // Last rung of the steam re-arm chain. Registered rather than imported:
+        // profileManager imports api.js, so the dependency only runs one way.
+        api.setSteamProfileFallback(() => profileManager.activeProfileSteamFallback());
         const workflow = await loadInitialData();
         await initializeDe1Connection();
         connectWebSocket(handleData, onMachineSnapshotSocketOpen);
@@ -2232,7 +2377,8 @@ async function initMainPageOnce() {
         resetDataTimeout();
         initMilkProbeSensorPolling();
         connectShotSettingsWebSocket(handleShotSettingsData);
-        void initVisualizer().catch(error => logger.error('Visualizer initialization failed:', error));
+        void purgeLegacyVisualizerCredentials().catch(() => {});
+        bindPendingProfileSendFlush();
         // Plugin-declared dashboard surfaces; a no-op when no plugin answers `skin`.
         import('./plugin-surfaces-ui.js').then(m => m.initPluginSurfaces())
             .catch(error => logger.warn('Plugin surfaces failed to start:', error));
@@ -2313,8 +2459,8 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// Tap the main chart to open the full-screen live charts;
-// Back button / Escape closes it. Bound once at startup.
+// Tap the main chart to zoom it to the full-screen layout; tap the zoomed chart
+// again (or press Escape) to leave. Bound once at startup.
 function wireExpandedChart() {
     const open = () => { try { chart.openExpandedChart(); } catch (e) { console.error('openExpandedChart', e); } };
     const close = () => { try { chart.closeExpandedChart(); } catch (e) { console.error('closeExpandedChart', e); } };
@@ -2322,8 +2468,8 @@ function wireExpandedChart() {
     const chartEl = document.getElementById('plotly-chart');
     if (chartEl) chartEl.addEventListener('click', open);
 
-    const backBtn = document.getElementById('expanded-chart-back');
-    if (backBtn) backBtn.addEventListener('click', close);
+    const zoomedEl = document.getElementById('expanded-chart');
+    if (zoomedEl) zoomedEl.addEventListener('click', close);
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && chart.isExpandedChartOpen && chart.isExpandedChartOpen()) close();
@@ -2354,6 +2500,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         // them — WebView storage does not survive an app update.
         await settingsReady;
 
+        // After settingsReady, so a 'theme' restored from KV wins; not awaited,
+        // because a slow or absent Decaid must not hold up boot. Repaints only
+        // when Decaid's themeMode disagrees with what index.html painted.
+        ui.followDecaidTheme().catch(error => logger.warn('Decaid theme follow failed:', error));
+
         initScaling();
         if (!isSubPage()) requestAnimationFrame(() => loadECharts().catch(error => logger.error('ECharts load failed:', error)));
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -2362,6 +2513,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             ['numpad-modal.css', 'time-picker-modal.css']
                 .forEach(file => loadStyle(`src/css/${file}`).catch(() => {}));
             initHelpLauncher();
+            // Boot, not the main-page mount: the skin can land on any route, and
+            // the toggle for this lives in Settings -- a listener that waited for
+            // the dashboard would leave the setting silent on the page that
+            // turns it on. One document-level listener that reads the setting
+            // per tap, so it costs nothing while off and needs no reload.
+            import('./touch-sound.js').then(m => m.initTouchSound())
+                .catch(error => logger.warn('Touch sound failed to start:', error));
             Promise.all([
                 import('./numpad-modal.js'),
                 import('./time-picker-modal.js')
@@ -2371,6 +2529,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 initMobileValueInputs(numpad);
             }).catch(error => logger.warn('Deferred input controls failed to load:', error));
         }));
+        // Before the first frame can arrive, so a profiling session covers the
+        // whole shot rather than starting mid-pour.
+        initPerfProbe();
         const i18nReady = initI18n();
         const unitsReady = initUnits();
         chart.initChart();
@@ -2393,6 +2554,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Pre-warm settings cache so the settings page opens without redirecting on slow Rea responses
         prefetchSettingsToIDB(initialWorkflow);
 
+        // Compile the three big subpage modules while the tablet is idle, so the
+        // first tap on Settings / Profiles / Edit doesn't pay for it. Boot is
+        // finished by here; the call schedules itself on idle from there.
+        prefetchSubpages();
+
+        // Boot, not the main-page mount: a tablet left on a sub-page must still
+        // learn that Decaid downloaded a newer build.
+        initSkinUpdateWatch();
+
         logger.info('App initialization finished successfully.');
 
         // Check if user is on desktop (Windows or macOS) to determine if we should show fullscreen prompt
@@ -2401,33 +2571,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                       (navigator.userAgent.includes('Mac') && 'ontouchend' in document);
         const isStandalone = window.navigator.standalone === true;
 
-        // Detect in-app webview: no Chrome/Safari/Firefox branding despite being on mobile,
-        // or explicit webview signals (wv flag on Android, no window.safari on iOS)
-        const ua = navigator.userAgent;
-        const isAndroidWebView = /Android/.test(ua) && /wv/.test(ua);
-        const isIOSWebView = isIOS && !isStandalone && !/Safari\//.test(ua);
-        const isDecentWebView = ua.includes('Decent');
-        // Canonical signal: the reaprime/Decent host injects window.__DECENT_HOST__
-        // into the tablet webview. It's the most reliable tablet/kiosk indicator
-        // (the UA-sniffing above misses hosts that don't brand their UA), and it's
-        // absent in a normal desktop browser — so this only ever hides the
-        // fullscreen control on-device, never for a desktop user. Ceiling: a host
-        // that neither brands its UA nor injects the global is still treated as a
-        // browser (acceptable — the button is harmless there).
-        const isDecentHost = !!window.__DECENT_HOST__;
-        const isWebView = isAndroidWebView || isIOSWebView || isDecentWebView || isDecentHost;
-
-        if (isWebView) {
-            // A root class, not an inline style on the one button that exists right
-            // now: index.html, profile_selector.html and settings.html each carry
-            // their own #fullscreen-toggle-btn, and the router injects the sub-page
-            // ones long after this runs -- so hiding by id here only ever covered
-            // the main page. CSS on <html> covers every page, present and future.
-            // The host OS owns fullscreen in a webview, so the button is never
-            // useful there. See main.css; help-overlay.css deliberately overrides
-            // this on the main page to keep the slot laid out for the help button.
-            document.documentElement.classList.add('is-webview');
-        }
+        // Webview detection lives in the inline <script> in index.html (it must run
+        // before first paint); it leaves the result as a root class.
+        const isWebView = document.documentElement.classList.contains('is-webview');
 
         // Function to determine if we're in fullscreen mode
         // This accounts for both browser fullscreen API and web view fullscreen scenarios
@@ -2535,7 +2681,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             profileNameEl.style.cursor = 'pointer';
             ui.setupPressAndHold(
                 profileNameEl,
-                () => loadPage('src/profiles/profile_selector.html'),
+                () => {
+                    sessionStorage.removeItem('pendingAssignmentIndex');
+                    loadPage('src/profiles/profile_selector.html');
+                },
                 (el) => {
                     const activeRecord = resolveHeaderProfileRecord(el);
                     const profileTitle = activeRecord
@@ -2544,7 +2693,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const items = [
                         {
                             label: getTranslation('Browse Profiles'),
-                            onSelect: () => loadPage('src/profiles/profile_selector.html'),
+                            onSelect: () => {
+                                sessionStorage.removeItem('pendingAssignmentIndex');
+                                loadPage('src/profiles/profile_selector.html');
+                            },
                         },
                         {
                             label: profileTitle ? `${getTranslation('Edit')} "${profileTitle}"` : getTranslation('Edit Profile'),
@@ -2578,6 +2730,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const profileSelectBtn = document.getElementById('profile-select-btn');
         if (profileSelectBtn) {
             profileSelectBtn.addEventListener('click', () => {
+                sessionStorage.removeItem('pendingAssignmentIndex');
                 loadPage('src/profiles/profile_selector.html');
             });
         }
@@ -2606,6 +2759,71 @@ document.addEventListener('DOMContentLoaded', async () => {
             }, { once: true });
             settingsBtn.addEventListener('click', () => {
                 loadPage('src/settings/settings.html');
+            });
+        }
+
+        // A tile's own label deep-links to that tile's settings category -- Steam
+        // to the page carrying the steam heater toggle, Hot Water and Flush to
+        // their own. The settings shell restores the saved location on mount, so
+        // writing it before loadPage is the whole mechanism.
+        for (const [labelId, category] of [['steam-label', 'steam'], ['hotwater-label', 'hotwater'], ['flush-label', 'flush']]) {
+            const label = document.getElementById(labelId);
+            if (!label) continue;
+            const open = async () => {
+                // Flush's label is also a plugin's way back to the built-in flush while a
+                // plugin flush mode is on -- the only way back, since that row carries no
+                // built-in option (plugin-surfaces-ui wires its own click on it then). Let
+                // the plugin have that tap; the deep-link is for the ordinary row.
+                if (labelId === 'flush-label') {
+                    const { pluginModeOn } = await import('./plugin-surfaces-ui.js');
+                    if (pluginModeOn('flush')) return;
+                }
+                writeSettingsLocation('quickadjustments', category);
+                loadPage('src/settings/settings.html');
+            };
+            label.addEventListener('pointerdown', () => {
+                prefetchSettingsPage().catch(() => {});
+            }, { once: true });
+            label.addEventListener('click', open);
+            label.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                open();
+            });
+        }
+
+        // Grind leads to the grinder, and which grinder that is depends on who is
+        // keeping the record. DYE2 on: its own pages (dyeStrip picks between the
+        // armed item's editor and the grinder picker). DYE2 off: the only grinder
+        // the skin knows is the connected device, on the Connections page -- which
+        // sets no grinder on the workflow, but is the only grinder screen there is.
+        // Read at tap time: the flag is synchronized and hydrates after boot, so a
+        // decision made at wire time would be the default on a fresh tablet.
+        const grindLabel = document.getElementById('grind-label');
+        if (grindLabel) {
+            const openGrinder = async () => {
+                try {
+                    if (!isDye2Enabled()) {
+                        writeSettingsLocation('bluetooth', 'ble_grinder');
+                        loadPage('src/settings/settings.html');
+                        return;
+                    }
+                    // Imported here, not at the top: dyeStrip.js is ~90K and index.html
+                    // already loads it, so this resolves from the module cache.
+                    const { openGrinderSurface } = await import('./dyeStrip.js');
+                    await openGrinderSurface();
+                } catch (error) {
+                    logger.error('Grind label: could not open the grinder page', error);
+                }
+            };
+            grindLabel.addEventListener('pointerdown', () => {
+                prefetchSettingsPage().catch(() => {});
+            }, { once: true });
+            grindLabel.addEventListener('click', openGrinder);
+            grindLabel.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                openGrinder();
             });
         }
     } catch (error) {

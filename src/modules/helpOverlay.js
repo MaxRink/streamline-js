@@ -28,6 +28,7 @@ const PAGES = {
         { sel: '#profile-edit-btn', title: 'Edit profile', tip: 'Tap to open the current profile in the editor.' },
         { sel: '#dose-label', title: 'Adjust a value', tip: 'Tap +/- to step. Tap the number to type an exact value.' },
         { sel: '#temp-presets', title: 'Presets', tip: 'Tap to apply. Long-press to edit, save the current value, or reset.' },
+        { sel: '#steam-label', title: 'Steam settings', tip: 'Tap to open the steam settings page.' },
         { sel: '#steam-mode-toggle', title: 'Mode switch', tip: 'Tap to switch between Time and Flow, Hot water Temperature and Volume.' },
         { sel: '#hot-water-mode-toggle', ringOnly: true },
         // Explains this release's rename/behavior change rather than a gesture —
@@ -39,7 +40,7 @@ const PAGES = {
         // Injected into the machine-status line by ui.js only while a shot step
         // is running; skipped on every other screen state.
         { sel: '#skip-step-indicator', title: 'Skip step', tip: 'Tap to end the current step and move straight to the next one.' },
-        { sel: '#shot-history-panel', title: 'Shot history', tip: 'Use the arrows to browse past shots.' },
+        { sel: '#shot-history-panel', title: 'Shot history', tip: 'Use the arrows to browse past shots. With DYE2 on, tap the shot details to edit them.' },
         { sel: '#sleep-button', title: 'Sleep', tip: 'Put the machine to sleep.' },
         { sel: '#settings-btn', title: 'Settings', tip: 'Open the settings page.' },
         { sel: '#fullscreen-toggle-btn', title: 'Fullscreen', tip: 'Toggle fullscreen mode.' },
@@ -302,6 +303,7 @@ export function initializeHelpOverlay(button = null) {
         btn,
         () => (overlay ? close() : open()),
         () => setHidden(true),
+        { touchAction: 'none' }, // a drag on the button must not pan the page (#177)
     );
     if (!btn.isConnected) document.body.appendChild(btn);
 

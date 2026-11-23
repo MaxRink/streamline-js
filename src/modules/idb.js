@@ -438,6 +438,53 @@ export function deleteShot(id) {
     });
 }
 
+// Removes cached shots Decaid no longer has: everything strictly between the
+// `newer` and `older` timestamp bounds (null = open) whose id is not in
+// `keepIds`, from both stores in ONE transaction, via key cursors so full shots
+// (measurements) are never read. Resolves with the removed timestamps per store.
+export function pruneShotsInRange({ newer, older, keepIds }) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            return reject('DB not open');
+        }
+        if (newer !== null && older !== null && !(older < newer)) {
+            return resolve({ summaries: [], cached: [] });
+        }
+        const keep = new Set(keepIds);
+        const bounds = older !== null && newer !== null ? IDBKeyRange.bound(older, newer, true, true)
+            : older !== null ? IDBKeyRange.lowerBound(older, true)
+            : newer !== null ? IDBKeyRange.upperBound(newer, true)
+            : null;
+        const removed = { summaries: [], cached: [] };
+        const transaction = db.transaction([SHOTS_STORE_NAME, SHOT_SUMMARIES_STORE_NAME], 'readwrite');
+        const sweep = (storeName, bucket) => {
+            const store = transaction.objectStore(storeName);
+            const request = store.index('by_timestamp').openKeyCursor(bounds);
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (!cursor) return;
+                if (!keep.has(cursor.primaryKey)) {
+                    store.delete(cursor.primaryKey);
+                    bucket.push(new Date(cursor.key).getTime());
+                }
+                cursor.continue();
+            };
+        };
+        sweep(SHOT_SUMMARIES_STORE_NAME, removed.summaries);
+        sweep(SHOTS_STORE_NAME, removed.cached);
+
+        transaction.oncomplete = () => {
+            logger.info('Pruned shots missing from Decaid:', removed.summaries.length);
+            resolve(removed);
+        };
+
+        transaction.onabort = (event) => {
+            logger.error('Error pruning shots in IndexedDB:', event.target.error);
+            reject('Error pruning shots.');
+        };
+    });
+}
+
 export function clearShots() {
     return new Promise((resolve, reject) => {
         if (!db) {

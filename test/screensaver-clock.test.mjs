@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { SAVER_BRIGHTNESS_DEFAULT } from '../src/modules/saver-brightness.js';
 import {
     SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS,
     resolveScreensaverClockFormat, resolveScreensaverClockPosition,
@@ -136,7 +137,7 @@ test('both saver modes sync the clock and hiding stops it', () => {
     assert.match(source, /export function hideScreensaver\(\) \{[\s\S]*?screensaverActive = false;\s+_syncScreensaverClock\(\);/);
 });
 
-test('settings render persisted choices, six positions, and safe defaults', () => {
+function renderSaverSettings(preferences = {}, saver = {}) {
     const source = readFileSync(new URL('../src/settings/settings.js', import.meta.url), 'utf8');
     const match = source.match(/export function renderScreenSaverSettings\(\) \{[\s\S]*?\r?\n\}/);
     assert.ok(match);
@@ -144,20 +145,28 @@ test('settings render persisted choices, six positions, and safe defaults', () =
         'localStorage', 'SCREENSAVER_CLOCK_FORMATS', 'SCREENSAVER_CLOCK_POSITIONS',
         'resolveScreensaverClockFormat', 'resolveScreensaverClockPosition',
         'SCREENSAVER_DATE_FORMATS', 'resolveScreensaverDateFormat',
-        `const screensaverImagesCache = [], isBlackScreenSaver = () => false, displayState = () => ({});
+        'saver', 'SAVER_BRIGHTNESS_DEFAULT', 'getTranslation',
+        `const screensaverImagesCache = [], isBlackScreenSaver = () => saver.black === true, displayState = () => ({});
+         const isCustomSaverBrightness = () => saver.custom === true;
+         const getSaverBrightness = () => saver.level ?? SAVER_BRIGHTNESS_DEFAULT;
          ${match[0].replace('export ', '')}
          return renderScreenSaverSettings();`,
     );
+    return render(
+        { getItem: key => preferences[key] ?? null },
+        SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS,
+        resolveScreensaverClockFormat, resolveScreensaverClockPosition,
+        SCREENSAVER_DATE_FORMATS, resolveScreensaverDateFormat,
+        saver, SAVER_BRIGHTNESS_DEFAULT, key => key,
+    );
+}
+
+test('settings render persisted choices, six positions, and safe defaults', () => {
     for (const preferences of [
         { screensaverClockFormat: '24', screensaverClockPosition: 'top-right' },
         { screensaverClockFormat: '<script>', screensaverClockPosition: '<script>' },
     ]) {
-        const html = render(
-            { getItem: key => preferences[key] ?? null },
-            SCREENSAVER_CLOCK_FORMATS, SCREENSAVER_CLOCK_POSITIONS,
-            resolveScreensaverClockFormat, resolveScreensaverClockPosition,
-            SCREENSAVER_DATE_FORMATS, resolveScreensaverDateFormat,
-        );
+        const html = renderSaverSettings(preferences);
         const format = html.match(/<select id="screensaver-clock-format"[\s\S]*?<\/select>/)[0];
         const position = html.match(/<select id="screensaver-clock-position"[\s\S]*?<\/select>/)[0];
         assert.equal((format.match(/<option /g) || []).length, 3);
@@ -169,6 +178,74 @@ test('settings render persisted choices, six positions, and safe defaults', () =
         assert.match(html, /label for="screensaver-clock-position"/);
         assert.equal((html.match(/<select id="screensaver-date-format"[\s\S]*?<\/select>/)[0].match(/<option /g) || []).length, 5);
     }
+});
+
+test('saver style defaults to Images and Black keeps clock/date controls only', () => {
+    const images = renderSaverSettings();
+    assert.match(images, /aria-pressed="true"\s+onclick="window.setBlackScreenSaver\(false\)"/);
+    assert.match(images, /onclick="window.setBlackScreenSaver\(true\)"/);
+    assert.ok(images.indexOf('screensaver-style-label') < images.indexOf('screensaver-file-input'));
+    assert.match(images, /id="screensaver-file-input"/);
+    assert.match(images, /id="saver-brightness-custom"/);
+    assert.match(images, /id="saver-brightness-slider"/);
+    assert.doesNotMatch(images, /id="brightness-(slider|number)"/);
+
+    // The enable toggle writes blackScreenSaver too, so leaving it on the Black
+    // panel gives two controls for the style: it renders off while a black saver
+    // is showing, and turning it on switches back to Images.
+    assert.match(images, /window\.setScreensaverEnabled/);
+
+    const black = renderSaverSettings({}, { black: true });
+    assert.match(black, /aria-pressed="true"\s+onclick="window.setBlackScreenSaver\(true\)"/);
+    assert.doesNotMatch(black, /window\.setScreensaverEnabled/);
+    assert.doesNotMatch(black, /id="(?:screensaver-file-input|screensaver-cycle-seconds|saver-brightness-custom|saver-brightness-slider)"/);
+    assert.doesNotMatch(black, /Choose Images|No custom images/);
+    for (const id of ['screensaver-show-clock', 'screensaver-clock-format', 'screensaver-date-format', 'screensaver-clock-position']) {
+        assert.ok(black.includes(`id="${id}"`));
+    }
+});
+
+test('custom saver brightness preserves zero and opt-out shows the effective default', () => {
+    const custom = renderSaverSettings({}, { custom: true, level: 0 });
+    const customSlider = custom.match(/<input type="range"[^>]*>/)[0];
+    assert.match(customSlider, /id="saver-brightness-slider" min="0" max="100" step="1" value="0"/);
+    assert.doesNotMatch(customSlider, /disabled/);
+    assert.match(custom, /id="saver-brightness-value"[^>]*>0%/);
+    assert.match(custom, /id="saver-brightness-custom" checked/);
+    assert.match(custom, /onchange="window.setCustomSaverBrightness\(this.checked\)"/);
+    assert.match(customSlider, /oninput="window.setSaverBrightnessLevel\(this.value\)"/);
+
+    const automatic = renderSaverSettings({}, { custom: false, level: 73 });
+    const automaticSlider = automatic.match(/<input type="range"[^>]*>/)[0];
+    assert.match(automaticSlider, new RegExp(`value="${SAVER_BRIGHTNESS_DEFAULT}"`));
+    assert.match(automaticSlider, /disabled/);
+    assert.match(automatic, new RegExp(`id="saver-brightness-value"[^>]*>${SAVER_BRIGHTNESS_DEFAULT}%`));
+});
+
+test('the clock format, date and position rows follow the show-clock toggle', () => {
+    const off = renderSaverSettings({ screensaverShowClock: 'false' });
+    assert.ok(off.includes('id="screensaver-show-clock"'));
+    for (const id of ['screensaver-clock-format', 'screensaver-date-format', 'screensaver-clock-position']) {
+        assert.ok(!off.includes(`id="${id}"`), `${id} describes a clock that is not rendering`);
+    }
+    // The toggle must come before the rows it reveals: the grid reads row-wise.
+    const on = renderSaverSettings();
+    assert.ok(on.indexOf('id="screensaver-show-clock"') < on.indexOf('id="screensaver-clock-format"'));
+
+    // Without a repaint the rows only appear on the next visit to the panel.
+    const source = readFileSync(new URL('../src/settings/settings.js', import.meta.url), 'utf8');
+    const handler = source.match(/window\.setScreensaverShowClock = function[\s\S]*?\n    \};/)[0];
+    assert.match(handler, /updateSettingsContentArea\(activeSettingsCategory\)/);
+});
+
+test('the style segment ignores a tap on the mode already selected', () => {
+    // Every tap calls window.setBlackScreenSaver, so without this guard a tap on
+    // the selected segment rewrites screensaverEnabled and turns a saver the user
+    // had switched off back on.
+    const source = readFileSync(new URL('../src/settings/settings.js', import.meta.url), 'utf8');
+    const handler = source.match(/window\.setBlackScreenSaver = function[\s\S]*?\n    \};/)[0];
+    assert.match(handler, /if \(isBlackScreenSaver\(\) === !!enabled\) return;/);
+    assert.ok(handler.indexOf('return;') < handler.indexOf("localStorage.setItem('screensaverEnabled'"));
 });
 
 test('date format presets are locale-independent and fall back to the long form', () => {

@@ -1,5 +1,22 @@
+import { timeNav } from './perf-probe.js';
+
 const pageCache = new Map();
 let cleanupCurrentPage = null;
+// Where the user currently is and where they came from, so a subpage can send
+// them back instead of to a fixed destination (the profile editor's save and
+// cancel). null is the main page.
+let currentPageUrl = null;
+let previousPageUrl = null;
+
+export function getPreviousPageUrl() {
+    return previousPageUrl;
+}
+
+function markCurrentPage(pageUrl) {
+    if (pageUrl === currentPageUrl) return;
+    previousPageUrl = currentPageUrl;
+    currentPageUrl = pageUrl;
+}
 
 function getCleanUrl(pageUrl) {
     const filename = pageUrl.split('/').pop().replace('.html', '');
@@ -67,6 +84,43 @@ export function prefetchSettingsPage() {
     ]);
 }
 
+// The three subpage entry modules, none of which prefetchSettingsPage reaches:
+// settings.js is behind categories/legacy-category.js, and the profile pages are
+// imported by the router only once a tap has already happened. Unminified they
+// are 653K / 194K / 93K, so a cold tap pays the whole fetch+parse+compile.
+//
+// ponytail: modulepreload rather than import() -- the link downloads, parses and
+// compiles the module graph WITHOUT evaluating any of it, so warming these
+// cannot run a line of their top-level code early. A real import() here would.
+const WARM_MODULES = [
+    'src/settings/settings.js',
+    'src/modules/profile_editor.js',
+    'src/modules/profile_selector.js',
+];
+
+let warmed = false;
+export function prefetchSubpages() {
+    if (warmed) return;
+    warmed = true;
+    // requestIdleCallback is absent on iOS/older Safari WebViews (dual target),
+    // so fall back to a plain timer well clear of boot.
+    const idle = window.requestIdleCallback
+        ? (fn) => window.requestIdleCallback(fn, { timeout: 5000 })
+        : (fn) => setTimeout(fn, 3000);
+    idle(() => {
+        for (const href of WARM_MODULES) {
+            const link = document.createElement('link');
+            link.rel = 'modulepreload';
+            link.href = href;
+            document.head.append(link);
+        }
+        // Page HTML is a plain fetch into the router's own cache -- no execution.
+        fetchPage('src/settings/settings.html').catch(() => {});
+        fetchPage('src/profiles/profile_selector.html').catch(() => {});
+        fetchPage('src/profiles/profile_editor.html').catch(() => {});
+    });
+}
+
 function isIndexUrl(pageUrl) {
     if (!pageUrl) return true;
     const lc = pageUrl.toLowerCase();
@@ -88,6 +142,7 @@ function updateHistory(mode, state, title, url) {
 }
 
 async function showMainPage({ history = 'push' } = {}) {
+    const nav = timeNav('main');
     const mainPage = document.getElementById('main-page');
     const subpageHost = document.getElementById('subpage-host');
 
@@ -96,6 +151,7 @@ async function showMainPage({ history = 'push' } = {}) {
         subpageHost.style.display = 'none';
         subpageHost.innerHTML = '';
     }
+    nav.mark('cleanup');
     if (mainPage) mainPage.style.display = '';
 
     const scaledContent = document.getElementById('scaled-content');
@@ -104,6 +160,7 @@ async function showMainPage({ history = 'push' } = {}) {
     // Force rescale — keyboard use on the previous page may have left a stale transform
     window.dispatchEvent(new Event('resize'));
 
+    markCurrentPage(null);
     updateHistory(history, { pageUrl: null }, 'Streamline', '?page=index');
 
     // The profile selector shares the `plotly-chart` id and leaves its last
@@ -115,11 +172,14 @@ async function showMainPage({ history = 'push' } = {}) {
         window.app?.clearChart?.();
     }
     document.dispatchEvent(new Event('streamline:mainpagevisible'));
+    // The work below is deliberately not awaited, so this is the point the user
+    // sees the main page again -- which is what the line is measuring.
+    nav.done();
 
     // Ensure main-page data init has run — booting on a sub-page URL skips it,
     // so without this the main page would render static HTML with no data.
     // Don't gate the chart repaint on this whole thing finishing though: it
-    // also connects DE1/scale/visualizer and six-plus websockets, none of
+    // also connects DE1/scale and six-plus websockets, none of
     // which the chart needs, and blocking on all of it is what made the
     // repaint (and the stale profile curve before it) take 1-2s on first
     // return to the main page.
@@ -149,11 +209,15 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
         return;
     }
 
+    const pageName = pageUrl.split('/').pop().replace('.html', '');
+    const nav = timeNav(pageName);
     const mainPage = document.getElementById('main-page');
     const subpageHost = document.getElementById('subpage-host');
+    let hidMainPage = false;
 
     try {
         const pageHtml = await fetchPage(pageUrl);
+        nav.mark('fetch');
         const parser = new DOMParser();
         const doc = parser.parseFromString(pageHtml, 'text/html');
         const newContent = doc.querySelector('#scaled-content');
@@ -166,25 +230,40 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
 
         await cleanupSubpage();
         subpageHost.innerHTML = newContent.innerHTML;
+        nav.mark('inject');
 
         if (pageUrl.includes('settings.html')) {
             const { cleanupSettingsShell, initializeSettingsShell } = await import('../settings/settings-shell.js');
             await initializeSettingsShell();
             cleanupCurrentPage = cleanupSettingsShell;
+            nav.mark('shell');
         }
 
         const mainPageWasVisible = mainPage && mainPage.style.display !== 'none';
         if (mainPage) mainPage.style.display = 'none';
-        if (mainPageWasVisible) document.dispatchEvent(new Event('streamline:mainpagehidden'));
+        if (mainPageWasVisible) {
+            hidMainPage = true;
+            document.dispatchEvent(new Event('streamline:mainpagehidden'));
+        }
         subpageHost.style.display = '';
 
         // Apply current language to freshly injected HTML before page init runs
-        import('./i18n.js').then(m => m.translatePage()).catch(() => {});
+        // Its own line, not a mark on the one above: the call is deliberately
+        // fire-and-forget, and its microtask lands after the frame wait below.
+        import('./i18n.js').then(m => {
+            const translate = timeNav(`${pageName}:translate`);
+            m.translatePage();
+            translate.done();
+        }).catch(() => {});
 
         const cleanUrl = getCleanUrl(pageUrl);
+        // Before the page's own init runs below -- the profile editor reads
+        // getPreviousPageUrl() there to decide where Save/Cancel return to.
+        markCurrentPage(pageUrl);
         updateHistory(history, { pageUrl }, cleanUrl.split('/').pop() || 'Streamline', cleanUrl);
 
         await new Promise(resolve => requestAnimationFrame(resolve));
+        nav.mark('paint');
 
         const scaledContent = document.getElementById('scaled-content');
         if (scaledContent) scaledContent.classList.add('scaled');
@@ -193,6 +272,9 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
             try {
                 const { initializeProfileSelector } = await import('./profile_selector.js');
                 if (initializeProfileSelector) {
+                    // Not awaited: the page is already on screen while it fills,
+                    // so it is a second wait, not part of this one. It times
+                    // itself (profile_selector:init), with its own phase marks.
                     initializeProfileSelector().catch(e => console.error('Router: Profile selector init error:', e));
                 }
             } catch (e) {
@@ -210,9 +292,13 @@ export async function loadPage(pageUrl, { history = 'push' } = {}) {
                 console.error('Router: Error initializing profile editor:', e);
             }
         }
+        nav.done();
     } catch (error) {
         console.error('Error loading page:', error);
         if (mainPage) mainPage.style.display = '';
         if (subpageHost) subpageHost.style.display = 'none';
+        // Paint writers are gated on this event; without it they stay frozen
+        // after a failed subpage load restores the main page.
+        if (hidMainPage) document.dispatchEvent(new Event('streamline:mainpagevisible'));
     }
 }

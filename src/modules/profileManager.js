@@ -1,4 +1,5 @@
 import { logger } from './logger.js';
+import { timeNav } from './perf-probe.js';
 import { updateWorkflow,sendProfile, getWorkflow, getValueFromStore, setValueInStore, getProfiles, deleteProfile, updateProfileVisibility, uploadProfile, uploadProfileWithParent, updateProfile, updateProfileMetadata, getShots, getKVKeys, getKVValue, DYE2_KV_NAMESPACE, deleteKVValue, setTargetSteamDuration, setTargetSteamFlow } from './api.js';
 import { updateProfileName, updateTemperatureDisplay, updateDrinkOut, updateDrinkRatio, updateDoseInDisplay, updateGrindDisplay, updateSteamDisplay, updateHotWaterDisplay, updateFlushDisplay, showToast, setupPressAndHold} from './ui.js';
 import { openContextMenu } from './context-menu.js';
@@ -7,8 +8,11 @@ import { openDB, getSetting, setSetting } from './idb.js';
 import { loadPage } from './router.js'; // Singular and correctly formatted import
 import { getTranslation, fitTextToBox } from './i18n.js';
 import { resolveProfileKeyByTitle } from './active-profile.js';
-import { loadProfileOverrides, saveProfileOverride, clearProfileOverride, applyOverridesToRecords } from './profile-overrides.js';
+import { planAssignmentsLoad, mayPersistAutoPopulate } from './favorites-load.js';
+import { loadProfileOverrides, saveProfileOverride, clearProfileOverride, getProfileOverride, applyOverridesToRecords, profileSwitchDial } from './profile-overrides.js';
 import { applyFlowCalibrationForProfile } from './flow-calibration.js';
+import { recipeIdPatch } from './dye-selection.js';
+import { profileSendBlocked, setPendingProfileSend, clearPendingProfileSend } from './profile-send-gate.js';
 import { profileAtBrewTemp } from './brew-temp.js';
 import { profileFingerprint } from './dye-selection.js';
 
@@ -127,19 +131,23 @@ const KV_MIGRATED_FLAG = 'kv-profiles-migrated';
 // them. Idempotent — guarded by a persisted flag; only flips the flag once all
 // records moved, so a partial failure retries on next load. KV records are
 // deleted only after a successful POST, so nothing is lost on error.
+/** @returns {Promise<boolean>} whether anything actually moved into /profiles. */
 async function migrateKvProfilesToRest() {
-    if (await getSetting(KV_MIGRATED_FLAG)) return;
+    // An unreadable flag counts as migrated: the legacy KV move is a one-off
+    // for a handful of installs, and it must not take the profile list down
+    // with it when IndexedDB is unavailable. It gets another chance next boot.
+    if (await getSetting(KV_MIGRATED_FLAG).catch(() => true)) return false;
 
     let kvKeys = [];
     try {
         kvKeys = await getKVKeys('streamline');
     } catch (e) {
         // No KV namespace or server unreachable — nothing to migrate now.
-        return;
+        return false;
     }
     if (!kvKeys || kvKeys.length === 0) {
         await setSetting(KV_MIGRATED_FLAG, true);
-        return;
+        return false;
     }
 
     let migrated = 0;
@@ -161,6 +169,7 @@ async function migrateKvProfilesToRest() {
     }
     logger.info(`Migrated ${migrated}/${kvKeys.length} legacy KV profile(s) to /profiles.`);
     if (migrated === kvKeys.length) await setSetting(KV_MIGRATED_FLAG, true);
+    return migrated > 0;
 }
 
 // Repoint any favorite slot holding oldId to newId. Called after an edit whose
@@ -171,15 +180,62 @@ export async function remapFavorite(oldId, newId) {
         if (id === oldId) { favoriteAssignments[slot] = newId; changed = true; }
     }
     if (changed) await saveAssignments({ markUserInitialized: false });
+    // The wake profile is stored by id too; without this it keeps pointing at the
+    // retired (hidden) pre-edit record.
+    try {
+        if (localStorage.getItem('wakeProfileId') === oldId) localStorage.setItem('wakeProfileId', newId);
+    } catch (_) { /* storage unavailable */ }
+}
+
+// A hard-deleted profile cannot be the wake profile. Leaving the id behind left
+// the toggle switched on over a picker showing "Select a profile", and every
+// wake logging "not found -- skipping" with nothing the user could see.
+function forgetWakeProfile(profileId) {
+    try {
+        if (localStorage.getItem('wakeProfileId') === profileId) localStorage.removeItem('wakeProfileId');
+    } catch (_) { /* storage unavailable */ }
+}
+
+// requestIdleCallback is absent on iOS/older Safari WebViews (dual target), so
+// fall back to a plain timer well clear of the navigation it is getting out of.
+function whenIdle(fn) {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 5000 });
+    else setTimeout(fn, 2000);
 }
 
 export async function loadAvailableProfiles() {
+    // Split from profile_manager:init so the tablet says which half of it is
+    // slow: waiting on the reads, or the per-record work after they land.
+    const nav = timeNav('profiles:load');
     try {
-        // Move legacy KV profiles into /profiles first so getProfiles() returns them.
-        await migrateKvProfilesToRest();
-
         logger.info('Attempting to load profiles from API...');
-        const profilesFromApi = await getProfiles(); // This is an array of ProfileRecords
+        // All three reads go out before anything here touches IndexedDB, and
+        // before the migration check below, which does. An IndexedDB request
+        // cannot complete while the main thread is busy, and the profile
+        // selector runs its chart init and first paint -- about 130 ms on the
+        // tablet -- immediately after calling us: measured there, that delayed
+        // these requests by 240 ms, longer than the reads themselves take.
+        // Neither KV read needs the profiles array to fetch, only to merge.
+        const profilesFetch = getProfiles(); // This is an array of ProfileRecords
+        const draftsFetch = fetchProfileDrafts();
+        const overridesLoaded = loadProfileOverrides();
+
+        // Now that the requests are out, the IndexedDB handle the migration
+        // check and the fallback cache need. Memoized, and already open on a
+        // warm page -- init() deliberately no longer awaits it ahead of us. A
+        // failure to open must not throw away a perfectly good /profiles
+        // response, so it is swallowed here and handled where IDB is read.
+        await openDB().catch(() => {});
+
+        // Legacy KV profiles move into /profiles once per device, ever. The
+        // fetch above predates that move, so on the one visit that migrates
+        // anything, take a fresh one.
+        const migrated = await migrateKvProfilesToRest();
+        // The first fetch is then orphaned; keep its rejection from surfacing
+        // as an unhandled one, since nothing awaits it any more.
+        if (migrated) profilesFetch.catch(() => {});
+        const profilesFromApi = migrated ? await getProfiles() : await profilesFetch;
+        nav.mark('fetched');
 
         // Process and populate in-memory cache
         availableProfiles = {};
@@ -203,18 +259,31 @@ export async function loadAvailableProfiles() {
         // Local-only duplicates, merged in before overrides are folded on — a
         // draft's saved tile edits are keyed to its draft id, so the record
         // has to already be in availableProfiles or applyOverridesToRecords
-        // below has nothing to attach them to.
-        await loadProfileDrafts();
+        // below has nothing to attach them to. The read was started above; only
+        // the merge is ordered here.
+        nav.mark('records');
+        mergeProfileDrafts(await draftsFetch);
 
         // The user's tile edits live in KV, not on the record — fold them on so
         // every `record.metadata.targetDoseWeight` read below sees them.
-        await loadProfileOverrides();
+        await overridesLoaded;
         applyOverridesToRecords(availableProfiles);
+        nav.mark('merged');
 
-        // Sync to IndexedDB as a fallback
-        await setSetting(PROFILES_CACHE_KEY, availableProfiles);
-        logger.info('Successfully synced profiles to IndexedDB cache.');
+        // The IndexedDB copy is read only by a cold start that cannot reach
+        // Decaid, so nothing on screen waits for it. Not awaiting it was not
+        // enough: handing ~100 full profile records to IndexedDB
+        // structured-clones them synchronously on the main thread, and on the
+        // tablet that showed up as a 167 ms gap with no network traffic in it,
+        // between the overrides read and the favorites reads. So it waits for
+        // idle, by which time the list has been on screen for a while.
+        whenIdle(() => {
+            setSetting(PROFILES_CACHE_KEY, availableProfiles)
+                .then(() => logger.info('Successfully synced profiles to IndexedDB cache.'))
+                .catch(e => logger.warn('Could not sync profiles to the IndexedDB cache:', e));
+        });
 
+        nav.done();
         return { profilesFrom: 'API' };
 
     } catch (apiError) {
@@ -259,17 +328,31 @@ async function persistDrafts() {
     await setValueInStore(SETTINGS_NAMESPACE, DRAFTS_KEY, profileDrafts);
 }
 
-export async function loadProfileDrafts() {
+/**
+ * The KV read alone. Split out from the merge so the request can be in flight
+ * while getProfiles() is still running: the fetch needs nothing from
+ * availableProfiles, but the merge below overwrites entries in it and so has to
+ * land after loadAvailableProfiles() has rebuilt it.
+ */
+async function fetchProfileDrafts() {
     try {
         const stored = await getValueFromStore(SETTINGS_NAMESPACE, DRAFTS_KEY);
-        profileDrafts = (stored && typeof stored === 'object') ? stored : {};
+        return (stored && typeof stored === 'object') ? stored : {};
     } catch (e) {
         logger.warn('Could not load profile drafts from KV:', e);
-        profileDrafts = {};
+        return {};
     }
+}
+
+function mergeProfileDrafts(stored) {
+    profileDrafts = stored;
     for (const [id, record] of Object.entries(profileDrafts)) {
         availableProfiles[id] = record;
     }
+}
+
+export async function loadProfileDrafts() {
+    mergeProfileDrafts(await fetchProfileDrafts());
 }
 
 // Suffix `baseTitle` with " (n)" until it no longer collides with any known
@@ -362,6 +445,11 @@ async function getFavoritesInitializedFlag() {
         logger.warn('Could not read favorites-initialized flag from REA store:', e);
     }
     try {
+        // This now runs concurrently with loadAvailableProfiles() rather than
+        // after it, so the handle it used to be able to assume may still be
+        // opening. Reading "not initialized" because the DB was not ready yet
+        // is what triggers auto-populate over the user's own empty slots.
+        await openDB();
         const idbFlag = await getSetting(FAVORITES_INITIALIZED_KEY);
         if (idbFlag === true) return true;
     } catch (e) {
@@ -370,8 +458,11 @@ async function getFavoritesInitializedFlag() {
     return false;
 }
 
+let assignmentsReadOk = true; // false when the last loadAssignments() could not reach the Decaid store
+
 export async function loadAssignments() {
     logger.info('Loading assignments...');
+    assignmentsReadOk = true;
     try {
         // 1. Try to fetch from the primary source (REA store)
         const reaAssignments = await getValueFromStore(SETTINGS_NAMESPACE, FAVORITES_KEY);
@@ -394,7 +485,9 @@ export async function loadAssignments() {
         logger.warn('No assignments in REA store, checking IndexedDB backup...');
         const idbAssignments = await getSetting(FAVORITES_KEY);
 
-        if (isValidAssignments(idbAssignments)) {
+        // The read above succeeded and found nothing, so restoring the backup into
+        // the store is safe (first-run migration / wiped store).
+        if (planAssignmentsLoad({ readOk: true, remote: reaAssignments, backup: idbAssignments }).writeBack) {
             logger.info('Loaded assignments from IndexedDB backup.');
             favoriteAssignments = idbAssignments;
             validateButtonIndices();
@@ -413,15 +506,17 @@ export async function loadAssignments() {
 
     } catch (error) {
         // This catch block handles network failures when trying to reach the REA store.
+        assignmentsReadOk = false;
         logger.error('Failed to load from REA store. Falling back to IndexedDB.', error);
         try {
             const idbAssignments = await getSetting(FAVORITES_KEY);
-            if (isValidAssignments(idbAssignments)) {
+            if (planAssignmentsLoad({ readOk: false, remote: null, backup: idbAssignments }).source === 'backup') {
                 logger.info('Successfully loaded from IndexedDB backup during fallback.');
                 favoriteAssignments = idbAssignments;
                 validateButtonIndices();
-                await setValueInStore(SETTINGS_NAMESPACE, FAVORITES_KEY, favoriteAssignments);
-                await setSetting(FAVORITES_KEY, favoriteAssignments);
+                // Local use only. The read failed, so the store may hold another
+                // device's newer favourites; writing the backup over them would
+                // lose those. The next successful save or load reconciles.
             } else {
                  // Both stores empty — leave slots null so init() auto-populates.
                  logger.warn('IndexedDB backup is also empty. Deferring to auto-populate.');
@@ -493,7 +588,9 @@ export function syncActiveProfileFromTitle(title) {
     // already active, or the one a favourite slot holds, so the slot's highlight
     // survives the rebind (#150).
     if (key) {
-        const sameTitle = k => !!k && availableProfiles[k]?.profile?.title === availableProfiles[key]?.profile?.title;
+        // A hidden (superseded) record never wins the tie-break: it is not what the user runs.
+        const sameTitle = k => !!k && availableProfiles[k]?.visibility !== 'hidden'
+            && availableProfiles[k]?.profile?.title === availableProfiles[key]?.profile?.title;
         if (sameTitle(activeProfileId)) key = activeProfileId;
         else key = Object.values(favoriteAssignments || {}).find(sameTitle) ?? key;
     }
@@ -515,6 +612,22 @@ export function getActiveProfileRecord() {
 
 export function getActiveProfileId() {
     return availableProfiles[activeProfileId] ? activeProfileId : null;
+}
+
+// The last rung of the steam re-arm chain (api.setSteamProfileFallback): what
+// the user saved against the profile that is loaded, a favourite included.
+// Reached only when neither a DYE2 recipe nor the remembered last-used value
+// can say what the heater should come back to.
+//
+// 0 is skipped on purpose. It is not a duration, it is the heater switched off,
+// and feeding it back into the re-arm would switch it straight off again.
+export function activeProfileSteamFallback() {
+    const overrides = getProfileOverride(getActiveProfileId()) || {};
+    const positive = (v) => (typeof v === 'number' && v > 0 ? v : null);
+    return {
+        duration: positive(overrides.targetSteamDuration),
+        flow: positive(overrides.targetSteamFlow),
+    };
 }
 
 // getActiveProfileId() answers null for an id the cache has not caught up with
@@ -589,8 +702,7 @@ export function withSavedBrewTemp(profile, metadata) {
 
 // Steam duration/flow aren't profile fields (they live on the workflow, not
 // profile.steps), so unlike dose/yield/grind they can't ride along in an
-// updateWorkflow call -- they need their own setter calls, which also carry the
-// heater on/off side effect for duration (see setTargetSteamDuration). Only push
+// updateWorkflow call -- they need their own setter calls. Only push
 // when this profile actually has a saved value; with no record, leave whatever
 // the machine is currently set to alone. Every way into a profile switch calls
 // this -- the favourite buttons, the selector's Confirm and its context-menu
@@ -601,10 +713,9 @@ export async function applySavedSteamSettings(metadata) {
     if (savedSteamDuration == null && savedSteamFlow == null) return;
     try {
         // Sequential, not Promise.all: both PUT the same workflow record's
-        // steamSettings sub-object, and duration's own write already does a
-        // read-modify-write of targetTemperature (steamHeaterFor) -- running them
-        // concurrently risks one write clobbering the other depending on Decaid's
-        // merge order. One extra await here is once per profile switch.
+        // steamSettings sub-object -- running them concurrently
+        // risks one write clobbering the other depending on Decaid's merge
+        // order. One extra await here is once per profile switch.
         if (savedSteamDuration != null) await setTargetSteamDuration(savedSteamDuration);
         if (savedSteamFlow != null) await setTargetSteamFlow(savedSteamFlow);
         updateSteamDisplay({
@@ -616,21 +727,16 @@ export async function applySavedSteamSettings(metadata) {
     }
 }
 
-// A grind setting belongs to the grinder and the beans, and a dose to the
-// basket -- neither is really a property of the profile. So remember the last
-// one the user set, whichever profile they set it on, and use it when nothing
-// better is known: a profile the user has never adjusted then opens on a real
-// number instead of a blank grind tile or a 0 dose. These sit at the BACK of
-// the fallback chain -- a profile that states its own dose keeps it. Yield and
-// brew temperature are deliberately not remembered at all; those come from the
-// profile's own recipe, and carrying them across would change how it brews.
-// Decaid's Profile schema carries no dose at all -- see profile.dart toJson():
-// version, title, notes, author, beverage_type, steps, target_volume,
-// target_weight, target_volume_count_start, tank_temperature. The dose lives only
-// on the workflow context (context.targetDoseWeight), which is where every tile
-// edit writes it. So behind the user's saved override for a profile there is no
-// recipe number to fall back to -- only the last dose they set, then the stock
-// basket.
+// The dose 'Use Profile Defaults' falls back to. A grind setting belongs to the
+// grinder and the beans, and a dose to the basket -- neither is a property of the
+// profile, and Decaid's Profile schema carries no dose at all (profile.dart
+// toJson(): version, title, notes, author, beverage_type, steps, target_volume,
+// target_weight, target_volume_count_start, tank_temperature). The dose lives
+// only on the workflow context, so a reset that is asked to forget the user's
+// number has no recipe number to go back to and needs a stock basket.
+//
+// NOT a fallback for a profile switch: a switch sends the profile's own override
+// or nothing at all, so the live dose stands whoever set it (profileSwitchDial).
 export const DEFAULT_DOSE_WEIGHT = 18;
 
 // What the grind tile reads after 'Use Profile Defaults'. There is no grind in a
@@ -638,37 +744,62 @@ export const DEFAULT_DOSE_WEIGHT = 18;
 // zero, and pins that so coming back to the profile still reads zero.
 export const RESET_GRINDER_SETTING = '0';
 
-const LAST_GRIND_KEY = 'lastGrinderSetting';
-const LAST_DOSE_KEY = 'lastTargetDoseWeight';
-
-function rememberTileDefaults(fields) {
-    try {
-        if (fields?.grinderSetting != null) localStorage.setItem(LAST_GRIND_KEY, String(fields.grinderSetting));
-        if (fields?.targetDoseWeight != null) localStorage.setItem(LAST_DOSE_KEY, String(fields.targetDoseWeight));
-    } catch (e) {
-        logger.warn('Could not remember last tile values:', e);
+// The one way a profile record reaches the machine. Every entry point -- the
+// favourite buttons, the selector's Confirm, the editor's SAVE -- goes through
+// here so the mid-shot guard and the saved dose/yield/grind/brew-temp folds
+// cannot drift apart again (they were three copies, see the stale
+// "applyProfileToMachine" comments this replaces).
+//
+// Returns 'sent', 'deferred' (held until the shot ends) or 'failed'.
+export async function sendProfileRecordToMachine(record) {
+    if (!record?.profile) return 'failed';
+    const { currentMachineState } = await import('./api.js');
+    if (profileSendBlocked(currentMachineState)) {
+        setPendingProfileSend(record);
+        return 'deferred';
     }
+    const meta = record.metadata || {};
+    const dial = profileSwitchDial(meta, record.profile.target_weight);
+    const targetYield = dial.targetYield;
+    // The UI yield override lives in metadata, but a non-autonomous machine
+    // stops on profile.target_weight -- fold it into a copy so the sent profile
+    // matches the number the user set, and fold a saved brew temp the same way.
+    const profile = withSavedBrewTemp(
+        targetYield > 0 ? { ...record.profile, target_weight: targetYield } : record.profile, meta);
+    try {
+        await updateWorkflow({
+            profile,
+            context: {
+                ...dial,
+                // The profile changed, so the recipe being dialled in is no
+                // longer this one (dye2#36).
+                ...recipeIdPatch(null),
+            },
+        }, 'profile.send');
+    } catch (err) {
+        logger.warn('Could not send profile to the machine:', err);
+        return 'failed';
+    }
+    // The machine runs this record now, so tile edits belong to its id.
+    clearPendingProfileSend();
+    setActiveProfile(record.id);
+    return 'sent';
 }
 
-export function lastGrinderSetting() {
-    try {
-        const stored = localStorage.getItem(LAST_GRIND_KEY);
-        return stored === null || stored === '' ? null : stored;
-    } catch { return null; }
-}
-
-export function lastTargetDoseWeight() {
-    try {
-        const parsed = parseFloat(localStorage.getItem(LAST_DOSE_KEY));
-        return Number.isFinite(parsed) ? parsed : null;
-    } catch { return null; }
+// Called when the machine leaves espresso. Sends whatever the user asked for
+// during the shot; nothing held means nothing to do.
+export async function flushPendingProfileSend() {
+    const { takePendingProfileSend } = await import('./profile-send-gate.js');
+    const held = takePendingProfileSend();
+    if (!held) return 'idle';
+    const result = await sendProfileRecordToMachine(held);
+    if (result === 'sent') {
+        showToast(`${getTranslation('Profile Set')}: ${translateProfileTitle(held.profile.title)}`, 3000, 'success');
+    }
+    return result;
 }
 
 export async function saveContextToActiveProfile(fields) {
-    // Before the active-profile guard below: a number the user typed is worth
-    // remembering as the fallback even on the path where there is no profile to
-    // attach it to.
-    rememberTileDefaults(fields);
     // Last-ditch bind: the machine's profile is on screen even when nothing has
     // set the id this session. Better than dropping the user's number.
     if (!activeProfileId || !availableProfiles[activeProfileId]) {
@@ -709,17 +840,18 @@ async function recipeHoldsDial(profile) {
 export async function loadProfileForWake(profileId) {
     let profile = availableProfiles[profileId]?.profile;
 
-    // The stored id can go stale: editing a profile hides the source record and
-    // promotes a new id for the edited copy (profile_editor.js's save flow), and
-    // loadAvailableProfiles() filters hidden records out of availableProfiles.
-    // Resolve forward by title instead of silently giving up, same fallback
-    // active-profile.js uses for the same id-churn problem.
-    if (!profile) {
+    // The stored id can go stale: editing a profile retires the source record
+    // (visibility 'hidden', kept in availableProfiles for revert history) and
+    // promotes a new id for the edited copy (profile_editor.js's save flow).
+    // A hidden record would load the pre-edit content, so resolve forward by
+    // title to the visible record, same fallback active-profile.js uses.
+    const stored = availableProfiles[profileId];
+    if (!stored || stored.visibility === 'hidden') {
         try {
-            const allRecords = await getProfiles(); // includeHidden=true
-            const staleTitle = allRecords.find(r => r.id === profileId)?.profile?.title;
+            const staleTitle = stored?.profile?.title
+                ?? (await getProfiles()).find(r => r.id === profileId)?.profile?.title; // includeHidden=true
             const resolvedKey = staleTitle && resolveProfileKeyByTitle(availableProfiles, staleTitle, translateProfileTitle);
-            if (resolvedKey) {
+            if (resolvedKey && resolvedKey !== profileId) {
                 profile = availableProfiles[resolvedKey].profile;
                 logger.info(`Wake profile ${profileId} was superseded by an edit; resolved by title to ${resolvedKey}.`);
                 profileId = resolvedKey;
@@ -740,23 +872,18 @@ export async function loadProfileForWake(profileId) {
         return true;
     }
     // Waking onto a profile is a profile switch, so it owes the same saved
-    // overrides as the three interactive paths. Dose and grind are not profile
-    // fields (see DEFAULT_DOSE_WEIGHT), so behind this profile's own override sits
-    // the last number the user set anywhere; yield IS a profile field, so the
-    // override answers first and then the recipe -- coerced, since target_weight
-    // can be a legacy TCL string.
+    // overrides as the three interactive paths -- and leaves the live dial-in
+    // alone where this profile has none (profileSwitchDial).
     const meta = availableProfiles[profileId]?.metadata || {};
-    const targetDoseWeight = meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT;
-    const grinderSetting = meta.grinderSetting ?? lastGrinderSetting();
-    const parsedYield = parseFloat(meta.targetYield ?? profile.target_weight);
-    const targetYield = isNaN(parsedYield) ? 0 : parsedYield;
-    // Same fold as applyProfileToMachine: a non-autonomous machine stops on
+    const dial = profileSwitchDial(meta, profile.target_weight);
+    const targetYield = dial.targetYield;
+    // Same fold as sendProfileRecordToMachine: a non-autonomous machine stops on
     // profile.target_weight, so a yield override has to reach the sent profile,
     // and a saved brew temp has to survive the wake.
     const profileToSend = withSavedBrewTemp(
         targetYield > 0 ? { ...profile, target_weight: targetYield } : profile, meta);
     try {
-        await updateWorkflow({ profile: profileToSend, context: { targetDoseWeight, targetYield, grinderSetting } });
+        await updateWorkflow({ profile: profileToSend, context: { ...dial, ...recipeIdPatch(null) } }, 'profile.wake');
         setActiveProfile(profileId);
         // Steam rides its own setters, not the workflow context.
         await applySavedSteamSettings(meta);
@@ -809,7 +936,7 @@ export async function resetActiveProfileToDefaults() {
     const targetYield = isNaN(parsedYield) ? 0 : parsedYield;
     let sentWorkflow;
     try {
-        sentWorkflow = await updateWorkflow({ profile, context: { targetDoseWeight, targetYield, grinderSetting: null } });
+        sentWorkflow = await updateWorkflow({ profile, context: { targetDoseWeight, targetYield, grinderSetting: null, ...recipeIdPatch(null) } }, 'profile.resetDefaults');
     } catch (error) {
         logger.error('Failed to re-apply profile defaults to workflow:', error);
         return false;
@@ -928,6 +1055,15 @@ async function handleProfileClick(index) {
         return;
     }
 
+    // Never write profile frames into a shot the machine is running -- see
+    // profile-send-gate.js. Hold the switch; app.js sends it when the shot ends.
+    const { currentMachineState } = await import('./api.js');
+    if (profileSendBlocked(currentMachineState)) {
+        setPendingProfileSend(availableProfiles[favoriteAssignments[index]]);
+        showToast(getTranslation('The machine is brewing — this profile loads when the shot ends.'), 4000, 'info');
+        return;
+    }
+
     // Add a unique identifier to track this specific call
     const callId = Date.now() + Math.random();
     logger.info(`handleProfileClick called with index ${index}, callId: ${callId}, profileUpdateInProgress: ${profileUpdateInProgress}`);
@@ -958,15 +1094,11 @@ async function handleProfileClick(index) {
     logger.info(`Sending profile '${profile.title}' to REA (callId: ${callId})...`);
     let profileSuccessfullySet = false;
     const meta = profileRecord.metadata || {};
-    // Fallback chains, most specific first. Neither dose nor grind is a profile
-    // field (see DEFAULT_DOSE_WEIGHT), so behind the user's saved override for
-    // this profile there is only the last number they set anywhere. Yield is a
-    // profile field, so the recipe answers for it and nothing is carried over.
-    const savedGrind = meta.grinderSetting ?? lastGrinderSetting();
-    const grindContext = savedGrind != null ? { grinderSetting: savedGrind } : { grinderSetting: null };
-    const targetDoseWeight = meta.targetDoseWeight ?? lastTargetDoseWeight() ?? DEFAULT_DOSE_WEIGHT;
-    const effectiveYield = meta.targetYield        ?? parseFloat(profile.target_weight);
-    const displayYield = Number.isFinite(effectiveYield) ? effectiveYield : 0;
+    // This profile's own saved dose and grind, and silence where it has none, so
+    // the live dial-in stands (profileSwitchDial). Yield is a profile field, so
+    // the recipe answers for it.
+    const dial = profileSwitchDial(meta, profile.target_weight);
+    const displayYield = dial.targetYield;
     // The UI yield override lives in metadata (targetYield), but on non-autonomous
     // machines Rea's stop-at-weight reads profile.target_weight — so a metadata-only
     // yield never reaches the machine's stop and the shot runs past it. Fold the
@@ -986,8 +1118,8 @@ async function handleProfileClick(index) {
             ? await getWorkflow()
             : await updateWorkflow({
                 profile: profileToSend,
-                context: { targetDoseWeight, targetYield: displayYield, ...grindContext }
-            });
+                context: { ...dial, ...recipeIdPatch(null) }
+            }, 'profile.send');
         // Paint the tiles from the workflow Rea echoed back rather than from the
         // numbers we meant to send, so what the user reads is what the machine
         // will actually brew with -- no guessing whether a value stuck.
@@ -1269,6 +1401,7 @@ export async function deleteOrHideProfile(profileId, { forceHide = false } = {})
             await deleteProfile(profileId);
 
             delete availableProfiles[profileId];
+            forgetWakeProfile(profileId);
 
             await setSetting(PROFILES_CACHE_KEY, availableProfiles);
 
@@ -1381,7 +1514,11 @@ async function autoPopulateFavoritesFromHistory() {
         }
     }
 
-    await saveAssignments({ markUserInitialized: false });
+    if (mayPersistAutoPopulate(assignmentsReadOk)) {
+        await saveAssignments({ markUserInitialized: false });
+    } else {
+        logger.warn('Decaid favourites read failed; auto-populated favourites kept local, not saved.');
+    }
     updateButtonUI();
 
     // Best-effort: recipe sidebar pre-fill from the most recent shot.
@@ -1428,6 +1565,11 @@ export function applyWorkflowToMainPageUI(workflow, { updateName = true } = {}) 
 
 export async function init() {
     logger.info('Profile Manager init started.');
+    // Decaid answers every read here within ~150 ms of the tap, yet init() took
+    // ~290 ms more to resolve -- all of it main-thread work after the data
+    // landed. Marked rather than guessed at: the last two rounds each cost a
+    // wrong theory about which part of this file was slow.
+    const nav = timeNav('profile_manager:init');
     let profileLoadStatus = {};
 
     try {
@@ -1443,15 +1585,30 @@ export async function init() {
             }
         }
 
-        await openDB(); // Still needed for the backup functionality
-
-        profileLoadStatus = await loadAvailableProfiles();
-        // Independent REA reads — no data dependency between them, so run
-        // concurrently instead of paying two sequential round trips.
-        const [, userInitialized] = await Promise.all([
+        // openDB() is NOT awaited here: it resolves in a microtask, and a
+        // microtask only runs once this call stack unwinds -- by which time the
+        // profile selector has done its chart init and first paint, ~150 ms on
+        // the tablet. Awaiting it here is what still delayed the three reads
+        // below by 132 ms after they were moved to the top of
+        // loadAvailableProfiles(). It awaits openDB() itself, once the requests
+        // are out; openDB is memoized, so this is the same single open.
+        // Invoked, not awaited: this issues the profile reads (and starts
+        // openDB) synchronously, so the two favorites reads below can go out in
+        // the same tick instead of waiting for the profile list to be built.
+        // Neither of them looks at availableProfiles -- validateButtonIndices
+        // only range-checks slot numbers -- so there is no ordering to keep.
+        // Measured on the tablet, they were the last 30-50 ms of a chain that
+        // had nothing left to wait for.
+        const profilesLoading = loadAvailableProfiles();
+        const favoritesLoading = Promise.all([
             loadAssignments(),
             getFavoritesInitializedFlag(),
         ]);
+
+        profileLoadStatus = await profilesLoading;
+        nav.mark('profiles');
+        const [, userInitialized] = await favoritesLoading;
+        nav.mark('favorites');
 
         const allEmpty = Object.values(favoriteAssignments).every(v => v === null || v === undefined);
         // If user has previously saved assignments (even all-empty via clearing slots),
@@ -1464,6 +1621,7 @@ export async function init() {
             updateButtonUI();
         }
 
+        nav.mark('buttonUI');
         document.addEventListener('streamline:languagechange', () => updateButtonUI());
 
         // Only attach event listeners to buttons that were found in the DOM
@@ -1511,5 +1669,6 @@ export async function init() {
     }
 
     logger.info('Profile Manager initialized.');
+    nav.done();
     return profileLoadStatus;
 }

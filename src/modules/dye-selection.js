@@ -19,6 +19,20 @@ export const SELECTION_KEY = 'streamline.dyeSelection';
 // and immediately clear the item auto-save is running for. The same goes for
 // target_weight / target_volume: the dashboard folds the yield into them, so a
 // yield change is dial-in, not a new profile (#147).
+// JSON.stringify calls the replacer again on whatever object IT returns, not the original,
+// so returning a key-sorted copy at every level makes the whole tree order-independent --
+// two profiles equal in content but not in key order (dye2#43: Decent Sync's jsonb storage
+// reorders keys, shorter first; Decaid's own toJson order is whatever Workflow wrote) now
+// fingerprint the same.
+function sortKeysReplacer(_key, value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const sorted = {};
+        for (const k of Object.keys(value).sort()) sorted[k] = value[k];
+        return sorted;
+    }
+    return value;
+}
+
 export function profileFingerprint(profile) {
     if (!profile) return null;
     const steps = Array.isArray(profile.steps)
@@ -32,7 +46,7 @@ export function profileFingerprint(profile) {
         title: profile.title,
         tank_temperature: profile.tank_temperature,
         steps,
-    });
+    }, sortKeysReplacer);
 }
 
 /** Has the live workflow's profile moved away from the one `item` was armed on? */
@@ -86,6 +100,35 @@ export function restoreSelection(raw, { recipes, favs, workflow }) {
 // about what it applied; an older DYE2 sends nothing, and the skin must then not
 // write anything back to the parked item.
 export const RETURN_PARAM = 'dyeApplied';
+
+// Decaid serves the skin on an ephemeral port, and re-picks it every time it serves the
+// folder again (webui_service.serveFolderAtPath). :3000 is the stable entry server; it
+// redirects to wherever the skin currently lives, query string intact.
+export const DECAID_SKIN_ENTRY_PORT = '3000';
+
+/**
+ * The address to hand DYE2 as its `?return=`, given the page we are on.
+ *
+ * The DYE button navigates the whole page away, so this URL is captured before the trip
+ * and used minutes later. Handing DYE2 our own `location.href` pins the way home to the
+ * port we happen to be on right now: if Decaid re-serves the skin while the user is in
+ * DYE2 -- a skin switch, a reload of the folder -- that port is dead by the time they come
+ * back and they land on a browser error page instead of Streamline. Observed live: a
+ * return to :25261 after the skin had moved to :26950.
+ *
+ * `decaidServed` says the page came from Decaid's skin server, which is the only place an
+ * entry port exists to send anyone to; a plain dev server or a static host must keep its
+ * own address. The caller feature-detects it from the script that server injects.
+ */
+export function stableSkinReturnUrl(href, { decaidServed } = {}) {
+    if (!decaidServed) return href;
+    let url;
+    try { url = new URL(href); } catch { return href; }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return href;
+    if (url.port === DECAID_SKIN_ENTRY_PORT) return href;
+    url.port = DECAID_SKIN_ENTRY_PORT;
+    return url.href;
+}
 
 export function parseDyeReturn(search) {
     let params;
@@ -150,9 +193,22 @@ export function changedFields(patch, stored) {
 // auto-save in dyeStrip.js stays the only way its items follow the dashboard.
 // The endpoint list comes from GET /api/v1/plugins, which the strip already reads.
 export function pluginRecordsDialIn(plugins, pluginId = 'dye2.reaplugin') {
+    return pluginHasEndpoint(plugins, 'selection', pluginId);
+}
+
+/**
+ * Does the installed plugin serve this http endpoint?
+ *
+ * DYE2's pages ARE api endpoints (Decaid plugins_handler: an endpoint the
+ * manifest does not declare answers 404 `endpoint <id> not available`), so a
+ * menu item that opens one the installed build has never heard of lands the
+ * barista on that error inside the overlay. The manifest's endpoint list comes
+ * with GET /api/v1/plugins, which the strip already reads.
+ */
+export function pluginHasEndpoint(plugins, endpoint, pluginId = 'dye2.reaplugin') {
     const plugin = Array.isArray(plugins) ? plugins.find(p => p?.id === pluginId) : null;
     if (!plugin?.loaded || !Array.isArray(plugin.api)) return false;
-    return plugin.api.some(e => e?.type === 'http' && e?.id === 'selection');
+    return plugin.api.some(e => e?.type === 'http' && e?.id === endpoint);
 }
 
 /**
@@ -170,41 +226,101 @@ export function armedSelectionId(sel, { recipes, favs }) {
 }
 
 /**
- * The steam temperature the selected DYE2 recipe wants, or null. Used when steam
- * is re-armed from off so the recipe's temperature wins over the remembered one.
- * Below 135C the machine treats the target as off, so such values are ignored.
+ * The steam settings the selected DYE2 recipe wants, each null when the recipe
+ * does not carry it. Used when steam is re-armed from off so the recipe wins
+ * over the remembered values, per field (dye2 KV_CONTRACT: steamTempC /
+ * steamTimeS / steamFlowMls, all optional on a recipe).
+ *
+ * Below 135C the machine treats the target as off, so such temperatures are
+ * ignored rather than re-arming the heater to a value that means off.
  */
-export function selectedRecipeSteamTemp(sel, recipes) {
-    if (!sel || sel.kind !== 'recipe' || sel.id == null || !Array.isArray(recipes)) return null;
-    const recipe = recipes.find(r => r && String(r.id) === String(sel.id));
-    const t = Number(recipe?.dashboardVariables?.steamTempC);
-    return Number.isFinite(t) && t >= 135 ? Math.round(t) : null;
+export function selectedRecipeSteam(sel, recipes) {
+    const empty = { tempC: null, durationS: null, flow: null };
+    if (!sel || sel.kind !== 'recipe' || sel.id == null || !Array.isArray(recipes)) return empty;
+    const vars = recipes.find(r => r && String(r.id) === String(sel.id))?.dashboardVariables;
+    if (!vars) return empty;
+    const positive = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+    const t = Number(vars.steamTempC);
+    return {
+        tempC: Number.isFinite(t) && t >= 135 ? Math.round(t) : null,
+        durationS: positive(vars.steamTimeS),
+        flow: positive(vars.steamFlowMls),
+    };
 }
 
+
 /**
- * The R strip as fixed positional slots, like the profile strip: recipe ids are the
- * slots '1'..'5' (DYE2 KV_CONTRACT), so a recipe sits at its own id's position and
- * clearing one (showOnStreamlineDashboard:false) leaves a blank in place instead of
- * shifting the others left. Visible recipes with an id outside 1..5 (legacy data)
- * fill the remaining blanks in order. Returns [{ slot: '1'..'5', recipe: obj|null }].
+ * The R strip as fixed positional slots, like the profile strip. DYE2 recipe ids are
+ * opaque; a recipe's position is its `stripSlot` (1..5, KV_CONTRACT `recipes[]`), and a
+ * row whose stripSlot is null/absent/out of range is saved in the library only and stays
+ * off the strip. A cleared recipe (showOnStreamlineDashboard:false) leaves a blank in
+ * place; nothing shifts left. The first row for a slot wins. There is no "strays fill
+ * the blanks" step in this mode: DYE2 guarantees one recipe per slot, and a null slot
+ * means "not on the strip", so back-filling would put library rows on it.
+ *
+ * A cell a clear emptied is not a free blank even where back-filling does apply: the
+ * cleared button must stay empty, not be handed to the next recipe in line.
+ *
+ * Compat: a DYE2 older than stripSlot writes no `stripSlot` key on any row and uses
+ * ids '1'..'5' as the slots. When no row carries the key at all, the old id-based
+ * placement (strays fill remaining blanks) applies, so a mid-upgrade tablet is not blank.
+ * (Key absent, not "no numeric value": a new DYE2 with every slot cleared writes nulls and
+ * must show five blanks, not fall back to ids.)
+ * Returns [{ slot: '1'..'5', recipe: obj|null }].
  */
 export function recipeStripCells(recipes, count = 5) {
     const cells = Array.from({ length: count }, (_, i) => ({ slot: String(i + 1), recipe: null }));
-    const visible = (Array.isArray(recipes) ? recipes : [])
-        .filter(r => r && typeof r === 'object' && r.showOnStreamlineDashboard !== false);
+    const rows = (Array.isArray(recipes) ? recipes : []).filter(r => r && typeof r === 'object');
+    const visible = rows.filter(r => r.showOnStreamlineDashboard !== false);
+    const legacy = !rows.some(r => r.stripSlot !== undefined);
+    // Legacy placement is by id, so that is where a cleared row's cell comes from. Modern
+    // placement back-fills nothing, so it needs no reservation.
+    const idCell = recipe => {
+        const n = parseInt(recipe.id, 10);
+        return String(recipe.id) === String(n) && n >= 1 && n <= count ? n - 1 : null;
+    };
+    const clearedCells = new Set(legacy
+        ? rows.filter(r => r.showOnStreamlineDashboard === false).map(idCell).filter(i => i !== null)
+        : []);
     const strays = [];
     for (const recipe of visible) {
-        const n = parseInt(recipe.id, 10);
-        const cell = String(recipe.id) === String(n) ? cells[n - 1] : undefined;
-        if (!cell) strays.push(recipe);
-        else if (!cell.recipe) cell.recipe = recipe;
+        let cell;
+        if (legacy) {
+            const n = parseInt(recipe.id, 10);
+            cell = String(recipe.id) === String(n) ? cells[n - 1] : undefined;
+            if (!cell) { strays.push(recipe); continue; }
+        } else {
+            const n = typeof recipe.stripSlot === 'number' ? recipe.stripSlot : NaN;
+            cell = Number.isInteger(n) ? cells[n - 1] : undefined;
+        }
+        if (cell && !cell.recipe) cell.recipe = recipe;
     }
     for (const recipe of strays) {
-        const blank = cells.find(c => !c.recipe);
+        const blank = cells.find((c, i) => !c.recipe && !clearedCells.has(i));
         if (!blank) break;
         blank.recipe = recipe;
     }
     return cells;
+}
+
+/**
+ * Does the mirrored DYE2 selection say the highlighted recipe has drifted from its
+ * stored values (`modified: true`, dye2#36)? Only a recipe can be modified -- a
+ * favourite or recent that drifts is deselected by DYE2 -- and only while the
+ * selection still names a row we hold.
+ */
+export function selectionModified(sel, { recipes }) {
+    if (!sel || sel.kind !== 'recipe' || sel.modified !== true) return false;
+    return armedSelectionId(sel, { recipes, favs: [] }) != null;
+}
+
+/**
+ * What a recipe cell shows: highlighted or not, and the `*` marker -- on the highlighted
+ * cell only, when modified.
+ */
+export function recipeCellState(recipe, activeId, modified) {
+    const active = recipe?.id != null && recipe.id === activeId;
+    return { active, marker: active && modified ? '*' : '' };
 }
 
 /** Favourites in strip order: favSlot first, then capturedAt. Hidden ones included. */
@@ -219,12 +335,110 @@ export function sortFavs(favs) {
 }
 
 /**
- * The F strip as fixed positions: the first `max` favourites (hidden ones included)
- * define the cells, and a favourite cleared off the strip (alwaysOnDashboard:false)
- * stays a gap rather than letting later ones shift left or back-fill from beyond max.
+ * The F strip as fixed positions, placed by `favSlot` the way recipeStripCells places by
+ * `stripSlot`: a favourite goes in cell `favSlot` (1..max), a slot nobody holds is blank, and
+ * a hidden row (alwaysOnDashboard:false) leaves its cell blank. Nothing shifts. A row with no
+ * slot or one outside 1..max does not appear. If two rows share a slot (DYE2 keeps them
+ * exclusive, but older data may not) a shown row beats a hidden one, otherwise the first in
+ * sort order wins.
+ *
+ * Compat: if NO row carries a usable favSlot (an older DYE2), fall back to sorting and taking
+ * the first `max`, with a hidden one left as a gap.
  * Returns [{ fav: visible fav | null, hidden: the hidden fav of a gap | null }].
  */
 export function favStripCells(favs, max = 4) {
-    return sortFavs(favs).slice(0, max).map(f =>
-        f.alwaysOnDashboard === false ? { fav: null, hidden: f } : { fav: f, hidden: null });
+    const sorted = sortFavs(favs);
+    const slotOf = f => (Number.isInteger(f.favSlot) && f.favSlot >= 1 && f.favSlot <= max ? f.favSlot : null);
+    const cellOf = f => (f.alwaysOnDashboard === false ? { fav: null, hidden: f } : { fav: f, hidden: null });
+    if (!sorted.some(f => slotOf(f) != null)) return sorted.slice(0, max).map(cellOf);
+    const cells = Array.from({ length: max }, () => ({ fav: null, hidden: null }));
+    for (const f of sorted) {
+        const n = slotOf(f);
+        if (n == null) continue;
+        const cur = cells[n - 1];
+        if (cur.fav || (cur.hidden && f.alwaysOnDashboard === false)) continue;
+        cells[n - 1] = cellOf(f);
+    }
+    return cells;
+}
+
+// A failed DYE2 KV read (getDye2KvArray -> null) or plugin-list read must not
+// replace what the strip already shows: a transient error would otherwise empty
+// the F/R cells and flip dial-in recording back to the legacy auto-save.
+// `null`/non-array means "read failed"; a real [] is a genuinely empty list.
+export function keepPreviousOnFailure(previous, next) {
+    return Array.isArray(next) ? next : previous;
+}
+
+// `plugins` is null when the plugin list could not be read; the previous
+// capability then stands. Otherwise it is re-derived from the fresh list.
+export function resolveRecordsDialIn(previous, plugins, derive) {
+    return plugins == null ? previous : derive(plugins);
+}
+
+/**
+ * The patch that claims, or releases, the recipe being dialled in.
+ *
+ * The recipe rides in the workflow itself (`context.extras.dye.recipeId`,
+ * dye2#36) and DYE2 derives its selection from it -- there is no POST for this.
+ * The governing rule is that **a recipe's identity is its profile**, which
+ * produces the whole table:
+ *
+ *   apply a recipe                  -> set
+ *   apply a favourite or a recent   -> null
+ *   profile change, from any source -> null
+ *   skin tile edit (dose/yield/grind) -> leave alone; that is the `*`
+ *   machine-originated change       -> leave alone
+ *
+ * A write that forgets to null it leaves a stale recipe highlighted and records
+ * the next shot's dial-in onto the wrong recipe -- #153/#155 in a new field.
+ *
+ * Returns only the delta: PUT /workflow deep-merges, so the other `extras` keys
+ * (rpm, note) survive without being re-sent. Mirrors the plugin's own
+ * setRecipeId, including the `v: 1` tag.
+ */
+export function recipeIdPatch(id) {
+    return { extras: { dye: { v: 1, recipeId: id == null ? null : String(id) } } };
+}
+
+/**
+ * The profile a workflow patch may carry, or null when there is none to send.
+ *
+ * PUT /workflow deep-merges (Decaid json_utils.deepMergeJson), so a profile
+ * object without steps does not replace the loaded profile -- it *renames* it.
+ * The machine keeps running the previous curve, the dashboard shows the item's
+ * name over it, and the shot record is saved under that name with the other
+ * profile's steps, notes and author. DYE2 stores exactly such stubs: a thin
+ * `{ id, title }`, an older row's `{ id, title, steps: [] }`, and sometimes a
+ * bare `{}`. A profile that cannot be resolved to its full record must drop out
+ * of the patch entirely instead.
+ */
+export function profilePatchWithSteps(profile) {
+    const steps = profile && profile.steps;
+    return Array.isArray(steps) && steps.length ? profile : null;
+}
+
+/**
+ * `context` with a grinder the catalogue no longer holds nulled out.
+ *
+ * A recipe's stored `workflow` body is written once, at save time, and nothing
+ * rewrites it when that grinder is later deleted: the body keeps the dead id and
+ * the stale model string, and the shot is filed under a grinder that no longer
+ * exists. DYE2's own apply never had the problem because it resolves the id
+ * against the live list at apply time (`dashboard.ts` applyRecipe); the strip
+ * applies the stored body directly, so it has to resolve it too.
+ *
+ * Pure. `grinders` is the catalogue as GET /grinders returns it -- an array, or
+ * the `{ items }` envelope -- and must INCLUDE archived rows: an archived
+ * grinder still exists and the recipe still means it.
+ *
+ * An unknown catalogue (null) means "could not check", which keeps the recipe's
+ * own value: a fetch that failed must not look like a deletion.
+ */
+export function dropDeletedGrinder(context, grinders) {
+    if (!context || !context.grinderId || grinders == null) return context;
+    const list = Array.isArray(grinders) ? grinders : (grinders.items || null);
+    if (!Array.isArray(list)) return context;
+    if (list.some(g => g && g.id === context.grinderId)) return context;
+    return { ...context, grinderId: null, grinderModel: null };
 }

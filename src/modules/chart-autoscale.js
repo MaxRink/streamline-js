@@ -110,3 +110,37 @@ export function computeExpandedTempRange(targetTempYs, groupTempYs, mixTempYs = 
     if (lo > hi - 5) lo = hi - 5;               // keep a sane minimum span if capped
     return [Math.floor(lo), Math.ceil(hi)];
 }
+
+// ---- Single-plot full-screen chart (TCL "zoomed" page) ---------------------
+
+/** Fixed y-axis max of the full-screen chart; temperature is plotted at /10. */
+export const ZOOM_Y_MAX = 14;
+
+/**
+ * Vertical label offsets so each line's end label sits at its own y value
+ * without overlapping its neighbours. `ys` are data values in input order.
+ * Returns one `yshift` per input (screen px; negative = moved DOWN, the same
+ * convention the Plotly-shaped annotations use), 0 where the label is in place.
+ */
+export function computeLabelShifts(ys, yMax, plotPxHeight, minSeparationPx, edgePadPx = 0) {
+    const natural = ys.map(y => (1 - Math.min(Math.max(y, 0), yMax) / yMax) * plotPxHeight);
+    const order = natural.map((_, i) => i).sort((a, b) => natural[a] - natural[b]);
+    const placed = separateLabelPositions(order.map(i => natural[i]), minSeparationPx, plotPxHeight - edgePadPx);
+    const shifts = new Array(ys.length).fill(0);
+    order.forEach((original, rank) => {
+        const delta = placed[rank] - natural[original];
+        shifts[original] = delta === 0 ? 0 : -delta;
+    });
+    return shifts;
+}
+
+/**
+ * X-axis max that leaves `padPx` of the plot free to the right of the last
+ * sample, so end labels stay inside the plot. Solved from
+ *   max = dataMax + padPx * (max - min) / plotPxWidth
+ */
+export function rangeMaxForLabelRoom(dataMax, plotPxWidth, padPx, rangeMin = 0) {
+    if (!(dataMax > rangeMin)) return dataMax;
+    const factor = Math.max(0.05, 1 - padPx / plotPxWidth);
+    return rangeMin + (dataMax - rangeMin) / factor;
+}

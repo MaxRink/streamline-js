@@ -632,6 +632,23 @@ function parseLive(raw) {
     return { endpoint };
 }
 
+// How the plugin wants its Open button in Settings > Extensions to behave. That
+// button is not a surface -- the settings page draws it from the plugin's `ui`
+// endpoint, for every plugin that has one -- so the answer declares it here
+// instead, as a whole `open` action run through the same parser.
+//
+// Only `presentation: "overlay"` is kept: anything else is what the button
+// already does (same-frame navigation with returnTo), so there is nothing to
+// record. Guessing instead of reading a declaration was the alternative, and it
+// would have cost every page that does not speak the overlay protocol a 3 s
+// empty dialog before falling back -- which today is nearly all of them
+// (issue #173).
+function parseSettingsOpen(raw) {
+    if (!raw || typeof raw !== 'object' || raw.type !== 'open') return null;
+    const action = parseOpen(raw);
+    return action.presentation === 'overlay' ? action : null;
+}
+
 // What a live push asks for. A body of {"what":"skin"} means only the skin answer
 // changed; anything else (including "workflow", no body, or junk) means both the
 // skin and the workflow tiles should be re-read.
@@ -644,6 +661,45 @@ export function pushWants(data) {
     return { skin: true, workflow: !skinOnly };
 }
 
+// Runs `run` on the first push of a burst and at most once more per window,
+// so a change a plugin made shows at once instead of after the window, while a
+// fast stream still costs one run per window. `wantsWorkflow` is OR-ed across
+// the messages a window swallowed, so a skin-only push cannot drop the workflow
+// re-read a push behind it asked for.
+export function createPushCoalescer({ run, windowMs, setTimer = setTimeout, clearTimer = clearTimeout }) {
+    let timer = null;
+    let queued = false;
+    let queuedWorkflow = false;
+
+    function fire(wantsWorkflow) {
+        run(wantsWorkflow);
+        timer = setTimer(() => {
+            timer = null;
+            if (!queued) return;
+            const workflow = queuedWorkflow;
+            queued = false;
+            queuedWorkflow = false;
+            fire(workflow);
+        }, windowMs);
+    }
+
+    return {
+        push(wantsWorkflow) {
+            if (timer === null) { fire(Boolean(wantsWorkflow)); return; }
+            queued = true;
+            if (wantsWorkflow) queuedWorkflow = true;
+        },
+        // The page going hidden closes the sockets; a window left open would
+        // fire a run after the next open with nothing behind it.
+        reset() {
+            clearTimer(timer);
+            timer = null;
+            queued = false;
+            queuedWorkflow = false;
+        },
+    };
+}
+
 // -> the endpoint id when `plugin` declares it as a websocket, else null.
 export function liveEndpoint(plugin, live) {
     const id = live?.endpoint;
@@ -652,9 +708,10 @@ export function liveEndpoint(plugin, live) {
 }
 
 export function parseSkinAnswer(raw) {
-    const out = { surfaces: [], live: null };
+    const out = { surfaces: [], live: null, settingsOpen: null };
     if (!raw || typeof raw !== 'object' || raw.version !== SKIN_VERSION || !Array.isArray(raw.surfaces)) return out;
     out.live = parseLive(raw.live);
+    out.settingsOpen = parseSettingsOpen(raw.settingsOpen);
 
     const seen = new Set();
     const slots = new Set(); // one header button, and one hint and line per tile

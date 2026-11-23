@@ -3,7 +3,8 @@
 // These lock spec invariant I1: the 8→16→8 round trip is lossless.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { led8to16, ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewComposite, ledLiveWriteState } from '../src/modules/led-color.js';
+import { readFileSync } from 'node:fs';
+import { led8to16, ledRgbToColor16, ledColor16ToHex8, ledHexToRgb, ledPreviewComposite, ledPreviewPayload, ledValueOf, ledWithValue } from '../src/modules/led-color.js';
 
 test('led8to16 byte-replicates the 8-bit value up', () => {
     assert.equal(led8to16(0x00), '0000');
@@ -109,64 +110,126 @@ test('composite: missing palette entries read as black', () => {
         { front: '000000000000', back: '000000000000' });
 });
 
-// ── ledLiveWriteState ────────────────────────────────────────────────────
-// The payload that actually reaches the machine. There is no preview endpoint:
-// a live colour is a PUT into the bank the firmware is rendering, so these
-// tests lock the two properties that keep that from destroying the palette --
-// the other bank is carried through untouched, and the switch mirrors front.
+// --- preview payload ------------------------------------------------------
+// Preview writes the firmware's live registers and leaves the four stored ones
+// alone, so it never carries the untouched half of the palette -- it names
+// only what is being edited.
 
-test('live write: the colour lands in the bank the machine is rendering', () => {
-    const out = ledLiveWriteState(PALETTE, 'FFFF00000000', '0000FFFF0000', 'awake');
-    assert.equal(out.frontStrip.awake, 'FFFF00000000');
-    assert.equal(out.backStrip.awake, '0000FFFF0000');
+const palette = {
+    frontStrip: { awake: 'FFFF00000000', sleeping: '0000FFFF0000' },
+    backStrip:  { awake: '00000000FFFF', sleeping: 'FFFFFFFFFFFF' },
+    frontSwitch: { awake: 'FFFF00000000', sleeping: '0000FFFF0000' },
+};
+
+test('preview names only the zones being edited', () => {
+    assert.deepEqual(ledPreviewPayload(palette, ['frontStrip'], 'awake'), { frontStrip: 'FFFF00000000' });
+    assert.deepEqual(ledPreviewPayload(palette, ['backStrip'], 'awake'), { backStrip: '00000000FFFF' });
+    assert.deepEqual(ledPreviewPayload(palette, ['frontStrip', 'backStrip'], 'awake'),
+        { frontStrip: 'FFFF00000000', backStrip: '00000000FFFF' });
 });
 
-test('live write: the bank the machine is NOT rendering is preserved', () => {
-    // This is what makes a live write survivable: the half of the palette the
-    // user cannot see is never touched, so a restore only has to undo one bank.
-    const out = ledLiveWriteState(PALETTE, 'FFFF00000000', '0000FFFF0000', 'awake');
-    assert.equal(out.frontStrip.sleeping, '000000001111');
-    assert.equal(out.backStrip.sleeping, '000000002222');
+test('preview reads the bank being edited, not the one the machine renders', () => {
+    // The whole point of the endpoint: show an asleep colour on an awake
+    // machine. No machineBank argument exists here, by design.
+    assert.deepEqual(ledPreviewPayload(palette, ['frontStrip'], 'sleeping'), { frontStrip: '0000FFFF0000' });
+    assert.deepEqual(ledPreviewPayload(palette, ['backStrip'], 'sleeping'), { backStrip: 'FFFFFFFFFFFF' });
+    // Anything that is not 'sleeping' is the awake bank.
+    for (const bank of ['awake', undefined, null, 'nonsense']) {
+        assert.deepEqual(ledPreviewPayload(palette, ['frontStrip'], bank), { frontStrip: 'FFFF00000000' });
+    }
 });
 
-test('live write: painting while the machine sleeps targets the sleeping bank', () => {
-    const out = ledLiveWriteState(PALETTE, 'FFFF00000000', '0000FFFF0000', 'sleeping');
-    assert.equal(out.frontStrip.sleeping, 'FFFF00000000');
-    assert.equal(out.backStrip.sleeping, '0000FFFF0000');
-    assert.equal(out.frontStrip.awake, 'AAAA00000000'); // awake bank untouched
-    assert.equal(out.backStrip.awake, '0000BBBB0000');
+test('the switch zone previews on the front strip', () => {
+    // frontSwitch is not a strip the endpoint knows -- the firmware derives the
+    // HV switch colours from the front strip.
+    assert.deepEqual(ledPreviewPayload(palette, ['frontSwitch'], 'awake'), { frontStrip: 'FFFF00000000' });
+    assert.deepEqual(ledPreviewPayload(palette, ['frontSwitch'], 'sleeping'), { frontStrip: '0000FFFF0000' });
 });
 
-test('live write: frontSwitch mirrors the front strip, never an independent value', () => {
-    // The firmware derives the HV switch colours from the front strip and the
-    // server ignores frontSwitch on write; sending anything else is a lie.
-    const out = ledLiveWriteState(PALETTE, 'FFFF00000000', '0000FFFF0000', 'awake');
-    assert.deepEqual(out.frontSwitch, out.frontStrip);
+test('nothing to preview is null, because naming no strip is a 400', () => {
+    for (const zones of [[], null, undefined, ['nonsense']]) {
+        assert.equal(ledPreviewPayload(palette, zones, 'awake'), null, String(zones));
+    }
 });
 
-test('live write: an unrecognised bank is treated as awake', () => {
-    // ledMachinePaletteState() only ever yields 'awake' for a state it does not
-    // recognise; make sure a stray value cannot write the sleeping bank.
-    const out = ledLiveWriteState(PALETTE, 'FFFF00000000', '0000FFFF0000', undefined);
-    assert.equal(out.frontStrip.awake, 'FFFF00000000');
-    assert.equal(out.frontStrip.sleeping, '000000001111');
+test('a missing colour previews as off rather than as undefined', () => {
+    // Every value must still be 12 hex characters or the POST is rejected.
+    for (const [p, zones] of [[null, ['frontStrip']], [{}, ['frontStrip']], [{ frontStrip: {} }, ['frontStrip']]]) {
+        const payload = ledPreviewPayload(p, zones, 'awake');
+        assert.deepEqual(payload, { frontStrip: '000000000000' });
+        assert.match(payload.frontStrip, /^[0-9a-fA-F]{12}$/);
+    }
+    for (const value of Object.values(ledPreviewPayload(palette, ['frontStrip', 'backStrip'], 'sleeping'))) {
+        assert.match(value, /^[0-9a-fA-F]{12}$/);
+    }
 });
 
-test('live write: missing palette/colours read as black rather than undefined', () => {
-    const out = ledLiveWriteState(null, null, undefined, 'awake');
-    assert.deepEqual(out, {
-        frontStrip: { awake: '000000000000', sleeping: '000000000000' },
-        backStrip: { awake: '000000000000', sleeping: '000000000000' },
-        frontSwitch: { awake: '000000000000', sleeping: '000000000000' },
-    });
+// --- the preview API wrappers --------------------------------------------
+// api.js touches the DOM at module load, so the two wrappers are lifted out of
+// the source the way the other api tests do. What matters is the status
+// mapping: a capability answer must not reach the user as a failure.
+const apiSource = readFileSync(new URL('../src/modules/api.js', import.meta.url), 'utf8');
+
+function ledPreviewApi(status) {
+    const calls = [];
+    const src = ['previewLedStrip', 'clearLedStripPreview']
+        .map(name => apiSource.match(new RegExp('export async function ' + name + '\\([\\s\\S]*?\\n\\}'))[0].replace('export ', ''))
+        .join('\n');
+    return new Function('API_BASE_URL', 'fetch', `${src}\nreturn { previewLedStrip, clearLedStripPreview, calls: arguments[2] };`)(
+        '/api/v1',
+        async (url, opts) => { calls.push({ url, opts }); return { status, ok: status >= 200 && status < 300 }; },
+        calls);
+}
+
+test('a non-Bengle answers "no preview here", not an error', async () => {
+    // The category is already gated on model; 404 must not become a toast.
+    const api = ledPreviewApi(404);
+    assert.equal(await api.previewLedStrip({ frontStrip: 'FFFF00000000' }), false);
+    assert.equal(await api.clearLedStripPreview(), false);
 });
 
-test('live write: a composite feeds straight into the payload', () => {
-    // The Lighting page's cross-state preview path end to end: compose what the
-    // user should see, then write it into the bank the machine renders.
-    const { front, back } = ledPreviewComposite(PALETTE, ['frontStrip'], 'sleeping', 'awake');
-    const out = ledLiveWriteState(PALETTE, front, back, 'awake');
-    assert.equal(out.frontStrip.awake, '000000001111');    // the sleep colour, shown now
-    assert.equal(out.backStrip.awake, '0000BBBB0000');     // rear keeps its real colour
-    assert.equal(out.frontStrip.sleeping, '000000001111'); // stored sleep colour intact
+test('preview posts the colours and accepts 202', async () => {
+    const api = ledPreviewApi(202);   // the endpoint returns Accepted, not OK
+    assert.equal(await api.previewLedStrip({ frontStrip: 'FFFF00000000' }), true);
+    const [call] = api.calls;
+    assert.match(call.url, /\/machine\/ledStrip\/preview$/);
+    assert.equal(call.opts.method, 'POST');
+    assert.deepEqual(JSON.parse(call.opts.body), { frontStrip: 'FFFF00000000' });
+
+    const clear = ledPreviewApi(202);
+    assert.equal(await clear.clearLedStripPreview(), true);
+    assert.match(clear.calls[0].url, /\/machine\/ledStrip\/preview\/clear$/);
+    assert.equal(clear.calls[0].opts.method, 'POST');
+});
+
+test('clear treats 503 as "could not", not as a crash', async () => {
+    // Decaid returns 503 when it cannot read the stored palette back. Nothing
+    // to retry from here -- the next sleep/wake transition settles the strip.
+    assert.equal(await ledPreviewApi(503).clearLedStripPreview(), false);
+    // A preview that 503s is a real failure, though: it has no such mapping.
+    await assert.rejects(() => ledPreviewApi(503).previewLedStrip({ frontStrip: 'FFFF00000000' }));
+});
+
+test('a rejected colour still throws, so a bad payload is not silently dropped', async () => {
+    await assert.rejects(() => ledPreviewApi(400).previewLedStrip({ frontStrip: 'nope' }), /status 400/);
+    await assert.rejects(() => ledPreviewApi(500).previewLedStrip({ frontStrip: 'FFFF00000000' }), /status 500/);
+    await assert.rejects(() => ledPreviewApi(500).clearLedStripPreview(), /status 500/);
+});
+
+test('ledValueOf reads HSV value, ledWithValue rescales without shifting hue', () => {
+    assert.equal(ledValueOf('#000000'), 0);
+    assert.equal(ledValueOf('#FFFFFF'), 100);
+    assert.equal(ledValueOf('#804000'), 50);
+
+    // Half brightness halves every channel, so the ratios -- the hue -- hold.
+    assert.equal(ledWithValue('#FF8000', 50), '#804000');
+    assert.equal(ledWithValue('#FF8000', 100), '#FF8000');
+    assert.equal(ledWithValue('#FF8000', 0), '#000000');
+    // Round-trip: what you read back is what you asked for.
+    for (const v of [10, 25, 60, 90]) assert.equal(ledValueOf(ledWithValue('#3FA0FF', v)), v);
+    // Black has no hue to scale back up; the caller restores a base colour.
+    assert.equal(ledWithValue('#000000', 80), '#000000');
+    // Out-of-range input is clamped, not trusted.
+    assert.equal(ledWithValue('#FF8000', 500), '#FF8000');
+    assert.equal(ledWithValue('#FF8000', -5), '#000000');
 });

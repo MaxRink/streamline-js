@@ -10,3 +10,10 @@ test('settings reuses process-lifetime listener identities when reopened', () =>
     assert.doesNotMatch(source, /connectDisplayWebSocket\(\(data\) =>/);
     assert.doesNotMatch(source, /document\.addEventListener\('streamline:languagechange', \(\) =>/);
 });
+
+test('cleanupSettings stops the sensor-calibration poll and tears down the maintenance mount', () => {
+    const start = source.indexOf('export function cleanupSettings()');
+    const body = source.slice(start, source.indexOf('\n}\n', start));
+    assert.match(body, /sensorCalStopLive\(\);/);
+    assert.match(body, /maintenanceSequence \+= 1;\s*maintenanceCleanup\?\.\(\);\s*maintenanceCleanup = null;/);
+});

@@ -29,3 +29,33 @@ export function profileAtBrewTemp(profile, first) {
         || profile.steps.map(() => target);
     return { ...profile, steps: profile.steps.map((step, i) => ({ ...step, temperature: temps[i] })) };
 }
+
+// ── Partial `profile` payloads for PUT /workflow ────────────────────────────
+// Decaid deep-merges the PUT body into its current workflow (objects merge, lists
+// are replaced wholesale), and its GET only advances once the BLE write completes.
+// So a debounced read-modify-write of the whole profile can overwrite a change made
+// moments earlier. Sending only the field being changed keeps overlapping writes
+// from reverting each other.
+
+// -> { target_weight } or null when the weight is unusable.
+export function targetWeightProfilePatch(targetWeight) {
+    const weight = Number(targetWeight);
+    return Number.isFinite(weight) && weight > 0 ? { target_weight: weight } : null;
+}
+
+// -> { steps } with the first step at `first` and the rest kept relative to it, or
+// null when the live profile has no steps. `liveProfile` is the workflow's profile;
+// `savedProfile` is the stored record, used for the step distances only when it is
+// the same profile (same title and step count). Never mutates its inputs and never
+// carries any other profile field (notably not target_weight).
+export function brewTempProfilePatch(liveProfile, savedProfile, first) {
+    const live = liveProfile?.steps;
+    if (!Array.isArray(live) || live.length === 0) return null;
+    const target = Number(first);
+    if (!Number.isFinite(target)) return null;
+    const shapeOf = savedProfile && Array.isArray(savedProfile.steps)
+        && savedProfile.steps.length === live.length && savedProfile.title === liveProfile.title
+        ? savedProfile.steps : live;
+    const temps = shiftedTemperatures(shapeOf.map(step => step.temperature), target);
+    return { steps: live.map((step, i) => ({ ...step, temperature: temps ? temps[i] : target })) };
+}

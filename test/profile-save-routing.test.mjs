@@ -72,9 +72,7 @@ function route(record, edited, baseline = null, imported = false, asNew = false)
 
     if (target === 'blocked') return 'blocked';
     if (target === 'put') return 'put-metadata';
-    // target === 'post' — which of the three POST call sites depends on why.
-    if (src?.isDefault) return 'fork-default';
-    if (!src || asNew) return 'post-new';
+    if (!src || asNew || src.isDefault) return 'post-new';
     return 'overwrite';
 }
 
@@ -186,10 +184,10 @@ assert.strictEqual(route(legacy, renoted), 'put-metadata',
 
 const forked = asEdited(legacyDefault);
 forked.steps[0].seconds = 12;
-assert.strictEqual(route(legacyDefault, forked), 'fork-default',
-    'editing a default forks it — PUT would be rejected');
-assert.strictEqual(route(legacyDefault, forked, null, false, true), 'fork-default',
-    'a default still forks on an execution change regardless of which save button was pressed');
+assert.strictEqual(route(legacyDefault, forked), 'post-new',
+    'editing a default saves a separate copy and leaves the bundled record visible');
+assert.strictEqual(route(legacyDefault, forked, null, false, true), 'post-new',
+    'Save As New on a default leaves the bundled record visible, like any other source');
 
 // ── Structural checks against the real source ───────────────────────────────
 // resolveSaveTarget's own full put/post/blocked matrix is covered in
@@ -200,7 +198,7 @@ const editorSource = readFileSync(new URL('../src/modules/profile_editor.js', im
 // The overwrite branch: hides the old visible record only after the
 // replacement exists, and reactivates a deduplicated hidden replacement
 // before hiding the predecessor.
-const overwriteStart = editorSource.indexOf('// Plain SAVE overwriting an existing user profile with a real');
+const overwriteStart = editorSource.indexOf('// Plain SAVE overwriting one of the user\'s own profiles');
 const overwriteEnd = editorSource.indexOf('const oldId = editorState.sourceProfileId;', overwriteStart);
 assert.ok(overwriteStart >= 0 && overwriteEnd > overwriteStart, 'the overwrite branch not found in profile_editor.js');
 const overwriteBranch = editorSource.slice(overwriteStart, overwriteEnd);
@@ -266,7 +264,9 @@ assert.ok(saveProfileStart >= 0 && saveProfileEnd > saveProfileStart, 'saveProfi
 const saveProfileSrc = editorSource.slice(saveProfileStart, saveProfileEnd);
 const uploadCallRe = /saved = await uploadProfileWithParent\([^)]*\);/g;
 const uploadCallMatches = [...saveProfileSrc.matchAll(uploadCallRe)];
-assert.strictEqual(uploadCallMatches.length, 3, 'expected exactly three POST (uploadProfileWithParent) call sites in saveProfile');
+assert.strictEqual(uploadCallMatches.length, 2,
+    'expected exactly two POST (uploadProfileWithParent) call sites in saveProfile — post-new and hide+replace; '
+    + 'a forked default shares the post-new call');
 uploadCallMatches.forEach((m, i) => {
     const sliceStart = m.index + m[0].length;
     const sliceEnd = uploadCallMatches[i + 1]?.index ?? saveProfileSrc.length;
@@ -340,11 +340,23 @@ assert.strictEqual(runUniqueTitle(existing, 'Rao Allongé', null), 'Rao Allongé
 assert.strictEqual(runUniqueTitle(existing, 'Rao Allongé', 'a'), 'Rao Allongé',
     'a record keeping its own title is excluded from its own collision check');
 
-// Favorites follow the old id only on the plain-overwrite POST — a default's
-// fork keeps the default around, and Save As New leaves the source alone.
-const remapMatch = editorSource.match(/if \(oldId && oldId !== saved\.id[^)]*\) \{[\s\S]*?\r?\n        \}/);
-assert.ok(remapMatch, 'the favorite-remap guard not found in profile_editor.js');
-assert.ok(remapMatch[0].includes('!src?.isDefault') && remapMatch[0].includes('!asNew'),
-    'favorite remap must be gated on both !isDefault and !asNew, not on titleChanged');
+// Retiring the old record and repointing the favorite/wake ids are two
+// different decisions, and sharing one condition broke the second: editing a
+// bundled default forks (the server rejects content edits on a default), the
+// default itself stays visible as the reset point — and the favorite slot and
+// wakeProfileId were left pointing at it, so the user's own button put the
+// PRE-EDIT profile back on the machine right after the save had pushed the
+// edited one. Nothing resolves forward off a still-visible record the way
+// loadProfileForWake does off a hidden one, so the remap has to run here.
+// Save As New stays excluded from both: it means "keep the original".
+const retiredGuard = /if \(retiredSource && oldId && oldId !== saved\.id\) \{/g;
+assert.equal((editorSource.match(retiredGuard) || []).length, 2,
+    'the favorite remap and the override move run only when the source was retired, never for a forked default');
+assert.ok(/retiredSource = true;/.test(editorSource.slice(
+        editorSource.indexOf('// Plain SAVE overwriting one of the user\'s own profiles'),
+        editorSource.indexOf('const oldId = editorState.sourceProfileId;'))),
+    'only the hide+replace branch may set retiredSource');
+assert.ok(/else if \(!src \|\| asNew \|\| forkingDefault\)/.test(editorSource),
+    'a forked default takes the plain POST branch, never hide+replace');
 
 console.log('profile-save-routing: all assertions passed');

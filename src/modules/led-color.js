@@ -51,41 +51,57 @@ export const ledPreviewComposite = (palette, editedZoneKeys, editedBank, machine
 };
 
 /**
- * Compose the full LedStripState to PUT in order to show `front`/`back` on the
- * strip RIGHT NOW.
+ * Which colours to POST to `/machine/ledStrip/preview` so the strip shows what
+ * the user is editing.
  *
- * There is no live/preview register on this hardware. The firmware stores one
- * palette — four MMR colour registers, front/rear × awake/sleeping — and
- * renders `zone[bank]`, where `bank` is 'sleeping' only while the machine
- * sleeps and 'awake' in every other state. `PUT /machine/ledStrip` writes those
- * registers straight through, so the ONLY way to drive a colour onto the strip
- * is to write it into the bank the machine is currently rendering. There is no
- * staging step to roll back: whoever writes a live colour is responsible for
- * writing the real palette back afterwards.
+ * This never has to carry the half of the palette the user is not touching: preview writes the firmware's *live* registers and
+ * leaves the four stored ones alone, so naming only the edited zones leaves the
+ * rest showing the stored palette. Naming no zone at all is a 400, so an empty
+ * selection returns null and the caller sends nothing.
  *
- * The bank the machine is NOT rendering is carried through from `basePalette`
- * untouched, so a live write only ever disturbs the half of the palette that is
- * actually visible. `frontSwitch` mirrors the front strip — it is not an
- * independent control (the firmware derives the HV switch colours from the
- * front strip, and the server ignores `frontSwitch` on write).
+ * `frontSwitch` is not a strip the endpoint knows about -- the firmware derives
+ * the HV switch colours from the front strip -- so editing the switch zone
+ * previews on `frontStrip`, which is what the user is looking at anyway.
  *
- * @param {object} basePalette  LedStripState-shaped map to carry the other bank from
- * @param {string} front  12-char colour for the front strip
- * @param {string} back   12-char colour for the rear strip
- * @param {'awake'|'sleeping'} machineBank  bank the machine is rendering now
- * @returns {{frontStrip:object, backStrip:object, frontSwitch:object}} LedStripState to PUT
+ * @param {object} palette  LedStripState-shaped map to read the colour from
+ * @param {string[]} editedZoneKeys  zone keys being edited (e.g. ['frontStrip'])
+ * @param {'awake'|'sleeping'} editedBank  palette bank being edited
+ * @returns {{frontStrip?:string, backStrip?:string}|null}
  */
-export const ledLiveWriteState = (basePalette, front, back, machineBank) => {
-    const bank = machineBank === 'sleeping' ? 'sleeping' : 'awake';
-    const other = bank === 'sleeping' ? 'awake' : 'sleeping';
-    const zone = (zoneKey, live) => ({
-        [bank]: live || '000000000000',
-        [other]: basePalette?.[zoneKey]?.[other] || '000000000000',
-    });
-    const frontStrip = zone('frontStrip', front);
-    return {
-        frontStrip,
-        backStrip: zone('backStrip', back),
-        frontSwitch: { awake: frontStrip.awake, sleeping: frontStrip.sleeping },
-    };
+export const ledPreviewPayload = (palette, editedZoneKeys, editedBank) => {
+    const bank = editedBank === 'sleeping' ? 'sleeping' : 'awake';
+    const colour = (zoneKey) => palette?.[zoneKey]?.[bank] || '000000000000';
+    const payload = {};
+    for (const zoneKey of editedZoneKeys || []) {
+        if (zoneKey === 'frontStrip' || zoneKey === 'frontSwitch') payload.frontStrip = colour(zoneKey === 'frontSwitch' ? 'frontStrip' : zoneKey);
+        else if (zoneKey === 'backStrip') payload.backStrip = colour(zoneKey);
+    }
+    return Object.keys(payload).length ? payload : null;
+};
+
+// ── Brightness ───────────────────────────────────────────────────────────
+// Ambient lighting gets its brightness changed far more often than its hue,
+// so the Lighting page gives brightness its own slider instead of burying it
+// in the colour wheel's value track. These are the two pure conversions that
+// slider needs: HSV value in and out of a '#RRGGBB' string.
+
+/** How bright a '#RRGGBB' is, 0-100 (HSV value). Black is 0. */
+export const ledValueOf = (hex) => {
+    const { r, g, b } = ledHexToRgb(hex);
+    return Math.round((Math.max(r, g, b) / 255) * 100);
+};
+
+/**
+ * `hex` rescaled to a 0-100 brightness, hue and saturation kept.
+ * Black has no hue to scale, so it stays black -- the caller supplies a base
+ * colour (the last lit one) when it wants to bring a dark strip back up.
+ */
+export const ledWithValue = (hex, value) => {
+    const { r, g, b } = ledHexToRgb(hex);
+    const max = Math.max(r, g, b);
+    const v = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    if (!max) return '#000000';
+    const f = (v / 100) * 255 / max;
+    const scale = (c) => Math.max(0, Math.min(255, Math.round(c * f)));
+    return '#' + [scale(r), scale(g), scale(b)].map((c) => c.toString(16).padStart(2, '0')).join('').toUpperCase();
 };

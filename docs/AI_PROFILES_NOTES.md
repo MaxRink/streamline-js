@@ -19,7 +19,7 @@ Keep transport in `api.js`, data ownership in `profileManager.js` or editor stat
 
 The current source loads profile records from Decaid and builds an in-memory map keyed by profile ID. Deleted and superseded/hidden records are excluded from the visible list. The map is cached in IndexedDB as an offline fallback.
 
-Do not assume a title is unique or that a profile ID is permanent after an edit.
+Do not assume a title is unique or that a profile ID is permanent after an edit. Decaid's profile ID hashes execution content only, so a user record can carry a bundled profile's exact title - a de1app import is the common source, since de1app's own copy of a bundled profile differs in its frames and so cannot collide on the ID. Rows whose visible title is shared get a saved-time stamp (`profile-look-alike.js`), counted across the whole visible list: the look-alike pair usually straddles Built-In and Your Profiles, so keying the count by `isDefault` hid it from exactly the case it is for.
 
 Per-profile tile values do not live in the profile's server-side metadata. Decaid rewrites that metadata whenever it re-seeds a bundled profile, which silently discarded the user's dose, yield, and grind. They are stored in the `streamlineProfileOverrides` KV record instead, and `loadAvailableProfiles()` folds them onto each record's `metadata` after loading, so existing `record.metadata.targetDoseWeight` reads keep working. Write a tile edit through `profile-overrides.js`, not back into profile metadata.
 
@@ -32,6 +32,10 @@ Per-profile tile values do not live in the profile's server-side metadata. Decai
 This protects edits to a user fork that has the same title as a bundled/default profile.
 
 Edits can produce a new content-derived ID. When that occurs, remap any favorite slot from the old ID to the new one. Inspect the current editor save/visibility/parent logic before changing it; these fields preserve revert and default-profile behavior.
+
+Plain SAVE on a bundled default takes the same hide+replace route as a user profile: Decaid refuses content edits on a default (`ProfileController.update`), so the fork is the only edit path, and the bundled record is then retired to `hidden` so the edit can keep the title the user knows. Leaving it visible is the mistake to avoid — the edit lands as `… (2)` while the original keeps the name, the favorite slot, `wakeProfileId`, and every title lookup. Retiring it is reversible: `setVisibility` accepts `hidden` for a default (only `deleted` is refused), a hidden default survives Decaid's boot re-seed, `/lineage` ignores visibility so Revert still offers it, and the selector's hidden view can restore it.
+
+`retiredSource` in `saveProfile` is the single gate for everything keyed by the old ID — favorites/`wakeProfileId` remap, and moving the `streamlineProfileOverrides` record. Save As New never sets it: its source stays visible with its own numbers, so the new profile starts from the profile's own defaults rather than inheriting a dial-in the user did not ask it to copy.
 
 ## Favorites
 

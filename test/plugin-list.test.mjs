@@ -267,7 +267,7 @@ const descMatch = source.match(/^function pluginDescription\(plugin\) \{[\s\S]*?
 assert.ok(descMatch, 'pluginDescription not found in settings.js');
 const pluginDescription = new Function(`${descMatch[0]}\nreturn pluginDescription;`)();
 
-test('a card with only custom-UI settings keeps Open, enable and version controls without raw fields', () => {
+test('a card with only custom-UI settings keeps Open and version info, hides its enable toggle, and has no raw fields', () => {
     const match = source.match(/^function renderPluginCard\(pluginId, plugins, \{ asPage = false \} = \{\}\) \{[\s\S]*?\r?\n\}/m);
     assert.ok(match, 'renderPluginCard not found');
     const render = new Function('pluginCardOverride', 'pluginViewModel', 'getTranslation',
@@ -283,15 +283,84 @@ test('a card with only custom-UI settings keeps Open, enable and version control
     };
     const html = render(plugin.id, [plugin], { asPage: true });
     assert.match(html, /data-i18n-key="Open"/);
-    assert.match(html, /plugin-enable-toggle" checked/);
+    assert.match(html, /<div data-role="plugin-enable-row" hidden>/, 'the switch stays hidden until the probe allows it');
+    assert.match(html, /data-i18n-key="Manage this plugin in the Decaid dashboard\."/);
+    assert.doesNotMatch(html, /data-role="plugin-manage"/);
     assert.match(html, /data-role="plugin-version-info"/);
     assert.doesNotMatch(html, /flowReadings|data-setting-key/);
-    const href = html.match(/<a href="([^"]+)"/)[1];
-    assert.equal(new URL(href).searchParams.get('returnTo'),
+    // Open is a button, not a link: a plugin whose skin answer declares
+    // `settingsOpen` gets a dialog over Settings instead of losing the page
+    // (issue #173). The URL rides on the element as the fallback target, and is
+    // still the full settings route, returnTo included.
+    assert.match(html, /<button type="button" data-role="plugin-open"/);
+    assert.doesNotMatch(html, /<a href="[^"]*plugins\/custom\.reaplugin\/ui/);
+    const fallbackUrl = html.match(/data-plugin-url="([^"]+)"/)[1].replace(/&amp;/g, '&');
+    assert.equal(new URL(fallbackUrl).searchParams.get('returnTo'),
         'http://localhost:24803/index.html?page=settings');
 
     plugin.settings.normal = { type: 'boolean', default: false };
     assert.match(render(plugin.id, [plugin]), /data-setting-key="normal"/);
+});
+
+// ── What a tap on Open does ────────────────────────────────────────────────
+//
+// The declaration is read on the tap, not when the card is drawn: the list
+// draws a card per installed plugin, so reading every plugin's `skin` answer
+// to decide how to draw one button would cost a request per plugin. A plugin
+// that declares no `skin` endpoint is never asked, and any failure navigates.
+
+test('Open reads the declaration only from a loaded plugin that serves skin', () => {
+    const match = source.match(/^async function readSettingsOpen\(plugin\) \{[\s\S]*?\r?\n\}/m);
+    const declares = source.match(/^function declaresSkinEndpoint\(plugin\) \{[\s\S]*?\r?\n\}/m);
+    assert.ok(match && declares, 'readSettingsOpen not found');
+    const calls = [];
+    const read = new Function('callPluginEndpoint', 'parseSkinAnswer', 'logger', 'setTimeout',
+        `${declares[0]}\n${match[0]}\nreturn readSettingsOpen;`)(
+        (id, endpoint, body, method) => { calls.push([id, endpoint, method]); return Promise.resolve({ version: 1, surfaces: [], settingsOpen: { type: 'open', presentation: 'overlay' } }); },
+        answer => ({ settingsOpen: answer?.settingsOpen || null }),
+        { debug() {} }, () => 0);
+
+    const ui = [{ id: 'ui', type: 'http' }];
+    const skin = [{ id: 'ui', type: 'http' }, { id: 'skin', type: 'http' }];
+    return Promise.all([
+        read({ id: 'a.reaplugin', loaded: true, api: skin }),
+        read({ id: 'b.reaplugin', loaded: true, api: ui }),       // no skin endpoint
+        read({ id: 'c.reaplugin', loaded: false, api: skin }),    // not loaded
+        read(null),
+    ]).then(([withSkin, noSkin, notLoaded, none]) => {
+        assert.deepEqual(withSkin, { type: 'open', presentation: 'overlay' });
+        assert.equal(noSkin, null);
+        assert.equal(notLoaded, null);
+        assert.equal(none, null);
+        assert.deepEqual(calls, [['a.reaplugin', 'skin', 'GET']], 'only the plugin that serves skin is asked');
+    });
+});
+
+test('a skin read that fails or declares nothing leaves Open navigating', () => {
+    const match = source.match(/^async function readSettingsOpen\(plugin\) \{[\s\S]*?\r?\n\}/m);
+    const declares = source.match(/^function declaresSkinEndpoint\(plugin\) \{[\s\S]*?\r?\n\}/m);
+    const build = (answer) => new Function('callPluginEndpoint', 'parseSkinAnswer', 'logger', 'setTimeout',
+        `${declares[0]}\n${match[0]}\nreturn readSettingsOpen;`)(
+        () => (answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)),
+        a => ({ settingsOpen: a?.settingsOpen || null }),
+        { debug() {} }, () => 0);
+    const plugin = { id: 'a.reaplugin', loaded: true, api: [{ id: 'skin', type: 'http' }] };
+    return Promise.all([
+        build(new Error('bridge down'))(plugin),
+        build({ version: 1, surfaces: [] })(plugin),
+        build(null)(plugin),
+    ]).then(results => assert.deepEqual(results, [null, null, null]));
+});
+
+test('the fallback and the overlay share one read, and the overlay is loaded lazily', () => {
+    const bind = source.match(/^function bindPluginOpenButton\(cardEl, plugin\) \{[\s\S]*?\r?\n\}/m);
+    assert.ok(bind, 'bindPluginOpenButton not found');
+    // No declaration: today's navigation, to the URL on the element.
+    assert.match(bind[0], /if \(!action\) \{\s*\r?\n\s*window\.location\.assign\(pageUrl\);/);
+    // The dashboard's overlay module is imported on demand: the settings page
+    // must not pull it in just to draw a card.
+    assert.match(bind[0], /await import\('\.\.\/modules\/plugin-overlay\.js'\)/);
+    assert.match(bind[0], /openPluginOverlay\(plugin, action, pageUrl/);
 });
 
 test('a bridge ui URL is dropped from the end of a description', () => {
@@ -440,3 +509,40 @@ test('a dashboard link returns to the dashboard and can select a plugin view', (
     // The view still goes through when there is nothing safe to return to.
     assert.equal(buildPluginUiUrl(plugin, base, 'javascript:alert(1)', { view: 'next' }), `${base}/plugins/p.reaplugin/ui?view=next`);
 });
+
+// ── Visualizer account gate ──────────────────────────────────────────────────
+// The manual "Upload to Visualizer" entry is offered only to a logged-in
+// account: the plugin owns the credentials, so its settings are the only test.
+{
+    const { visualizerAccountConfigured } = await import('../src/modules/visualizer-account.js');
+
+    test('a logged-in account is offered the upload', () => {
+        // Secure password: state only, never plaintext (decaid #588).
+        assert.equal(visualizerAccountConfigured({ Username: 'mark', Password: { isSet: true } }), true);
+        // Older decaid still answers with the string.
+        assert.equal(visualizerAccountConfigured({ Username: 'mark', Password: 'hunter2' }), true);
+    });
+
+    test('anything short of a working login is not', () => {
+        const cases = {
+            'no settings at all (plugin absent)': undefined,
+            'read failed': null,
+            'nothing configured': {},
+            'username only': { Username: 'mark' },
+            'password only': { Password: { isSet: true } },
+            'password field present but unset': { Username: 'mark', Password: { isSet: false } },
+            'empty password string': { Username: 'mark', Password: '' },
+            'empty username': { Username: '', Password: { isSet: true } },
+            'account switched off': { Username: 'mark', Password: { isSet: true }, Enabled: false },
+        };
+        for (const [why, settings] of Object.entries(cases)) {
+            assert.equal(visualizerAccountConfigured(settings), false, why);
+        }
+    });
+
+    test('Enabled is only disqualifying when explicitly false', () => {
+        // An older plugin manifest has no Enabled field; absence must not read as off.
+        assert.equal(visualizerAccountConfigured({ Username: 'm', Password: { isSet: true }, Enabled: undefined }), true);
+        assert.equal(visualizerAccountConfigured({ Username: 'm', Password: { isSet: true }, Enabled: true }), true);
+    });
+}

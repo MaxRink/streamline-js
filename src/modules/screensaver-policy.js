@@ -40,7 +40,9 @@ export function isMachineAsleep(machineState) {
 // caused for a foreground operation isn't an idle machine.
 //
 // ponytail: one module-global boolean — the firmware endpoint 409s a second
-// concurrent update, so there is never more than one thing suppressing.
+// concurrent update, so there is never more than one thing suppressing. The
+// long-press sleep-and-exit deliberately does NOT take this: it hides the
+// overlay itself on the way back in, and the wake it sends restores the dim.
 let suppressed = false;
 
 /** Suppress the screensaver + panel dim for the duration of a foreground op. */
@@ -141,12 +143,17 @@ export function deriveSleepButtonAction({ machineState, screensaverActive = fals
 /**
  * What the panel brightness should do on a machine state TRANSITION.
  *
- * 'error' means the DE1 fell off BLE. It has to release the dim, because the only
- * other thing that does is an 'idle' frame and a machine that is gone never sends
- * one: a drop while the machine was asleep used to leave the tablet dark for the
- * rest of the session, recoverable only by the settings slider the user could not
- * see (reaprime#519). If it comes back still asleep, the sleeping transition dims
- * it again.
+ * The dim is released by LEAVING sleep, not by arriving at 'idle'. A DE1 that
+ * wakes goes 'sleeping' -> 'booting'/'heating'/'busy' and only reaches 'idle'
+ * once the group is up to temperature, which took 23 s on the report in #201:
+ * the overlay came down immediately and the panel stayed at the saver level for
+ * the whole warm-up.
+ *
+ * 'error' means the DE1 fell off BLE. It has to release the dim too, because a
+ * machine that is gone never sends another frame: a drop while it was asleep used
+ * to leave the tablet dark for the rest of the session, recoverable only by the
+ * settings slider the user could not see (reaprime#519). If it comes back still
+ * asleep, the sleeping transition dims it again.
  *
  * Transition-only by design — the snapshot feed repeats the same state at ~10 Hz,
  * and re-dimming on every frame would clobber a brightness the user just chose.
@@ -156,7 +163,7 @@ export function deriveSleepButtonAction({ machineState, screensaverActive = fals
 export function deriveDisplayAction(previousState, currentState) {
     if (previousState === currentState) return 'none';
     if (isMachineAsleep(currentState)) return 'dim';
-    if (currentState === 'idle' || currentState === 'error') return 'restore';
+    if (!previousState || isMachineAsleep(previousState) || currentState === 'error') return 'restore';
     return 'none';
 }
 
@@ -173,4 +180,20 @@ export function deriveDisplayAction(previousState, currentState) {
  */
 export function mayTapWakeMachine({ screensaverActive = false, onPluginControl = false } = {}) {
     return !!screensaverActive && !onPluginControl;
+}
+
+/**
+ * Should coming back to the app wake the machine we put to sleep on the way out?
+ *
+ * Asleep, idle, or unknown all wake: the sleep confirmation can land after the app
+ * has already left, so the last state we saw may still read 'idle', and waking an
+ * idle machine is a no-op. Anything else means the machine is busy (espresso,
+ * steam, heating, flush, error...) — leave it alone.
+ *
+ * @returns {'wake'|'skip'}
+ */
+export function deriveReturnWake(machineState) {
+    if (isMachineAsleep(machineState)) return 'wake';
+    const state = String(machineState || '').toLowerCase();
+    return (state === '' || state === 'idle') ? 'wake' : 'skip';
 }

@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { readFileSync } from 'node:fs';
+import { profileFingerprint } from '../src/modules/dye-selection.js';
 
-import { workflowTileValues, changedTileValues, tilesToPaint, FORCED_KEYS } from '../src/modules/workflow-watch.js';
+import { workflowTileValues, changedTileValues, tilesToPaint, profileChanged, FORCED_KEYS, API_DEBOUNCE_MS, WORKFLOW_EDIT_GUARD_MS } from '../src/modules/workflow-watch.js';
 
 // The dashboard learns about a workflow changed elsewhere (Decaid's UI, another
 // skin, a DYE2 page) only by re-reading GET /workflow -- there is no workflow
@@ -24,6 +25,7 @@ const workflow = ({ steam = {}, ...over } = {}) => ({
 test('every main-page tile value is read off the workflow', () => {
     assert.deepEqual(workflowTileValues(workflow()), {
         profileTitle: 'Londonium',
+        profileSig: profileFingerprint({ title: 'Londonium', steps: [{ temperature: 89 }] }),
         grind: '21',
         dose: 18,
         yield: 36,
@@ -113,9 +115,9 @@ test('a profile switch shows up as a title change', () => {
         let sinceEdit = msSinceEdit;
         const refresh = new Function(
             'isSubPage', 'ui', 'getWorkflow', 'logger', 'loadInitialData',
-            'workflowTileValues', 'tilesToPaint',
+            'workflowTileValues', 'tilesToPaint', 'profileChanged',
             'WORKFLOW_REFRESH_MIN_GAP_MS', 'tileEditPending', 'WORKFLOW_TILE_PAINTERS',
-            'refreshWorkflowTilesSoon', 'seed', 'calls', 'state',
+            'refreshWorkflowTilesSoon', 'syncWorkflowGrindStep', 'seed', 'calls', 'state',
             `let lastWorkflowTiles = seed;
              let lastWorkflowRefreshAt = 0;
              let pendingForcedRefresh = state.force;
@@ -125,16 +127,18 @@ test('a profile switch shows up as a title change', () => {
         )(
             () => subPage,
             { msSinceTileInteraction: () => sinceEdit },
-            getWorkflowImpl ? async () => { calls.fetches++; return getWorkflowImpl(); }
+            getWorkflowImpl ? async () => { calls.fetches++; if (editAfterRead) sinceEdit = 100; return getWorkflowImpl(); }
                 : async () => { calls.fetches++; if (editAfterRead) sinceEdit = 100; return workflow; },
             { info() {}, warn() {} },
             async () => { calls.reloads++; },
             workflowTileValues,
             tilesToPaint,
+            profileChanged,
             250,
             () => sinceEdit < 1100,
             new Proxy({}, { get: (_t, key) => (value) => calls.painted.push([key, value]) }),
             () => { calls.retries++; },
+            () => {},
             baseline,
             calls,
             state,
@@ -148,6 +152,28 @@ test('a profile switch shows up as a title change', () => {
         steamSettings: { duration: 45, flow: 0.8, stopAtTemperature: 0 },
         hotWaterData: { volume: 50, targetTemperature: 80 },
         rinseData: { duration: 5 },
+    });
+
+    const unreachable = () => { throw new TypeError('Failed to fetch'); };
+
+    test('a failed forced read repaints the confirmed tiles and keeps the force', async () => {
+        const { refresh, calls, state } = build({ baseline: workflowTileValues(base()), force: true, getWorkflowImpl: unreachable });
+        await refresh();
+        assert.deepEqual(Object.fromEntries(calls.painted), tilesToPaint(workflowTileValues(base()), workflowTileValues(base()), { force: true }));
+        assert.equal(state.read(), true, 'the first successful read must still repaint');
+    });
+
+    test('a failed read repaints nothing unless a refresh was forced', async () => {
+        const { refresh, calls } = build({ baseline: workflowTileValues(base()), getWorkflowImpl: unreachable });
+        await refresh();
+        assert.deepEqual(calls.painted, []);
+    });
+
+    test('a failed forced read leaves a tile edit made during the read alone', async () => {
+        const { refresh, calls, state } = build({ baseline: workflowTileValues(base()), force: true, editAfterRead: true, getWorkflowImpl: unreachable });
+        await refresh();
+        assert.deepEqual(calls.painted, []);
+        assert.equal(state.read(), true);
     });
 
     test('a tile touched moments ago blocks the refresh entirely', async () => {
@@ -286,4 +312,48 @@ test('tilesToPaint: unknown previous state with force still returns the four key
     const next = { profileTitle: 'A', dose: 18, yield: 36, grind: '5', brewTemp: 93, flush: 5 };
     assert.deepEqual(tilesToPaint(null, next, { force: true }), { dose: 18, yield: 36, grind: '5', brewTemp: 93, flush: 5 });
     assert.deepEqual(tilesToPaint(null, next), {});
+});
+
+test('profile change detection: same title, different steps is a profile change', () => {
+    const wf = steps => ({ profile: { title: 'A', steps } });
+    const before = workflowTileValues(wf([{ name: 'fill', pump: 'flow' }]));
+    const after = workflowTileValues(wf([{ name: 'fill', pump: 'flow' }, { name: 'pour', pump: 'pressure' }]));
+    const changed = changedTileValues(before, after);
+    assert.ok('profileSig' in changed);
+    assert.ok(!('profileTitle' in changed));
+    assert.equal(profileChanged(changed), true);
+});
+
+test('profile change detection: same fingerprint is unchanged, brew temp alone is not a profile change', () => {
+    const wf = temperature => ({ profile: { title: 'A', steps: [{ name: 'fill', temperature }] } });
+    const changed = changedTileValues(workflowTileValues(wf(90)), workflowTileValues(wf(93)));
+    assert.deepEqual(Object.keys(changed), ['brewTemp']);
+    assert.equal(profileChanged(changed), false);
+    assert.equal(profileChanged({}), false);
+});
+
+test('profile change detection: null and garbage are safe', () => {
+    assert.equal(profileChanged(null), false);
+    assert.equal(profileChanged(undefined), false);
+    for (const bad of [null, {}, { profile: null }, { profile: 'x' }, { profile: 5 }, { profile: { steps: 'nope' } }]) {
+        assert.doesNotThrow(() => workflowTileValues(bad));
+    }
+    assert.deepEqual(changedTileValues(workflowTileValues({ profile: { title: 'A' } }), workflowTileValues(null)), {});
+});
+
+test('the edit guard outlasts the tile write debounce and is not duplicated as a literal', () => {
+    assert.ok(WORKFLOW_EDIT_GUARD_MS > API_DEBOUNCE_MS);
+    // A settled tile value waits this long before Decaid hears it, and a cafe
+    // sharing a dial-in pays it on the sending machine (issue #174). A burst is
+    // one PUT at any value, so there is nothing to buy by waiting longer.
+    assert.ok(API_DEBOUNCE_MS <= 300, `tile writes must not wait longer than 300 ms (got ${API_DEBOUNCE_MS})`);
+    assert.doesNotMatch(readFileSync(new URL('../src/modules/app.js', import.meta.url), 'utf8'), /WORKFLOW_EDIT_GUARD_MS\s*=\s*\d/);
+    assert.doesNotMatch(readFileSync(new URL('../src/modules/ui.js', import.meta.url), 'utf8'), /API_DEBOUNCE_MS\s*=\s*\d/);
+});
+
+test('tilesToPaint: forcing the baseline onto itself restores confirmed tiles, never the profile', () => {
+    const confirmed = { profileTitle: 'A', profileSig: 'sig', dose: 18, yield: 36, grind: '5', brewTemp: 93 };
+    assert.deepEqual(tilesToPaint(confirmed, confirmed, { force: true }),
+        { dose: 18, yield: 36, grind: '5', brewTemp: 93 });
+    assert.deepEqual(tilesToPaint(null, null, { force: true }), {});
 });

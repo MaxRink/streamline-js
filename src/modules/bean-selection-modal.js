@@ -1,14 +1,13 @@
 import { getBeans, getBeanBatches, updateWorkflow } from './api.js';
 import { getTranslation } from './i18n.js';
-import { SKIN_BEAN_FLAG } from './dye-context.js';
 import { selectableBeans, selectableBatches, currentBeanContext } from './bean-selection.js';
 
-/** Select the bean batch for the next shot; normal workflow cleanup clears it afterward. */
+/** Select the bean batch; it persists across shots until changed. */
 export async function openBeanSelectionModal({ onSaved } = {}) {
     const token = { active: true, generation: 0 };
     const dialog = document.createElement('dialog');
     dialog.setAttribute('aria-labelledby', 'bean-selection-heading');
-    dialog.className = 'rounded-2xl bg-[var(--background-color)] p-6 text-[var(--text-primary)]';
+    dialog.className = 'rounded-2xl bg-[var(--bgmain-color)] p-6 text-[var(--text-primary)]';
     dialog.innerHTML = `<form method="dialog" class="flex w-[min(92vw,640px)] flex-col gap-5">
       <h2 id="bean-selection-heading" class="text-[26px]">${getTranslation('Select coffee batch for next shot')}</h2>
       <label class="flex flex-col gap-2"><span>${getTranslation('Coffee')}</span><select name="bean" class="rounded-lg p-3 text-black" required><option value="">${getTranslation('Choose coffee')}</option></select></label>
@@ -60,7 +59,7 @@ export async function openBeanSelectionModal({ onSaved } = {}) {
         batchSelect.disabled = true;
         status.textContent = getTranslation('Saving coffee for next shot…');
         try {
-            await updateWorkflow({ context: { ...context, extras: { [SKIN_BEAN_FLAG]: true } } }); // flagged so the post-shot clean-up drops it
+            await updateWorkflow({ context }, 'beans.select');
             if (token.active) { onSaved?.(context); dialog.close(); }
         } catch (_) { if (token.active) { save.disabled = false; beanSelect.disabled = false; batchSelect.disabled = false; status.textContent = getTranslation('Could not save coffee for next shot'); } }
     });
