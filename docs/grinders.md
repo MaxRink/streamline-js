@@ -26,9 +26,9 @@ The Grind tile is a recipe value (remembered per profile). The grinder has its o
 - **Follow the grinder:** when the grinder's setting changes, the Grind tile takes it, as if you had typed it (the profile remembers it too). Use this for a hand-set grinder. It acts when the grinder's reading *changes*, so a value you type afterwards stays until the grinder moves again. Only plain numbers are followed; a reading with a unit or in words ("827 ddValueDum", "espresso/A") is not.
 - **Send the grind to the grinder:** changing the Grind tile sets the grinder. Only offered when the connected grinder can be set to a number (its plugin declares the setting command with a numeric range). The value is held to that range. A hand-set grinder cannot move its burrs, so leave this off for it.
 
-With both on, a value one side just wrote is not sent back, so they do not fight.
-
 Whatever the switches say, a recipe that names no grind shows the connected grinder's own reading on the tile instead of a dash, marked **Grinder** underneath. It is shown, not saved: the recipe keeps no grind until you set one or Follow takes a plain number. Readings with a unit or in words are shown as the grinder reports them, and −/+ start only from a plain number.
+
+With both on, a value one side just wrote is not sent back, so they do not fight.
 
 The Grinder page also opens the plugin's own settings and diagnostics pages when the plugin offers them, in a dialog over the page with a **Close** button (a tap outside it or Escape closes it too). The host must allow the skin to frame those pages (`Content-Security-Policy: frame-ancestors` naming the skin's origin); the page gets `embed=1` and `theme=light|dark` like a plugin overlay. A page Decaid answers with an error, or one that does not load within 10 s, shows an error instead, and **Open anyway** under the dialog opens the page in place of the skin for a host that refuses to be framed (the kiosk then leaves the skin).
 
