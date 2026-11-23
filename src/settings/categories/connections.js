@@ -11,6 +11,7 @@ import { getTranslation, translatePage } from '../../modules/i18n.js';
 import { logger } from '../../modules/logger.js';
 import { canSendGrind } from '../../modules/grinder-sync.js';
 import { getGrinderSync, setGrinderSync } from '../../modules/grinder-runtime.js';
+import { openSurfaceDialog, closeSurfaceDialog, isSurfaceDialogOpen } from '../../modules/surface-dialog.js';
 import * as ui from '../../modules/ui.js';
 
 // Decaid's own list of device plugins; a link to a file that is not on GitHub yet would 404.
@@ -80,13 +81,14 @@ function deviceCard(device, preferred, info) {
     </div>`;
 }
 
-// The plugin's own pages (settings, diagnostics), built by Decaid for this device.
+// The plugin's own pages (settings, diagnostics), built by Decaid for this device; they open in a dialog.
 function surfaceLinks(info) {
     const origin = new URL(API_BASE_URL, window.location.href).origin;
     return (info?.surfaces ?? []).map(surface => {
         let href;
         try { href = new URL(surface.href, origin).href; } catch { return ''; }
-        return `<a href="${esc(href)}" class="border-2 border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] hover:bg-[var(--button-primary-bg)] hover:text-white h-[62px] px-[28px] rounded-[67.5px] text-[24px] font-bold transition-colors duration-200 inline-flex items-center">${esc(surface.label || surface.role)}</a>`;
+        const label = esc(surface.label || surface.role);
+        return `<button type="button" data-surface="${esc(href)}" data-label="${label}" aria-haspopup="dialog" class="border-2 border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] hover:bg-[var(--button-primary-bg)] hover:text-white h-[62px] px-[28px] rounded-[67.5px] text-[24px] font-bold transition-colors duration-200 inline-flex items-center">${label}</button>`;
     }).join('');
 }
 
@@ -141,7 +143,7 @@ async function mountGrinder(container) {
     const render = async () => {
         const data = await load();
         if (!active) return;
-        if (pressed) return; // mid-tap: never replace what the finger is on
+        if (pressed || isSurfaceDialogOpen()) return; // never replace what the finger or the open dialog is on
         container.innerHTML = view(data);
         translatePage();
     };
@@ -165,7 +167,9 @@ async function mountGrinder(container) {
         const button = event.target.closest('button');
         if (!button) return;
         const { dataset } = button;
-        if (dataset.search !== undefined || dataset.rescan !== undefined) {
+        if (dataset.surface) {
+            openSurfaceDialog(dataset.surface, dataset.label);
+        } else if (dataset.search !== undefined || dataset.rescan !== undefined) {
             // REST, not the device socket: this page never opens it. Bounded by scanForDevices.
             toast('Searching for grinders...', 3000, 'info');
             scanForDevices().catch(error => logger.warn('Grinder search failed:', error)).finally(() => { if (active) render(); });
@@ -194,6 +198,7 @@ async function mountGrinder(container) {
     return () => {
         active = false;
         clearInterval(timer);
+        closeSurfaceDialog();
         container.removeEventListener('click', onClick);
         container.removeEventListener('change', onChange);
         container.removeEventListener('pointerdown', press);

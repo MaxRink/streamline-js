@@ -17,11 +17,30 @@ export function deviceSetting(snapshot) {
     return typeof raw === 'string' ? raw : null;
 }
 
-/** A plain number from a grinder's setting string; null for text such as "espresso/A". */
+/** The number a grinder's setting string leads with, unit and all ("827 ddValueDum" -> 827); null for text such as "espresso/A". */
 export function parseDeviceNumber(text) {
-    if (typeof text !== 'string' || !/^\s*-?\d+(\.\d+)?\s*$/.test(text)) return null;
-    const n = Number(text);
+    const match = typeof text === 'string' && text.match(/^\s*(-?\d+(?:\.\d+)?)(?:\s+\p{L}[\p{L}\p{N}_]*)?\s*$/u);
+    if (!match) return null;
+    const n = Number(match[1]);
     return Number.isFinite(n) ? n : null;
+}
+
+/** The grinder's reading as the Grind tile shows it: its number when it leads with one, else its own text. */
+export function readingText(text) {
+    if (typeof text !== 'string' || !text.trim()) return null;
+    const n = parseDeviceNumber(text);
+    return n === null ? text.trim() : String(n);
+}
+
+/**
+ * What the Grind tile shows: the workflow's grind, else the connected grinder's own reading
+ * (flagged, so the tile can say whose number it is), else a dash.
+ */
+export function grindTileDisplay(workflowValue, reading) {
+    const n = parseFloat(workflowValue);
+    if (Number.isFinite(n)) return { text: Number.isInteger(n) ? String(n) : n.toFixed(1), fromGrinder: false };
+    const shown = readingText(reading);
+    return shown === null ? { text: '—', fromGrinder: false } : { text: shown, fromGrinder: true };
 }
 
 /** -> the number to put on the tile, or null. Only when the grinder's reading moved. */
