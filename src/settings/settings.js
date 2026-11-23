@@ -1357,7 +1357,6 @@ export function renderReaSettingsForm(settings) {
 
 // Render Flush settings form
 export function renderFlushSettingsForm(settings) {
-    console.log("rendering flush settings form with settings: ", settings);
     if (!settings) {
         return `
             <div class="content-stretch flex flex-col gap-[60px] items-start relative w-full">

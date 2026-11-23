@@ -1061,7 +1061,7 @@ export function connectDeviceWebSocket(onData, onReconnect, onDisconnect, onErro
             // on the previous one and suppress a genuine drop.
             if (err && err.timestamp !== deviceLastErrorTimestamp) {
                 deviceLastErrorTimestamp = err.timestamp;
-                logger.warn('Device connection error:', err);
+                logger.warn(`Device connection error: ${err.kind ?? 'unknown'} ${err.deviceId ?? err.deviceName ?? '-'}: ${err.message ?? ''}`);
                 deviceErrorListeners.forEach((fn) => {
                     try { fn(err); } catch (e) { logger.error('Device error listener failed:', e); }
                 });
@@ -1235,7 +1235,7 @@ export function connectDisplayWebSocket(onData) {
  */
 export function sendDisplayCommand(command) {
     if (!displayWebSocket || !displayWebSocketReady || displayWebSocket.readyState !== WebSocket.OPEN) {
-        logger.warn('Display WebSocket not ready. Queuing command:', command);
+        logger.warn('Display WebSocket not ready. Queuing command:', command?.command);
         if (command?.command === 'setBrightness') pendingBrightnessCommand = command;
         else pendingDisplayCommand = command;
         return 'queued';
@@ -2960,8 +2960,8 @@ export async function setPluginSettings(pluginId, settings) {
         });
 
         if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(`Failed to set plugin settings for ${pluginId}. Status: ${response.status}, Body: ${errorBody}`);
+            if (response.status === 401 || response.status === 403) pluginManagementProbe = null;
+            throw pluginEndpointError(pluginId, 'settings', response.status, await response.text());
         }
         logger.info(`Plugin settings for ${pluginId} updated successfully.`);
         document.dispatchEvent(new CustomEvent('streamline:plugins-changed', { detail: { pluginId } }));
@@ -2971,10 +2971,16 @@ export async function setPluginSettings(pluginId, settings) {
     }
 }
 
+const PLUGIN_MANAGEMENT_PROBE_TTL_MS = 5 * 60 * 1000;
 let pluginManagementProbe = null;
+let pluginManagementProbeAt = 0;
 
 export function probePluginManagement() {
-    pluginManagementProbe ??= getPlugins()
+    if (pluginManagementProbe && Date.now() - pluginManagementProbeAt < PLUGIN_MANAGEMENT_PROBE_TTL_MS) {
+        return pluginManagementProbe;
+    }
+    pluginManagementProbeAt = Date.now();
+    const probe = getPlugins()
         .then(plugins => {
             const target = pluginManagementProbeTarget(plugins);
             if (!target) return null;
@@ -2985,15 +2991,20 @@ export function probePluginManagement() {
             }).then(response => response.status);
         })
         .catch(() => null)
-        .finally(() => { pluginManagementProbe = null; });
-    return pluginManagementProbe;
+        .then(status => {
+            if (!Number.isInteger(status) && pluginManagementProbe === probe) pluginManagementProbe = null;
+            return status;
+        });
+    pluginManagementProbe = probe;
+    return probe;
 }
 
 function pluginEndpointError(pluginId, endpoint, status, errorBody) {
     let details = null;
     try { details = JSON.parse(errorBody); } catch {}
-    const message = typeof details?.message === 'string' && details.message
-        ? details.message
+    const hostMessage = details?.message || details?.error;
+    const message = typeof hostMessage === 'string' && hostMessage
+        ? hostMessage
         : `Failed to call plugin endpoint ${pluginId}/${endpoint}. Status: ${status}${errorBody ? `, Body: ${errorBody}` : ''}`;
     const error = new Error(message);
     error.status = status;
