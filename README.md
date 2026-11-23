@@ -27,7 +27,8 @@
 
 **Building a skin or a plugin?** The REST and WebSocket API reference lives in
 [docs/API.md](docs/API.md). Want a plugin to add a button, a hint, a tile mode or a numpad prompt to the main screen? See
-[docs/plugin-surfaces.md](docs/plugin-surfaces.md). Contributing to this skin? See
+[docs/plugin-surfaces.md](docs/plugin-surfaces.md). Want a plugin's own pages to look like Streamline? See
+[docs/plugin-ui](docs/plugin-ui/README.md). Contributing to this skin? See
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ---
