@@ -15,7 +15,7 @@ import { shouldUseNumpad } from './numpad-policy.js';
 import { openContextMenu } from './context-menu.js';
 import { initCalibratedSteam } from './calibrated-steam-ui.js';
 import { logger } from './logger.js';
-import { grindDecimals, grindTileDisplay, parseDeviceNumber } from './grinder-sync.js';
+import { grindDecimals, grindStepperHidden, grindTileDisplay, parseDeviceNumber } from './grinder-sync.js';
 import { shouldWriteStatus } from './machine-status-render.js';
 import { SETTINGS_RESTORED_EVENT } from './settingsSync.js';
 import * as chart from './chart.js';
@@ -3746,6 +3746,15 @@ export function updateFlushDisplay(duration) {
 
 let grinderReading = null;
 let workflowGrind = null;
+let grinderAuthority = { readOnly: false, follow: false };
+
+function showGrindStepper(fromGrinder) {
+    const hidden = grindStepperHidden({ readOnlyGrinder: grinderAuthority.readOnly, follow: grinderAuthority.follow, reading: grinderReading, fromGrinder });
+    for (const id of ['grind-minus', 'grind-plus']) {
+        const button = document.getElementById(id);
+        if (button) button.style.visibility = hidden ? 'hidden' : '';
+    }
+}
 
 function showGrindSource(fromGrinder) {
     const valueEl = document.getElementById('grind-value');
@@ -3765,6 +3774,13 @@ export function updateGrindDisplay(grinderData) {
     if (fromGrinder) fitTextToWidth(grindValueEl);
     else grindValueEl.style.fontSize = '';
     showGrindSource(fromGrinder);
+    showGrindStepper(fromGrinder);
+}
+
+/** Whether the connected grinder is read-only and whether Follow is on; both decide the tile's -/+. */
+export function setGrinderAuthority({ readOnly, follow }) {
+    grinderAuthority = { readOnly: !!readOnly, follow: !!follow };
+    updateGrindDisplay({ grinderSetting: workflowGrind });
 }
 
 /** The connected grinder's own setting text, or null. The tile shows it while the workflow names no grind. */
@@ -3772,7 +3788,8 @@ export function setGrinderReading(text) {
     const next = typeof text === 'string' ? text : null;
     if (next === grinderReading) return;
     grinderReading = next;
-    if (!Number.isFinite(parseFloat(workflowGrind))) updateGrindDisplay({ grinderSetting: workflowGrind });
+    if (Number.isFinite(parseFloat(workflowGrind))) showGrindStepper(false);
+    else updateGrindDisplay({ grinderSetting: workflowGrind });
 }
 
 export function updateDoseInDisplay(doseInValue) {

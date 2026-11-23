@@ -661,6 +661,11 @@ Follow Grinder takes only a plain number. A reading with a unit or in words (`82
 `espresso/A`) is shown as the grinder reports it but never written to the recipe, and −/+ do
 nothing until the recipe has a grind.
 
+With a grinder the skin cannot set, the grinder owns the number while its reading is on the tile
+or Follow Grinder copies it there, so the tile hides −/+ (a tap would only be overwritten). They
+return when the grinder disconnects, when it accepts settings, or when Follow Grinder is off and
+the tile shows the recipe's own grind.
+
 ![Grinder settings, with no grinder plugin installed](docs/media/grinder-settings.jpg)
 
 See [docs/grinders.md](docs/grinders.md) for the plugin side.

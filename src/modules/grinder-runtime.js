@@ -5,9 +5,9 @@
 // The grinder's own reading reaches the tile whatever the switches say.
 
 import { connectGrinderSnapshot, getGrinderInfo, setGrinderSetting, getWorkflow, onWorkflowUpdated, subscribeGrinderConnectionChanges } from './api.js';
-import { applyPluginSetAsync, setGrinderGrindStep, setGrinderReading } from './ui.js';
+import { applyPluginSetAsync, setGrinderAuthority, setGrinderGrindStep, setGrinderReading } from './ui.js';
 import { logger } from './logger.js';
-import { deviceSetting, parseDeviceNumber, followDecision, sendDecision, grindStepFromInfo } from './grinder-sync.js';
+import { deviceSetting, parseDeviceNumber, followDecision, sendDecision, grindStepFromInfo, isGrinderSettable } from './grinder-sync.js';
 
 const KEYS = { follow: 'grinder-follow', send: 'grinder-send' };
 export const GRINDER_SYNC_CHANGE = 'streamline:grinder-sync-change';
@@ -61,6 +61,7 @@ function onWorkflow(workflow) {
 
 function sync() {
     const follow = getGrinderSync('follow');
+    setGrinderAuthority({ readOnly: !!info && !isGrinderSettable(info), follow });
     const followTurnedOn = follow && !following;
     following = follow;
     const wanted = info !== null || follow || getGrinderSync('send');

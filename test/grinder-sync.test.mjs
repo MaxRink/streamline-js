@@ -152,7 +152,7 @@ test('a reversed range is ignored rather than trusted', () => {
 function runtime({ info = null, follow = false, send = false, workflow = {} } = {}) {
     const store = new Map([['grinder-follow', follow ? '1' : '0'], ['grinder-send', send ? '1' : '0']]);
     const events = new EventTarget();
-    const h = { readings: [], applied: [], sent: [], sockets: [], workflowListeners: [], connectionListeners: [], info, workflow };
+    const h = { readings: [], applied: [], sent: [], sockets: [], workflowListeners: [], connectionListeners: [], authority: [], info, workflow };
     const deps = {
         ...grinderSync,
         localStorage: { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) },
@@ -173,6 +173,7 @@ function runtime({ info = null, follow = false, send = false, workflow = {} } = 
         applyPluginSetAsync: async (field, value) => { h.applied.push([field, value]); },
         setGrinderGrindStep: () => {},
         setGrinderReading: text => h.readings.push(text),
+        setGrinderAuthority: state => h.authority.push(state),
     };
     const source = readFileSync(new URL('../src/modules/grinder-runtime.js', import.meta.url), 'utf8')
         .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
@@ -293,4 +294,37 @@ test('runtime: a late answer from an older connection check does not undo a newe
     await settle();
     assert.equal(h.socket().closed, false, 'the reconnected grinder keeps its socket');
     assert.equal(h.readings.includes(null), false, 'and its reading');
+});
+
+test('isGrinderSettable: only a grinder that takes the grindSetting command', () => {
+    assert.equal(grinderSync.isGrinderSettable(info), true);
+    assert.equal(grinderSync.isGrinderSettable({ capabilities: ['grindSetting'], controls: { grindSetting: { kind: 'opaque' } } }), true);
+    assert.equal(grinderSync.isGrinderSettable({ capabilities: [] }), false);
+    assert.equal(grinderSync.isGrinderSettable({ capabilities: ['startStop'] }), false);
+    assert.equal(grinderSync.isGrinderSettable(null), false);
+});
+
+test('grindStepperHidden: a read-only grinder owns the tile while its reading is shown or followed', () => {
+    const hidden = grinderSync.grindStepperHidden;
+    const readOnly = { readOnlyGrinder: true, reading: '83' };
+    assert.equal(hidden({ ...readOnly, follow: false, fromGrinder: true }), true, 'reading on the tile');
+    assert.equal(hidden({ ...readOnly, follow: true, fromGrinder: false }), true, 'Follow writes the reading to the workflow');
+    assert.equal(hidden({ ...readOnly, follow: false, fromGrinder: false }), false, 'Follow off: the workflow value is the user\'s');
+    assert.equal(hidden({ readOnlyGrinder: true, reading: '827 ddValueDum', follow: true, fromGrinder: false }), false, 'a reading Follow cannot apply');
+    assert.equal(hidden({ readOnlyGrinder: true, reading: '827 ddValueDum', follow: false, fromGrinder: true }), true);
+    assert.equal(hidden({ readOnlyGrinder: true, reading: null, follow: true, fromGrinder: false }), false, 'no reading yet');
+    assert.equal(hidden({ readOnlyGrinder: false, reading: '83', follow: true, fromGrinder: true }), false, 'settable grinders keep -/+');
+});
+
+test('runtime: the tile learns whether the grinder is read-only and whether Follow is on', async () => {
+    const h = runtime({ info: readOnlyGrinder, follow: true });
+    h.initGrinderSync();
+    await settle();
+    assert.deepEqual(h.authority.at(-1), { readOnly: true, follow: true });
+    h.setGrinderSync('follow', false);
+    assert.deepEqual(h.authority.at(-1), { readOnly: true, follow: false });
+    await h.reconnect(info);
+    assert.deepEqual(h.authority.at(-1), { readOnly: false, follow: false }, 'a settable grinder keeps -/+');
+    await h.reconnect(null);
+    assert.deepEqual(h.authority.at(-1), { readOnly: false, follow: false }, 'no grinder hands -/+ back');
 });
