@@ -17,19 +17,16 @@ export function deviceSetting(snapshot) {
     return typeof raw === 'string' ? raw : null;
 }
 
-/** The number a grinder's setting string leads with, unit and all ("827 ddValueDum" -> 827); null for text such as "espresso/A". */
+/** A plain number from a grinder's setting string; null for text such as "espresso/A" or "827 ddValueDum". */
 export function parseDeviceNumber(text) {
-    const match = typeof text === 'string' && text.match(/^\s*(-?\d+(?:\.\d+)?)(?:\s+\p{L}[\p{L}\p{N}_]*)?\s*$/u);
-    if (!match) return null;
-    const n = Number(match[1]);
+    if (typeof text !== 'string' || !/^\s*-?\d+(\.\d+)?\s*$/.test(text)) return null;
+    const n = Number(text);
     return Number.isFinite(n) ? n : null;
 }
 
-/** The grinder's reading as the Grind tile shows it: its number when it leads with one, else its own text. */
+/** The grinder's reading as the Grind tile shows it: its own text, trimmed. */
 export function readingText(text) {
-    if (typeof text !== 'string' || !text.trim()) return null;
-    const n = parseDeviceNumber(text);
-    return n === null ? text.trim() : String(n);
+    return typeof text === 'string' && text.trim() ? text.trim() : null;
 }
 
 /**

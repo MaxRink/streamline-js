@@ -1135,7 +1135,7 @@ async function handleProfileClick(index) {
             // The one tile applyWorkflowToMainPageUI cannot paint: a null grind
             // means nothing is known, and leaving the previous profile's number
             // standing would claim the machine is set to it. Same as the first
-            // paint (#189): the connected grinder's reading, else a dash.
+            // paint: the connected grinder's reading, else a dash.
             if (workflowResponse.context?.grinderSetting == null) updateGrindDisplay(null);
 
             if (!held) await applySavedSteamSettings(meta);

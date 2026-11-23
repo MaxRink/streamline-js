@@ -23,7 +23,14 @@ export function closeSurfaceDialog() {
     closeCurrent?.();
 }
 
-export async function openSurfaceDialog(href, title) {
+const themed = href => {
+    const url = new URL(href);
+    url.searchParams.set('embed', '1');
+    url.searchParams.set('theme', document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+    return url.href;
+};
+
+export async function openSurfaceDialog(href, title, findOpener = null) {
     closeSurfaceDialog();
     const opener = document.activeElement;
     const probe = new AbortController();
@@ -32,8 +39,6 @@ export async function openSurfaceDialog(href, title) {
     const dialog = document.createElement('dialog');
     dialog.className = 'surface-dialog';
     dialog.dataset.keyboardFit = '1';
-    dialog.setAttribute('role', 'dialog');
-    dialog.setAttribute('aria-modal', 'true');
     dialog.setAttribute('aria-labelledby', 'surface-dialog-title');
     dialog.innerHTML = `
         <div class="surface-dialog-header">
@@ -77,7 +82,7 @@ export async function openSurfaceDialog(href, title) {
         dialog.removeEventListener('close', close);
         if (dialog.open) dialog.close();
         dialog.remove();
-        if (opener?.isConnected) opener.focus?.();
+        (opener?.isConnected ? opener : findOpener?.())?.focus?.();
     }
     closeCurrent = close;
 
@@ -88,7 +93,7 @@ export async function openSurfaceDialog(href, title) {
 
     await styleReady;
     if (closeCurrent !== close) return dialog;
-    frame.src = href;
+    frame.src = themed(href);
     document.body.appendChild(dialog);
     try {
         dialog.showModal();
@@ -99,6 +104,6 @@ export async function openSurfaceDialog(href, title) {
     }
     closeButton.focus();
     timer = setTimeout(showError, LOAD_TIMEOUT_MS);
-    isPageAvailable(href, probe.signal).then(ok => { if (!ok) showError(); });
+    isPageAvailable(href, probe.signal).then(ok => { if (ok === false) showError(); });
     return dialog;
 }

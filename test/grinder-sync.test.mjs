@@ -16,26 +16,24 @@ test('deviceSetting: setting, else observedSetting, strings only', () => {
     assert.equal(deviceSetting(null), null);
 });
 
-test('parseDeviceNumber: a leading number, with or without a unit token', () => {
+test('parseDeviceNumber: bare numbers only, never a number with a unit', () => {
     assert.equal(parseDeviceNumber('200'), 200);
     assert.equal(parseDeviceNumber(' 5.2 '), 5.2);
     assert.equal(parseDeviceNumber('83'), 83);
-    assert.equal(parseDeviceNumber('827 ddValueDum'), 827);
-    assert.equal(parseDeviceNumber('12.5 mm '), 12.5);
-    assert.equal(parseDeviceNumber('-3 steps'), -3);
+    assert.equal(parseDeviceNumber('827 ddValueDum'), null);
+    assert.equal(parseDeviceNumber('3 B'), null);
+    assert.equal(parseDeviceNumber('12.5 mm'), null);
     assert.equal(parseDeviceNumber('espresso/A'), null);
-    assert.equal(parseDeviceNumber('5/A'), null);
     assert.equal(parseDeviceNumber('5A'), null);
-    assert.equal(parseDeviceNumber('827 dd value'), null);
-    assert.equal(parseDeviceNumber('827 /dd'), null);
     assert.equal(parseDeviceNumber('1e3'), null);
     assert.equal(parseDeviceNumber(''), null);
     assert.equal(parseDeviceNumber(7), null);
 });
 
-test('readingText: the number a reading leads with, else its own text', () => {
-    assert.equal(readingText('827 ddValueDum'), '827');
+test('readingText: the reading as the grinder reports it, trimmed', () => {
+    assert.equal(readingText(' 827 ddValueDum '), '827 ddValueDum');
     assert.equal(readingText(' 5.25 '), '5.25');
+    assert.equal(readingText('83'), '83');
     assert.equal(readingText(' espresso/A '), 'espresso/A');
     assert.equal(readingText('   '), null);
     assert.equal(readingText(null), null);
@@ -44,7 +42,8 @@ test('readingText: the number a reading leads with, else its own text', () => {
 test('grindTileDisplay: the workflow grind wins, else the grinder reading, else a dash', () => {
     assert.deepEqual(grindTileDisplay('15.00', '83'), { text: '15', fromGrinder: false });
     assert.deepEqual(grindTileDisplay('5.25', null), { text: '5.3', fromGrinder: false });
-    assert.deepEqual(grindTileDisplay(null, '827 ddValueDum'), { text: '827', fromGrinder: true });
+    assert.deepEqual(grindTileDisplay(null, '827 ddValueDum'), { text: '827 ddValueDum', fromGrinder: true });
+    assert.deepEqual(grindTileDisplay(null, '83'), { text: '83', fromGrinder: true });
     assert.deepEqual(grindTileDisplay(undefined, 'espresso/A'), { text: 'espresso/A', fromGrinder: true });
     assert.deepEqual(grindTileDisplay('', '83'), { text: '83', fromGrinder: true });
     assert.deepEqual(grindTileDisplay(null, null), { text: '—', fromGrinder: false });
@@ -185,10 +184,10 @@ function runtime({ info = null, follow = false, send = false, workflow = {} } = 
     });
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
-const readOnlyE64 = { deviceId: 'e64', capabilities: [], observations: ['setting'] };
+const readOnlyGrinder = { deviceId: 'grinder-1', capabilities: [], observations: ['setting'] };
 
 test('runtime: a read-only grinder\'s reading reaches the tile with Follow off, the workflow untouched', async () => {
-    const h = runtime({ info: readOnlyE64 });
+    const h = runtime({ info: readOnlyGrinder });
     h.initGrinderSync();
     await settle();
     assert.equal(h.sockets.length, 1, 'a connected grinder opens the snapshot socket without any switch');
@@ -207,19 +206,48 @@ test('runtime: no grinder and no switch keeps the socket closed', async () => {
     assert.equal(h.sockets.length, 0);
 });
 
-test('runtime: Follow takes the number an older E64 reports with its unit token', async () => {
-    const h = runtime({ info: readOnlyE64, follow: true, workflow: { context: {} } });
+test('runtime: Follow writes only a bare number; a unit or words are shown, never written', async () => {
+    const h = runtime({ info: readOnlyGrinder, follow: true, workflow: { context: {} } });
     h.initGrinderSync();
     await settle();
-    await h.snapshot({ state: 'idle', observedSetting: '827 ddValueDum' });
-    assert.deepEqual(h.applied, [['grinderSetting', 827]]);
-    await h.snapshot({ state: 'idle', observedSetting: 'espresso/A' });
-    assert.deepEqual(h.applied, [['grinderSetting', 827]], 'text that is not a number is never followed');
-    assert.deepEqual(h.readings, ['827 ddValueDum', 'espresso/A'], 'but is still shown');
+    for (const reading of ['827 ddValueDum', '3 B', 'espresso/A']) await h.snapshot({ state: 'idle', observedSetting: reading });
+    assert.deepEqual(h.applied, []);
+    assert.deepEqual(h.readings, ['827 ddValueDum', '3 B', 'espresso/A']);
+    await h.snapshot({ state: 'idle', observedSetting: '83' });
+    assert.deepEqual(h.applied, [['grinderSetting', 83]]);
+});
+
+test('runtime: a grinder-info request that fails keeps the reading and the socket', async () => {
+    const h = runtime({ info: readOnlyGrinder });
+    h.initGrinderSync();
+    await settle();
+    await h.snapshot({ state: 'idle', observedSetting: '83' });
+    await h.reconnect(undefined);
+    assert.equal(h.socket().closed, false);
+    assert.deepEqual(h.readings, ['83']);
+    await h.reconnect(null);
+    assert.equal(h.readings.at(-1), null, 'Decaid saying no grinder still clears it');
+});
+
+test('runtime: an answer to a socket reopen cannot overwrite a newer connection check', async () => {
+    const h = runtime({ info: readOnlyGrinder });
+    h.initGrinderSync();
+    await settle();
+    let answerOpen;
+    const answers = [new Promise(resolve => { answerOpen = resolve; }), Promise.resolve(readOnlyGrinder)];
+    h.nextInfo = () => answers.shift();
+    h.setGrinderSync('follow', true);
+    const [listener] = h.connectionListeners;
+    await listener();
+    answerOpen(null);
+    await settle();
+    h.setGrinderSync('follow', false);
+    assert.equal(h.readings.includes(null), false);
+    assert.equal(h.socket().closed, false, 'the grinder is still known, so its socket stays');
 });
 
 test('runtime: Send stays off for a grinder without a settable control', async () => {
-    const h = runtime({ info: readOnlyE64, send: true, workflow: { context: { grinderSetting: '10.00' } } });
+    const h = runtime({ info: readOnlyGrinder, send: true, workflow: { context: { grinderSetting: '10.00' } } });
     h.initGrinderSync();
     await settle();
     for (const listener of h.workflowListeners) listener({ context: { grinderSetting: '12.00' } });
@@ -251,11 +279,11 @@ test('runtime: turning Follow on takes the grinder\'s current reading, socket al
 });
 
 test('runtime: a late answer from an older connection check does not undo a newer one', async () => {
-    const h = runtime({ info: readOnlyE64 });
+    const h = runtime({ info: readOnlyGrinder });
     h.initGrinderSync();
     await settle();
     let answerDisconnect;
-    const answers = [new Promise(resolve => { answerDisconnect = resolve; }), Promise.resolve(readOnlyE64)];
+    const answers = [new Promise(resolve => { answerDisconnect = resolve; }), Promise.resolve(readOnlyGrinder)];
     h.nextInfo = () => answers.shift();
     const [listener] = h.connectionListeners;
     const disconnect = listener();

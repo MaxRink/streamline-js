@@ -14,6 +14,6 @@
 .surface-dialog-error[hidden] { display: none; }
 .surface-dialog-error p { margin: 0; }
 .surface-dialog-open { display: inline-flex; align-items: center; height: 5.3vh; padding: 0 3.3vh; font-size: 2vh; font-weight: 600; border: 2px solid var(--mimoja-blue-v2); border-radius: 1vh; color: var(--mimoja-blue-v2); text-decoration: none; }
-.surface-dialog-hint { flex-shrink: 0; margin: 0; padding: 1vh 3vh; font-size: 1.7vh; text-align: center; border-top: 1px solid var(--border-primary, #e8e8e8); }
+.surface-dialog-hint { flex-shrink: 0; margin: 0; padding: .3vh 3vh; font-size: 1.7vh; text-align: center; border-top: 1px solid var(--border-primary, #e8e8e8); }
 .surface-dialog-hint span { opacity: .7; }
-.surface-dialog-hint a { color: var(--mimoja-blue-v2); text-decoration: underline; text-underline-offset: .3vh; }
+.surface-dialog-hint a { display: inline-flex; align-items: center; min-height: 5.3vh; padding: 0 1.5vh; color: var(--mimoja-blue-v2); text-decoration: underline; text-underline-offset: .3vh; }

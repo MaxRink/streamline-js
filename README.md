@@ -656,14 +656,17 @@ plugin — with none installed the page says so and offers **Search**. Two switc
 
 Whatever the switches say, a recipe that names no grind shows the connected grinder's own reading
 on the tile, marked **Grinder**, so a grinder the skin cannot set is never a blank tile.
-Follow Grinder accepts a reading with a unit after the number (`827 ddValueDum` follows as 827);
-a reading that is not a number, such as `espresso/A`, is shown but never followed. The buttons a
-grinder plugin offers on its card (its settings or diagnostics page) open the page in a dialog
-with a **Close** button; if the page cannot load there, **Open anyway** shows it full screen.
+Follow Grinder takes only a plain number. A reading with a unit or in words (`827 ddValueDum`,
+`espresso/A`) is shown as the grinder reports it but never written to the recipe, and −/+ do
+nothing until the recipe has a grind.
 
 ![Grinder settings, with no grinder plugin installed](docs/media/grinder-settings.jpg)
 
 See [docs/grinders.md](docs/grinders.md) for the plugin side.
+
+The buttons a grinder plugin offers on its card (its settings or diagnostics page) open the page
+in a dialog with a **Close** button. If the page cannot be shown there, **Open anyway** opens it in
+place of the skin: the kiosk leaves Streamline until you navigate back.
 
 ### 3. Calibration
 Sub-pages for **Default load settings**, **Refill Kit**, **Voltage**, **Fan**, **Steam**
