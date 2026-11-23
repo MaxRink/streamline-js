@@ -11,6 +11,7 @@ class Element extends EventTarget {
         this.hidden = false;
         this.isConnected = false;
         this.nodes = {};
+        this.dataset = {};
     }
     setAttribute(name, value) { this.attributes[name] = String(value); }
     focus() { this.document.activeElement = this; }
@@ -45,7 +46,13 @@ function harness({ available = true } = {}) {
     const probes = [];
     const document = {
         activeElement: null,
-        body: { appendChild(child) { child.isConnected = true; } },
+        body: {
+            appendChild(child) {
+                child.isConnected = true;
+                const frame = child.querySelector('.surface-dialog-frame');
+                if (frame && !frame.src) frame.dispatchEvent(new Event('load'));
+            },
+        },
         createElement(tag) { return new Element(tag, document); },
     };
     const opener = new Element('button', document);
@@ -56,6 +63,7 @@ function harness({ available = true } = {}) {
         setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; },
         clearTimeout: id => timers.delete(id),
         getTranslation: key => key,
+        logger: { warn() {} },
         loadStyle: async () => {},
         isPageAvailable: (url, signal) => new Promise(resolve => probes.push({ url, signal, resolve: () => resolve(available) })),
     };
@@ -86,6 +94,8 @@ test('opens the page in a modal dialog with focus on Close', async () => {
     assert.equal(dialog.querySelector('[data-label]').textContent, 'Close');
     for (const link of dialog.querySelectorAll('[data-open]')) assert.equal(link.href, HREF);
     assert.equal(h.isSurfaceDialogOpen(), true);
+    assert.equal(dialog.dataset.keyboardFit, '1');
+    assert.equal(h.pendingTimers, 1, 'an about:blank load on insertion must not stop the load timeout');
 });
 
 test('Close removes the dialog, stops the probe and gives focus back', async () => {

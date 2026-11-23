@@ -7,6 +7,7 @@
 
 import { isPageAvailable } from './api.js';
 import { getTranslation } from './i18n.js';
+import { logger } from './logger.js';
 import { loadStyle } from './vendor-loader.js';
 
 const LOAD_TIMEOUT_MS = 10000;
@@ -30,6 +31,7 @@ export async function openSurfaceDialog(href, title) {
 
     const dialog = document.createElement('dialog');
     dialog.className = 'surface-dialog';
+    dialog.dataset.keyboardFit = '1';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     dialog.setAttribute('aria-labelledby', 'surface-dialog-title');
@@ -86,11 +88,17 @@ export async function openSurfaceDialog(href, title) {
 
     await styleReady;
     if (closeCurrent !== close) return dialog;
+    frame.src = href;
     document.body.appendChild(dialog);
-    dialog.showModal();
+    try {
+        dialog.showModal();
+    } catch (error) {
+        logger.warn('Plugin page dialog could not open:', error);
+        close();
+        return dialog;
+    }
     closeButton.focus();
     timer = setTimeout(showError, LOAD_TIMEOUT_MS);
-    frame.src = href;
     isPageAvailable(href, probe.signal).then(ok => { if (!ok) showError(); });
     return dialog;
 }

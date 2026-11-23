@@ -25,6 +25,8 @@ let started = false;
 let lastDevice = null; // the grinder's last reported number
 let lastTile = null;   // the tile's last seen grinderSetting
 let info = null;       // GET /grinder/info, read when the socket (re)opens
+let following = false;
+let refreshes = 0;
 
 const tileNumber = workflow => {
     const n = parseFloat(workflow?.context?.grinderSetting);
@@ -58,9 +60,12 @@ function onWorkflow(workflow) {
 }
 
 function sync() {
-    const wanted = info !== null || getGrinderSync('follow') || getGrinderSync('send');
-    if (!wanted) { socket?.close(); socket = null; return; }
-    if (socket) return;
+    const follow = getGrinderSync('follow');
+    const followTurnedOn = follow && !following;
+    following = follow;
+    const wanted = info !== null || follow || getGrinderSync('send');
+    if (!wanted || followTurnedOn) { socket?.close(); socket = null; }
+    if (!wanted || socket) return;
     socket = connectGrinderSnapshot(onSnapshot, () => {
         lastDevice = null; // a (re)connected grinder is read afresh
         getGrinderInfo().then(i => { info = i; });
@@ -73,7 +78,9 @@ function sync() {
 // Read once at load and again whenever a grinder connects or disconnects (Decaid's
 // devices feed says so), not on a timer.
 async function refreshGrinder() {
+    const refresh = ++refreshes;
     const next = await getGrinderInfo();
+    if (refresh !== refreshes) return;
     info = next; // null once the grinder is gone, so Send stops
     setGrinderGrindStep(grindStepFromInfo(next));
     if (!next) setGrinderReading(null);

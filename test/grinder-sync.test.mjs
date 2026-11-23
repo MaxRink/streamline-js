@@ -160,7 +160,7 @@ function runtime({ info = null, follow = false, send = false, workflow = {} } = 
         document: events,
         Event,
         logger: { warn() {} },
-        getGrinderInfo: async () => h.info,
+        getGrinderInfo: async () => (h.nextInfo ? h.nextInfo() : h.info),
         getWorkflow: async () => h.workflow,
         setGrinderSetting: async setting => { h.sent.push(setting); },
         onWorkflowUpdated: listener => h.workflowListeners.push(listener),
@@ -234,4 +234,35 @@ test('runtime: Send still writes a settable numeric grinder', async () => {
     for (const listener of h.workflowListeners) listener({ context: { grinderSetting: '12.00' } });
     await settle();
     assert.deepEqual(h.sent, ['12']);
+});
+
+test('runtime: turning Follow on takes the grinder\'s current reading, socket already open', async () => {
+    const h = runtime({ info, workflow: { context: { grinderSetting: '10.00' } } });
+    h.initGrinderSync();
+    await settle();
+    await h.snapshot({ state: 'idle', setting: '18' });
+    assert.deepEqual(h.applied, []);
+    h.setGrinderSync('follow', true);
+    await settle();
+    assert.equal(h.sockets.length, 2, 'the socket reopens, so Decaid replays the current snapshot');
+    assert.equal(h.sockets[0].closed, true);
+    await h.snapshot({ state: 'idle', setting: '18' });
+    assert.deepEqual(h.applied, [['grinderSetting', 18]]);
+});
+
+test('runtime: a late answer from an older connection check does not undo a newer one', async () => {
+    const h = runtime({ info: readOnlyE64 });
+    h.initGrinderSync();
+    await settle();
+    let answerDisconnect;
+    const answers = [new Promise(resolve => { answerDisconnect = resolve; }), Promise.resolve(readOnlyE64)];
+    h.nextInfo = () => answers.shift();
+    const [listener] = h.connectionListeners;
+    const disconnect = listener();
+    await listener();
+    answerDisconnect(null);
+    await disconnect;
+    await settle();
+    assert.equal(h.socket().closed, false, 'the reconnected grinder keeps its socket');
+    assert.equal(h.readings.includes(null), false, 'and its reading');
 });
