@@ -53,6 +53,20 @@ export function canSendGrind(info) {
         && d?.kind === 'numeric' && Number.isFinite(d.min) && Number.isFinite(d.max) && d.min <= d.max;
 }
 
+/** A grinder that takes a grind-setting command. One without it only reports its dial. */
+export function isGrinderSettable(info) {
+    return Array.isArray(info?.capabilities) && info.capabilities.includes('grindSetting');
+}
+
+/**
+ * Hide the Grind tile's -/+ while a connected read-only grinder owns the number: its reading is
+ * on the tile, or Follow puts its numeric reading there. A tile edit would only be overwritten.
+ */
+export function grindStepperHidden({ readOnlyGrinder, follow, reading, fromGrinder }) {
+    if (!readOnlyGrinder || readingText(reading) === null) return false;
+    return fromGrinder || (follow && parseDeviceNumber(reading) !== null);
+}
+
 const decimals = n => (String(n).split('.')[1] || '').length;
 
 /** The setting string for the grinder: held to its range, to the precision of its step. */
