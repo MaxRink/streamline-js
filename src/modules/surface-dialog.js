@@ -99,8 +99,7 @@ export async function openSurfaceDialog(href, title, findOpener = null, onClose 
         if (event.data?.type === 'streamline:ready') {
             themedPage = true;
             delete frame.dataset.plain;
-        }
-        else if (event.data?.type === 'streamline:close') close();
+        } else if (event.data?.type === 'streamline:close') close();
     }
     closeCurrent = close;
 
