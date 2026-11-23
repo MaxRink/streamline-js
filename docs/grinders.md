@@ -30,7 +30,7 @@ With both on, a value one side just wrote is not sent back, so they do not fight
 
 Whatever the switches say, a recipe that names no grind shows the connected grinder's own reading on the tile instead of a dash, marked **Grinder** underneath. It is shown, not saved: the recipe keeps no grind until you set one or turn Follow on. Text readings are shown as they are.
 
-The Grinder page also links to the plugin's own settings and diagnostics pages when the plugin offers them.
+The Grinder page also opens the plugin's own settings and diagnostics pages when the plugin offers them, in a dialog over the page with a **Close** button (a tap outside it or Escape closes it too). The host must allow the skin to frame those pages (`Content-Security-Policy: frame-ancestors` naming the skin's origin); a page Decaid cannot serve shows an error instead, and **Open anyway** under the dialog opens the page full screen for a host that refuses to be framed.
 
 ## For plugin authors
 

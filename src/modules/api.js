@@ -226,6 +226,16 @@ export async function getGrinderInfo() {
     });
 }
 
+/** GET a Decaid-served page before it is framed: true when it answers 2xx, false when it fails or errors. */
+export async function isPageAvailable(url, signal) {
+    try {
+        return (await fetch(url, { signal })).ok;
+    } catch (error) {
+        logger.debug('Page unavailable:', url, error);
+        return false;
+    }
+}
+
 /** PUT /devices/disconnect. Throws when Decaid refuses. */
 export async function disconnectDevice(deviceId) {
     const response = await fetch(`${API_BASE_URL}/devices/disconnect?deviceId=${encodeURIComponent(deviceId)}`, { method: 'PUT' });
