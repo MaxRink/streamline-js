@@ -15,7 +15,7 @@ import { shouldUseNumpad } from './numpad-policy.js';
 import { openContextMenu } from './context-menu.js';
 import { initCalibratedSteam } from './calibrated-steam-ui.js';
 import { logger } from './logger.js';
-import { grindDecimals, grindTileDisplay } from './grinder-sync.js';
+import { grindDecimals, grindTileDisplay, parseDeviceNumber } from './grinder-sync.js';
 import { shouldWriteStatus } from './machine-status-render.js';
 import { SETTINGS_RESTORED_EVENT } from './settingsSync.js';
 import * as chart from './chart.js';
@@ -29,7 +29,7 @@ function openNumpadModal(...args) {
 import { getSupportedLanguages, getCurrentLanguage, setLanguage, getTranslation, fitTextToWidth } from './i18n.js';
 import { getTotalTime as getShotTotalTime } from './shotData.js';
 import { formatTemp, fromDisplayTemp, displayStepToCelsius, boundToDisplay, getTempUnit } from './units.js';
-import { stepValue, formatRatio } from './value-format.js';
+import { stepWithin, formatRatio } from './value-format.js';
 import { targetWeightProfilePatch, brewTempProfilePatch } from './brew-temp.js';
 import { resolveStepSize, yieldForRatio, doseForRatio } from './plugin-surfaces.js';
 import { clampSetValue } from './plugin-surfaces.js';
@@ -496,14 +496,16 @@ export function activeStepSize(field) {
 
 // A plugin `step` resolving true once the stored write has settled.
 export async function applyPluginStepAsync(field, by) {
-    const current = parseFloat(document.getElementById(STEP_VALUE_IDS[field])?.textContent);
-    if (isNaN(current) || !Number.isFinite(by)) return false;
+    const valueEl = document.getElementById(STEP_VALUE_IDS[field]);
+    const current = parseFloat(valueEl?.textContent);
+    if (isNaN(current) || !Number.isFinite(by) || valueEl.hasAttribute('data-reading-only')) return false;
     return applyPluginSetAsync(field, current + by);
 }
 
 export function updateGrindValue(newValue) {
     workflowGrind = newValue;
     document.getElementById('grind-value')?.style.removeProperty('font-size');
+    document.getElementById('grind-value')?.removeAttribute('data-reading-only');
     showGrindSource(false);
     const workflowUpdate = {
         context: {
@@ -802,32 +804,18 @@ function setupValueAdjuster(minusBtnId, plusBtnId, valueElId, step, min, formatt
         debounceTimer = setTimeout(() => onUpdate(value), API_DEBOUNCE_MS);
     };
 
-    minusBtn.addEventListener('click', (e) => {
+    const stepBy = (e, direction) => {
         flashPlusMinusButton(e.currentTarget);
         const valueEl = document.getElementById(valueElId);
-        if (!valueEl) return;
-        let currentValue = parseFloat(valueEl.textContent);
-        const lo = getMin();
-        if (currentValue > lo) {
-            currentValue = stepValue(currentValue, getStep(), -1, lo);
-            valueEl.textContent = format(currentValue);
-            scheduleUpdate(currentValue);
-            if (afterUpdate) afterUpdate(format(currentValue));
-        }
-    });
-
-    plusBtn.addEventListener('click', (e) => {
-        flashPlusMinusButton(e.currentTarget);
-        const valueEl = document.getElementById(valueElId);
-        if (!valueEl) return;
-        let currentValue = parseFloat(valueEl.textContent);
-        currentValue = stepValue(currentValue, getStep(), 1);
-        const hi = getMax();
-        if (hi != null && currentValue > hi) currentValue = hi;
-        valueEl.textContent = format(currentValue);
-        scheduleUpdate(currentValue);
-        if (afterUpdate) afterUpdate(format(currentValue));
-    });
+        if (!valueEl || valueEl.hasAttribute('data-reading-only')) return;
+        const next = stepWithin(parseFloat(valueEl.textContent), getStep(), direction, getMin(), getMax());
+        if (next === null) return;
+        valueEl.textContent = format(next);
+        scheduleUpdate(next);
+        if (afterUpdate) afterUpdate(format(next));
+    };
+    minusBtn.addEventListener('click', (e) => stepBy(e, -1));
+    plusBtn.addEventListener('click', (e) => stepBy(e, 1));
 }
 
 export const LONG_PRESS_MS = 500;
@@ -3773,6 +3761,7 @@ export function updateGrindDisplay(grinderData) {
     if (!grindValueEl) return;
     const { text, fromGrinder } = grindTileDisplay(workflowGrind, grinderReading);
     grindValueEl.textContent = text;
+    grindValueEl.toggleAttribute('data-reading-only', fromGrinder && parseDeviceNumber(grinderReading) === null);
     if (fromGrinder) fitTextToWidth(grindValueEl);
     else grindValueEl.style.fontSize = '';
     showGrindSource(fromGrinder);

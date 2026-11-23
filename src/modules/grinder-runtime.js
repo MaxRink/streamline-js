@@ -24,7 +24,7 @@ let socket = null;
 let started = false;
 let lastDevice = null; // the grinder's last reported number
 let lastTile = null;   // the tile's last seen grinderSetting
-let info = null;       // GET /grinder/info, read when the socket (re)opens
+let info = null;       // GET /grinder/info, the last answer Decaid gave
 let following = false;
 let refreshes = 0;
 
@@ -68,19 +68,20 @@ function sync() {
     if (!wanted || socket) return;
     socket = connectGrinderSnapshot(onSnapshot, () => {
         lastDevice = null; // a (re)connected grinder is read afresh
-        getGrinderInfo().then(i => { info = i; });
+        refreshGrinder();
     });
     getWorkflow().then(w => { if (lastTile === null) lastTile = tileNumber(w); }).catch(() => {});
 }
 
 // The Grind tile's -/+ step and reading follow the connected grinder whatever the two
 // switches say; a grinder that goes away hands the tile back to the workflow.
-// Read once at load and again whenever a grinder connects or disconnects (Decaid's
-// devices feed says so), not on a timer.
+// Read once at load, when the snapshot socket opens and whenever a grinder connects or
+// disconnects (Decaid's devices feed says so), not on a timer. An answer that could not
+// be had keeps what was last known; only Decaid saying no grinder clears it.
 async function refreshGrinder() {
     const refresh = ++refreshes;
     const next = await getGrinderInfo();
-    if (refresh !== refreshes) return;
+    if (refresh !== refreshes || next === undefined) return;
     info = next; // null once the grinder is gone, so Send stops
     setGrinderGrindStep(grindStepFromInfo(next));
     if (!next) setGrinderReading(null);

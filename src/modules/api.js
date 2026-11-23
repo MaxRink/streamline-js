@@ -213,27 +213,21 @@ export async function getGrinderDevices() {
     return Array.isArray(devices) ? devices.filter(device => device?.type === 'grinder') : [];
 }
 
-/** GET /grinder/info -> { deviceId, capabilities, observations?, controls?, surfaces? }, or null. */
+/**
+ * GET /grinder/info -> { deviceId, capabilities, observations?, controls?, surfaces? }; null when
+ * Decaid says no grinder is connected (503), undefined when it could not be asked.
+ */
 export async function getGrinderInfo() {
     return dedupedGet('grinder/info', async () => {
         try {
             const response = await fetch(`${API_BASE_URL}/grinder/info`);
-            return response.ok ? await response.json() : null;
+            if (response.ok) return await response.json();
+            return response.status === 503 ? null : undefined;
         } catch (error) {
             logger.debug('Grinder info unavailable:', error);
-            return null;
+            return undefined;
         }
     });
-}
-
-/** GET a Decaid-served page before it is framed: true when it answers 2xx, false when it fails or errors. */
-export async function isPageAvailable(url, signal) {
-    try {
-        return (await fetch(url, { signal })).ok;
-    } catch (error) {
-        logger.debug('Page unavailable:', url, error);
-        return false;
-    }
 }
 
 /** PUT /devices/disconnect. Throws when Decaid refuses. */
@@ -264,6 +258,20 @@ export function connectGrinderSnapshot(onSnapshot, onOpen = null) {
         try { onSnapshot(JSON.parse(event.data)); } catch (error) { logger.warn('Bad grinder snapshot:', error); }
     };
     return { close: () => socket.close() };
+}
+
+/**
+ * GET a Decaid-served page before it is framed (plugin endpoints dispatch every method to the
+ * plugin, so HEAD would not be cheaper or safer): true for 2xx, false for any other status,
+ * null when the request itself failed.
+ */
+export async function isPageAvailable(url, signal) {
+    try {
+        return (await fetch(url, { signal })).ok;
+    } catch (error) {
+        logger.debug('Page check failed:', url, error);
+        return null;
+    }
 }
 
 // ── Sensors (Bengle milk probe et al.) ──────────────────────────────────────

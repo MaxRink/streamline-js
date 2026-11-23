@@ -40,12 +40,13 @@ class Element extends EventTarget {
     }
 }
 
-function harness({ available = true } = {}) {
+function harness({ available = true, theme = 'dark' } = {}) {
     const timers = new Map();
     let nextTimer = 0;
     const probes = [];
     const document = {
         activeElement: null,
+        documentElement: { getAttribute: name => (name === 'data-theme' ? theme : null) },
         body: {
             appendChild(child) {
                 child.isConnected = true;
@@ -77,18 +78,19 @@ function harness({ available = true } = {}) {
     };
 }
 
-const HREF = 'http://tablet:8080/api/v1/plugins/e64/diagnostics?ui=1&deviceId=e64';
+const HREF = 'http://tablet:8080/api/v1/plugins/grinder-plugin/diagnostics?ui=1&deviceId=grinder-1';
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
 test('opens the page in a modal dialog with focus on Close', async () => {
     const h = harness();
     const dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     assert.equal(dialog.open, true);
-    assert.equal(dialog.attributes.role, 'dialog');
-    assert.equal(dialog.attributes['aria-modal'], 'true');
+    assert.equal(dialog.open, true, 'showModal: the native dialog is modal and labelled');
+    assert.equal(dialog.attributes.role, undefined);
     assert.equal(dialog.attributes['aria-labelledby'], 'surface-dialog-title');
     assert.equal(dialog.querySelector('.surface-dialog-title').textContent, 'Diagnostics');
-    assert.equal(dialog.querySelector('.surface-dialog-frame').src, HREF);
+    assert.equal(dialog.querySelector('.surface-dialog-frame').src, `${HREF}&embed=1&theme=dark`, 'the page is told to embed and follow the theme');
+    assert.equal(h.probes[0].url, HREF);
     assert.match(dialog.html, /sandbox="allow-scripts allow-same-origin allow-forms"/);
     assert.equal(h.document.activeElement, dialog.querySelector('.surface-dialog-close'));
     assert.equal(dialog.querySelector('[data-label]').textContent, 'Close');
@@ -177,4 +179,30 @@ test('opening a second page closes the first', async () => {
     assert.equal(first.removed, true);
     assert.equal(second.open, true);
     assert.equal(h.isSurfaceDialogOpen(), true);
+});
+
+test('a probe that cannot reach the page (CORS, network) keeps the frame; the load timeout decides', async () => {
+    const h = harness({ available: null });
+    const dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
+    h.probes[0].resolve();
+    await settle();
+    assert.equal(dialog.querySelector('.surface-dialog-error').hidden, true);
+    assert.equal(dialog.querySelector('.surface-dialog-frame').removed, undefined);
+    assert.equal(h.pendingTimers, 1);
+});
+
+test('the light theme reaches the page; Open anyway keeps the plain page URL', async () => {
+    const h = harness({ theme: 'light' });
+    const dialog = await h.openSurfaceDialog(HREF, 'Settings');
+    assert.equal(dialog.querySelector('.surface-dialog-frame').src, `${HREF}&embed=1&theme=light`);
+    for (const link of dialog.querySelectorAll('[data-open]')) assert.equal(link.href, HREF);
+});
+
+test('focus returns to the re-rendered opener when the original button is gone', async () => {
+    const h = harness();
+    const replacement = new Element('button', h.document);
+    const dialog = await h.openSurfaceDialog(HREF, 'Settings', () => replacement);
+    h.opener.isConnected = false;
+    dialog.close();
+    assert.equal(h.document.activeElement, replacement);
 });
