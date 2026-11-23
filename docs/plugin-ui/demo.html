@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>plugin-ui demo</title>
+<link rel="stylesheet" href="plugin-ui.css">
+<body class="pu">
+<main class="pu-page" id="wizard">
+  <header class="pu-header">
+    <h1>Set up the grinder</h1>
+    <button type="button" class="pu-btn pu-secondary" data-pu-done data-pu-t="Done">Done</button>
+  </header>
+  <p class="pu-muted">Try <a href="?theme=light">light</a>, <a href="?theme=dark">dark</a>, <a href="?theme=dark&amp;lang=de">dark + German</a> or <a href="?embed=1&amp;theme=light">embedded</a>.</p>
+  <div class="pu-stepper" data-pu-stepper></div>
+
+  <section data-pu-step>
+    <h2>Find your grinder</h2>
+    <div class="pu-card">
+      <div class="pu-row">
+        <label for="host">Address</label>
+        <input id="host" inputmode="url" autocomplete="off" placeholder="192.168.1.40 or name.local">
+        <p class="pu-hint">Must be on your local network.</p>
+      </div>
+      <div class="pu-row">
+        <label for="poll">Poll interval</label>
+        <select id="poll"><option>1 second</option><option>5 seconds</option></select>
+      </div>
+      <div class="pu-row">
+        <label for="names">Add to my grinders</label>
+        <input id="names" type="checkbox" role="switch" class="pu-switch" checked>
+      </div>
+    </div>
+    <details class="pu-details"><summary>Advanced</summary>
+      <div class="pu-card"><label for="raw">Instances (JSON)</label><textarea id="raw">[]</textarea></div>
+    </details>
+  </section>
+
+  <section data-pu-step hidden>
+    <h2>Trust the grinder's certificate</h2>
+    <div class="pu-alert pu-ok"><span class="pu-pill pu-ok">Recognised</span> Standard Mahlkoenig E64 certificate.</div>
+    <code class="pu-code" id="fp"></code>
+    <div class="pu-actions"><button type="button" class="pu-btn">Trust this grinder</button></div>
+    <div class="pu-alert pu-warn"><span class="pu-pill pu-warn">Check</span> A certificate that is not the usual one needs a second confirmation.</div>
+  </section>
+
+  <section data-pu-step hidden>
+    <h2>Owner password</h2>
+    <div class="pu-card">
+      <div class="pu-row">
+        <label for="password">Password</label>
+        <div class="pu-secure">
+          <input id="password" type="password" autocomplete="off" spellcheck="false">
+          <button type="button" class="pu-btn pu-secondary" data-pu-reveal aria-pressed="false" data-pu-t="Show">Show</button>
+        </div>
+        <p class="pu-hint">Saved. Leave empty to keep it.</p>
+      </div>
+    </div>
+    <div class="pu-alert pu-error"><span class="pu-pill pu-error">Failed</span> Wrong password.</div>
+  </section>
+
+  <section data-pu-step hidden>
+    <h2>How Decaid and the grinder work together</h2>
+    <fieldset class="pu-choice">
+      <legend class="pu-muted">Pick one. You can change it later.</legend>
+      <label><input type="radio" name="owner" value="off" checked><span><b>Just show the grinder</b>Decaid shows the grinder's setting. Nothing is sent to the grinder.</span></label>
+      <label><input type="radio" name="owner" value="grinder"><span><b>Let the grinder adjust itself</b>After each shot Decaid tells the grinder how it went.</span></label>
+      <label><input type="radio" name="owner" value="decaid" disabled><span><b>Let Decaid adjust the grinder</b>Needs grinder control, which this grinder does not offer.</span></label>
+    </fieldset>
+    <div class="pu-actions"><button type="button" class="pu-btn pu-danger">Remove grinder</button><button type="button" class="pu-btn" id="save">Save</button></div>
+    <p id="out" class="pu-muted" aria-live="polite"></p>
+  </section>
+
+  <div class="pu-actions pu-sticky">
+    <button type="button" class="pu-btn pu-secondary" data-pu-back data-pu-t="Back">Back</button>
+    <button type="button" class="pu-btn" data-pu-next data-pu-t="Next">Next</button>
+  </div>
+</main>
+<script src="plugin-ui.js"></script>
+<script>
+  pu.init({ fit: true, strings: { de: { "Set up the grinder": "Mühle einrichten" } } });
+  document.querySelector("h1").textContent = pu.t("Set up the grinder");
+  document.getElementById("fp").textContent = pu.fingerprint("91b412ee014f21c3bb2445430b6a3d77903334a1300ad84f1980ab2c5f53620b");
+  pu.wizard(document.getElementById("wizard"), (index) => index !== 0 || document.getElementById("host").value !== "" || (alert("Enter an address"), false));
+  document.getElementById("save").addEventListener("click", () => {
+    const password = pu.secureValue(document.getElementById("password"), true);
+    document.getElementById("out").textContent = "Would POST PasswordsJson: " + JSON.stringify(password === undefined ? null : typeof password === "string" ? "<new secret>" : password);
+  });
+</script>
+</body>
+</html>
