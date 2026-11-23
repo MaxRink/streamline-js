@@ -18,3 +18,8 @@
 .surface-dialog-hint { flex-shrink: 0; margin: 0; padding: .3vh 3vh; font-size: 1.7vh; text-align: center; border-top: 1px solid var(--border-primary, #e8e8e8); }
 .surface-dialog-hint span { opacity: .7; }
 .surface-dialog-hint a { display: inline-flex; align-items: center; min-height: 5.3vh; padding: 0 1.5vh; color: var(--mimoja-blue-v2); text-decoration: underline; text-underline-offset: .3vh; }
+.surface-dialog.surface-dialog-compact { width: min(94vw, 80vh); height: fit-content; max-height: 92vh; }
+.shot-details-list { display: grid; grid-template-columns: max-content 1fr; gap: 1.5vh 3vh; margin: 0; padding: 3vh; overflow-y: auto; font-size: 2.2vh; }
+.shot-details-list dt { font-weight: 600; opacity: .7; }
+.shot-details-list dd { margin: 0; overflow-wrap: anywhere; }
+.shot-details-list dd.shot-details-note { font-size: 1.9vh; opacity: .8; }

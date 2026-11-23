@@ -1,7 +1,8 @@
 import * as chart from './chart.js';
 import { logger } from './logger.js';
 import { openDB, getLatestShotSummaries, getLatestCachedShotSummaries, getLatestCachedShot, getShot, addShot, addShots, deleteShot as idbDeleteShot, pruneShotsInRange, clearShots } from './idb.js';
-import { API_BASE_URL, getPlugins, getPluginSettings, callPluginEndpoint } from './api.js';
+import { API_BASE_URL, getPlugins, getPluginSettings, callPluginEndpoint, getDialInRecommendation } from './api.js';
+import { shotDetailRows, pickDialInRecommendation, dialInRecommendationRows } from './shot-details.js';
 import { createHistoryPager, isShotAlreadyDeleted } from './history-pager.js';
 import { renderPastShot, clearShotData, setPaintSuspended } from './shotData.js';
 import { getTranslation } from './i18n.js';
@@ -427,9 +428,8 @@ function refreshVisualizerAvailability() {
 const SHOT_HISTORY_EDIT_TAP_SELECTOR =
     '#history-date, #history-profile-name, #history-dose-in, #history-grind-size';
 
-// Tap a shot-history text line -> DYE2's edit-shot page for the shot on screen.
-// Gated on the DYE2 master switch, so with DYE2 off the panel keeps its long-press
-// menu only. DYE2 saves/deletes and comes back through the overlay's `return` URL;
+// Tap a shot-history text line -> DYE2's edit-shot page for the shot on screen, or
+// with DYE2 off the Shot details dialog. DYE2 saves/deletes and comes back through the overlay's `return` URL;
 // the close hook then repaints this panel with whatever actually landed on the bridge.
 async function openShotInDye2() {
     if (!isDye2Enabled()) return;
@@ -448,6 +448,19 @@ async function openShotInDye2() {
         refreshShotAfterDye2Edit(editedShotId || shot.id).catch(error =>
             logger.warn('Could not repaint the shot after editing it in DYE2:', error));
     });
+}
+
+async function openCurrentShotDetails() {
+    const shot = shots[currentShotIndex];
+    if (!shot?.id) {
+        showToast(getTranslation('No shot selected'), 2400, 'warning');
+        return;
+    }
+    const recommendation = dialInAvailable
+        ? getDialInRecommendation(shot.id).then(body => dialInRecommendationRows(pickDialInRecommendation(body, shot.id)))
+        : null;
+    const { openShotDetails } = await import('./shot-details-dialog.js');
+    await openShotDetails(getTranslation('Shot details'), shotDetailRows(shot), recommendation);
 }
 
 function setupHistoryLongPress() {
@@ -471,13 +484,14 @@ function setupHistoryLongPress() {
         // repaints the chart the running shot is drawing on. Same reason the
         // arrows are locked (see updateHistoryNavLock).
         if (navLocked) return;
-        // Only the four info lines open DYE2: an arrow tap bubbles here too, and the
+        // Only the four info lines open the shot: an arrow tap bubbles here too, and the
         // block's own padding is not a control. A long press is swallowed by
         // setupPressAndHold.
         if (!event?.target?.closest?.(SHOT_HISTORY_EDIT_TAP_SELECTOR)) return;
         // Async now that dyeStrip.js loads on demand: catch, or a failed import
         // surfaces as an unhandled rejection instead of a log line.
-        openShotInDye2().catch(error => logger.warn('Could not open the shot in DYE2:', error));
+        (isDye2Enabled() ? openShotInDye2() : openCurrentShotDetails())
+            .catch(error => logger.warn('Could not open the shot:', error));
     }, () => {
         // Locked during espresso too: half the menu (DYE2 analysis, dial-in,
         // Visualizer upload, plugin entries) acts on the shot on screen, and
@@ -491,6 +505,10 @@ function setupHistoryLongPress() {
         refreshDialInAvailability();
         refreshVisualizerAvailability();
         const items = [
+            {
+                label: getTranslation('Shot details'),
+                onSelect: () => openCurrentShotDetails().catch(error => logger.warn('Could not open the shot details:', error)),
+            },
             {
                 label: getTranslation('Discuss with Derek'),
                 onSelect: async () => {
