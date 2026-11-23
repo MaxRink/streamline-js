@@ -3449,6 +3449,17 @@ export async function disablePlugin(pluginId) {
     return result;
 }
 
+/** The assisted dial-in plugin's recommendation for a shot; null when the plugin offers none (404) or cannot answer. */
+export async function getDialInRecommendation(shotId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/plugins/assisted-dialin.reaplugin/recommendations?shotId=${encodeURIComponent(shotId)}`);
+        return response.ok ? await response.json() : null;
+    } catch (error) {
+        logger.debug('Dial-in recommendation unavailable:', error);
+        return null;
+    }
+}
+
 /** PUT /plugins/{id}/machine-control. Throws with `status` when Decaid refuses. */
 export async function setPluginMachineControl(pluginId, granted) {
     const response = await fetch(`${API_BASE_URL}/plugins/${encodeURIComponent(pluginId)}/machine-control`, {

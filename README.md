@@ -578,7 +578,18 @@ Streamline.js stores every shot twice: locally in the browser's IndexedDB, and i
   what you just pulled
 - **Read the metrics** — each shot carries pre-infusion, extraction and total summaries
 - **Keep scrolling** — history is paginated and loads more as you go back
+- **Tap the shot's date, profile, dose or grind** for its details (with DYE2 on, the tap opens
+  DYE2's editor instead; the details stay in the long-press menu)
 - **Long-press the history panel** for the menu below
+
+### Shot details
+
+The dialog lists what the shot's workflow recorded: the coffee (roaster and name), the grinder
+(model and burrs) and grind setting, and, from the Mahlkönig E64 plugin, the grinder's display
+when it differs and its last grind before the shot (weight against target, grind time, mode).
+With the assisted dial-in plugin loaded, its recommendation for the shot is added when the plugin
+answers `GET /api/v1/plugins/assisted-dialin.reaplugin/recommendations?shotId=<id>`; a plugin
+without that endpoint adds nothing.
 
 ### The history long-press menu
 
@@ -586,6 +597,7 @@ Streamline.js stores every shot twice: locally in the browser's IndexedDB, and i
 
 | Entry | When it appears | What it does |
 |---|---|---|
+| **Shot details** | Always | Coffee, grinder and dial-in recommendation for this shot |
 | **Discuss with Derek** | Always | Opens Derek on this shot (§11) |
 | **Copy Shot Summary** | Always | Copies the shot as Markdown to the clipboard |
 | **Select coffee batch for next shot** | Assisted dial-in plugin installed | Pick the bean the next shot will be recorded against |
