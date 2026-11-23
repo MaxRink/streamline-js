@@ -863,7 +863,7 @@ document.addEventListener('streamline:mainpagevisible', () => {
 
 function handleData(data) {
     if (!data?.state) {
-        logger.warn('Received WebSocket message with missing state:', data);
+        logger.warn('Received WebSocket message with missing state; keys:', Object.keys(data ?? {}).join(', '));
         return;
     }
 

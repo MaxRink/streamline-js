@@ -806,7 +806,7 @@ export async function saveContextToActiveProfile(fields) {
         syncActiveProfileFromTitle(document.getElementById('profile-name')?.textContent);
     }
     if (!activeProfileId || !availableProfiles[activeProfileId]) {
-        logger.warn('No active profile — tile edit not persisted:', fields);
+        logger.warn('No active profile — tile edit not persisted:', Object.keys(fields ?? {}).join(', '));
         return;
     }
     const profileId = activeProfileId; // pin target across the async queue wait
