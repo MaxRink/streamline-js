@@ -142,13 +142,17 @@ render the Warmer button and the non‑GHC control column.
 percentage or `null`. Missing or null metadata stays unknown. A host without
 this endpoint may return 404, 405 or 501; 503 means no connected scale.
 
-The inline Preferred control remains available for every scale. Skale devices
-add a Settings popup only when the host exposes the per-device
-`skalePoweredByUsbByDevice` map in its settings. The intended provider is the
-Skale driver-runtime plugin
-([MaxRink/decaid-skale-plugin](https://github.com/MaxRink/decaid-skale-plugin)).
-Hosts without the key show no USB control and behave as before. The switch is a
-manual USB-power declaration; the UI hides the battery level while enabled.
+For a plugin-backed scale, the response may also carry `surfaces`: the plugin's
+own pages for that device (`role` `settings` or `diagnostics`, optional `label`,
+host-built `href`), as on `/api/v1/grinder/info`. The Scale page shows a button
+per surface on the connected scale (labelled by the plugin, else **Settings**
+or the role) and opens it in the same dialog as the Grinder page's plugin pages
+(see [grinders.md](grinders.md)); hrefs are accepted only as `/api/v1/plugins/`
+pages on the Decaid API origin. Per-device options such as the Skale plugin's
+square-button and USB-power settings live on that page. Hosts that omit
+`surfaces` show no button. The info, and so the buttons, belong to the primary
+connected scale (`connectionRole: primary`); the endpoint has no auxiliary
+counterpart.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/scale/tare

@@ -10,7 +10,7 @@ import {
 import { getTranslation, translatePage } from '../../modules/i18n.js';
 import { logger } from '../../modules/logger.js';
 import { canSendGrind } from '../../modules/grinder-sync.js';
-import { deviceSurfaceUrl } from '../../modules/plugin-surfaces.js';
+import { deviceSurfaceLinks, deviceSurfaceUrl } from '../../modules/plugin-surfaces.js';
 import { getGrinderSync, setGrinderSync } from '../../modules/grinder-runtime.js';
 import { openSurfaceDialog, closeSurfaceDialog, isSurfaceDialogOpen } from '../../modules/surface-dialog.js';
 import * as ui from '../../modules/ui.js';
@@ -86,11 +86,8 @@ const apiOrigin = () => new URL(API_BASE_URL, window.location.href).origin;
 
 // The plugin's own pages (settings, diagnostics), built by Decaid for this device; they open in a dialog.
 function surfaceLinks(info) {
-    const origin = apiOrigin();
-    return (info?.surfaces ?? []).map(surface => {
-        const href = deviceSurfaceUrl(surface?.href, origin);
-        if (!href) return '';
-        const label = esc(surface.label || surface.role);
+    return deviceSurfaceLinks(info?.surfaces, apiOrigin()).map(({ href, label: key }) => {
+        const label = esc(getTranslation(key));
         return `<button type="button" data-surface="${esc(href)}" data-label="${label}" aria-haspopup="dialog" class="border-2 border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] hover:bg-[var(--button-primary-bg)] hover:text-white h-[62px] px-[28px] rounded-[67.5px] text-[24px] font-bold transition-colors duration-200 inline-flex items-center">${label}</button>`;
     }).join('');
 }

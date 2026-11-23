@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     createScaleInfoLifecycle,
-    getScaleDeviceSetting,
-    hasSkaleUsbSetting,
-    shouldInvalidateScaleInfoAfterWrite,
+    primaryConnectedScale,
 } from '../src/settings/scale-device-details.js';
 
 function deferred() {
@@ -23,23 +21,15 @@ function lifecycle(options = {}) {
     });
 }
 
-test('per-device USB settings ignore the legacy global key', () => {
-    assert.equal(getScaleDeviceSetting({ skalePoweredByUsbByDevice: { A: true } }, 'skalePoweredByUsbByDevice', 'A'), true);
-    assert.equal(getScaleDeviceSetting({ skalePoweredByUsbByDevice: { A: true } }, 'skalePoweredByUsbByDevice', 'B'), false);
-    assert.equal(getScaleDeviceSetting({ skalePoweredByUsb: true }, 'skalePoweredByUsbByDevice', 'A'), undefined);
-});
-
-test('USB controls are limited to supported Skale devices and map shapes', () => {
-    assert.equal(hasSkaleUsbSetting({ skalePoweredByUsbByDevice: {} }, { name: 'Skale 2' }), true);
-    assert.equal(hasSkaleUsbSetting({ skalePoweredByUsbByDevice: {} }, { name: 'Acaia Lunar' }), false);
-    assert.equal(hasSkaleUsbSetting({ skalePoweredByUsbByDevice: [] }, { name: 'Skale 2' }), false);
-    assert.equal(hasSkaleUsbSetting({ skalePoweredByUsb: true }, { name: 'Skale 2' }), false);
-});
-
-test('only a successful REA USB write invalidates metadata', () => {
-    assert.equal(shouldInvalidateScaleInfoAfterWrite({ reaSucceeded: true, usbPowerSettingsChanged: true }), true);
-    assert.equal(shouldInvalidateScaleInfoAfterWrite({ reaSucceeded: false, usbPowerSettingsChanged: true }), false);
-    assert.equal(shouldInvalidateScaleInfoAfterWrite({ reaSucceeded: true, usbPowerSettingsChanged: false }), false);
+test('scale info belongs to the primary connected scale', () => {
+    const aux = { id: 'aux', state: 'connected', connectionRole: 'auxiliary' };
+    const primary = { id: 'p', state: 'connected', connectionRole: 'primary' };
+    const legacy = { id: 'legacy', state: 'connected' };
+    assert.equal(primaryConnectedScale([aux, primary]), primary);
+    assert.equal(primaryConnectedScale([legacy]), legacy);
+    assert.equal(primaryConnectedScale([aux]), null);
+    assert.equal(primaryConnectedScale([{ id: 'x', state: 'connected', available: false }, { id: 'y', state: 'disconnected' }]), null);
+    assert.equal(primaryConnectedScale([]), null);
 });
 
 test('repeated renders share one in-flight scale-info request', async () => {
@@ -124,17 +114,6 @@ test('unsupported endpoint failures remain unknown without warning spam', async 
     await info.refreshScaleInfo('A');
     assert.deepEqual(info.scaleInfoByDeviceId.get('A'), {});
     assert.equal(warnings, 0);
-});
-
-test('a successful write invalidates stale metadata and in-flight state', async () => {
-    const info = lifecycle({ getScaleInfo: () => new Promise(() => {}) });
-    info.scaleInfoByDeviceId.set('A', { firmwareVersion: 'stale' });
-    info.scaleInfoInFlight.set('A', Promise.resolve());
-    const before = info.generation;
-    info.invalidate();
-    assert.equal(info.generation, before + 1);
-    assert.equal(info.scaleInfoByDeviceId.size, 0);
-    assert.equal(info.scaleInfoInFlight.size, 0);
 });
 
 test('accepted metadata rerenders only after the response still matches the connected device', async () => {

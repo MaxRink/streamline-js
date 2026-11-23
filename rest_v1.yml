@@ -5773,6 +5773,11 @@ components:
           nullable: true
           minimum: 0
           maximum: 100
+        surfaces:
+          type: array
+          description: Pre-authorized surfaces declared by the owning plugin driver of a plugin-backed scale. Omitted for native scales, plugin scales without declared surfaces, and while the plugin runtime is not active.
+          items:
+            $ref: '#/components/schemas/PluginDeviceSurface'
     GrinderCommandError:
       type: object
       required: [error]

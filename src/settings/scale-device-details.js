@@ -1,23 +1,12 @@
 /**
- * Pure scale metadata and USB-setting helpers.  This module deliberately has
- * no DOM or application imports so the socket/cache policy can be tested in
- * Node and reused by settings integrations.
+ * Pure scale-info helpers.  This module deliberately has no DOM or
+ * application imports so the socket/cache policy can be tested in Node.
  */
 
-export function getScaleDeviceSetting(settings, key, deviceId) {
-    if (!Object.prototype.hasOwnProperty.call(settings || {}, key)) return undefined;
-    return settings?.[key]?.[deviceId] === true;
-}
-
-export function hasSkaleUsbSetting(settings, device) {
-    const values = settings?.skalePoweredByUsbByDevice;
-    return typeof device?.name === 'string' && device.name.toLowerCase().includes('skale') &&
-        Object.prototype.hasOwnProperty.call(settings || {}, 'skalePoweredByUsbByDevice') &&
-        values !== null && typeof values === 'object' && !Array.isArray(values);
-}
-
-export function shouldInvalidateScaleInfoAfterWrite({ reaSucceeded, usbPowerSettingsChanged }) {
-    return reaSucceeded === true && usbPowerSettingsChanged === true;
+export function primaryConnectedScale(scales) {
+    const connected = (scales || []).filter(scale => scale?.state === 'connected' && scale.available !== false);
+    return connected.find(scale => scale.connectionRole === 'primary') ||
+        connected.find(scale => scale.connectionRole === undefined) || null;
 }
 
 export function createScaleInfoLifecycle({
@@ -34,13 +23,6 @@ export function createScaleInfoLifecycle({
     const scaleInfoFailureAt = new Map();
     let generation = 0;
     let scaleInfoDeviceId = null;
-
-    function invalidate() {
-        generation += 1;
-        scaleInfoByDeviceId.clear();
-        scaleInfoFailureAt.clear();
-        scaleInfoInFlight.clear();
-    }
 
     async function refreshScaleInfo(connectedScaleId) {
         if (scaleInfoDeviceId !== connectedScaleId) {
@@ -90,7 +72,6 @@ export function createScaleInfoLifecycle({
 
     return {
         refreshScaleInfo,
-        invalidate,
         scaleInfoByDeviceId,
         scaleInfoInFlight,
         get generation() { return generation; },

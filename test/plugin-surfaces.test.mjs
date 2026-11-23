@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { STRIP_BAR_MAX, stripLayout, STRIP_COLUMNS, stripReading, stripDotLevel, stripBarFraction, STRIP_MAX_CELLS, scaleDoseWeight, scaleDoseFor, fitOverlaySize, parseNumpadInput, fitNumpadValue, yieldForRatio, doseForRatio, parseSkinAnswer, skinPlugins, callableEndpoint, liveEndpoint, pushWants, createPushCoalescer, RESERVED_ENDPOINTS, MAX_SURFACES,
-    nextStepSize, resolveStepSize, formatStepSize, deviceSurfaceUrl } from '../src/modules/plugin-surfaces.js';
+    nextStepSize, resolveStepSize, formatStepSize, deviceSurfaceUrl, deviceSurfaceLinks } from '../src/modules/plugin-surfaces.js';
 
 const ok = surfaces => parseSkinAnswer({ version: 1, surfaces }).surfaces;
 
@@ -898,4 +898,21 @@ test('deviceSurfaceUrl: only a plugin page on the Decaid API origin', () => {
         'http://user:pw@tablet:8080/api/v1/plugins/grinder/settings',
         '', null, 42,
     ]) assert.equal(deviceSurfaceUrl(bad, api), null, String(bad));
+});
+
+test('deviceSurfaceLinks: a button per valid surface, labelled by the plugin, else by its role', () => {
+    const api = 'http://tablet:8080';
+    assert.deepEqual(deviceSurfaceLinks([
+        { id: 'settings', role: 'settings', href: '/api/v1/plugins/skale/device-settings?ui=1&deviceId=s1' },
+        { id: 'diag', role: 'diagnostics', label: 'Skale diagnostics', href: '/api/v1/plugins/skale/diag?ui=1' },
+        { id: 'raw', role: 'diagnostics', label: '  ', href: '/api/v1/plugins/skale/raw' },
+        { id: 'evil', role: 'settings', href: 'https://evil.example/api/v1/plugins/skale/device-settings' },
+        { id: 'nolabel', href: '/api/v1/plugins/skale/x' },
+        null,
+    ], api), [
+        { href: 'http://tablet:8080/api/v1/plugins/skale/device-settings?ui=1&deviceId=s1', label: 'Settings' },
+        { href: 'http://tablet:8080/api/v1/plugins/skale/diag?ui=1', label: 'Skale diagnostics' },
+        { href: 'http://tablet:8080/api/v1/plugins/skale/raw', label: 'diagnostics' },
+    ]);
+    for (const none of [undefined, null, {}, 'settings', []]) assert.deepEqual(deviceSurfaceLinks(none, api), [], String(none));
 });
