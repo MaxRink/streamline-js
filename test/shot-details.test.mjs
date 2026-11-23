@@ -33,31 +33,52 @@ test('shot details: nothing recorded is no rows, never "undefined"', () => {
     assert.deepEqual(shotDetailRows({ workflow: { grinderData: { setting: 4.5 } } }), [{ label: 'Grind setting', value: '4.5' }]);
 });
 
-test('dial-in: the single answer, a batch list and a batch map are all read for the shot', () => {
-    const rec = { status: 'recommendation', grinderSetting: '12', settingUnit: 'clicks' };
-    assert.equal(pickDialInRecommendation(rec, 's1'), rec);
-    assert.equal(pickDialInRecommendation({ shotId: 's1', ...rec }, 's1').grinderSetting, '12');
-    assert.equal(pickDialInRecommendation({ shotId: 's2', ...rec }, 's1'), null, 'an answer for another shot');
-    assert.equal(pickDialInRecommendation({ recommendation: rec }, 's1'), rec);
-    assert.equal(pickDialInRecommendation({ recommendations: [{ shotId: 's0', status: 'abstain' }, { shotId: 's1', ...rec }] }, 's1').grinderSetting, '12');
-    assert.equal(pickDialInRecommendation([{ shotId: 's1', ...rec }], 's1').status, 'recommendation');
-    assert.equal(pickDialInRecommendation({ recommendations: { s1: rec } }, 's1'), rec);
-    for (const body of [null, {}, { recommendations: [] }, { error: 'x' }, 'html']) assert.equal(pickDialInRecommendation(body, 's1'), null);
+// The stored record dial-in 0.8.0 keeps per shot (cleanRecommendation in its plugin.js).
+const stored = {
+    computedAt: '2026-11-23T08:01:00.000Z', trigger: 'shotStored', status: 'suggestion', direction: 'finer',
+    currentSetting: '500', proposedSetting: 495, proposedPreset: null, settingUnit: 'µm',
+    lastShotTimeSec: 23, targetTimeSec: 28, grinderId: 'g1',
+    message: 'Next shot: grind 5 µm finer (500 → 495); last shot 23 s vs target 28 s.',
+};
+
+test('dial-in 0.8.0: shotId, shotIds and latest answers are all read for the shot', () => {
+    assert.equal(pickDialInRecommendation({ shotId: 's1', recommendation: stored }, 's1'), stored);
+    assert.equal(pickDialInRecommendation({ shotId: 's1', recommendation: null }, 's1'), null, 'no recommendation kept for this shot');
+    assert.equal(pickDialInRecommendation({ shotId: 's2', recommendation: stored }, 's1'), null, 'an answer for another shot');
+    assert.equal(pickDialInRecommendation({ recommendations: { s0: null, s1: stored } }, 's1'), stored);
+    assert.equal(pickDialInRecommendation({ recommendations: { s1: null } }, 's1'), null);
+    assert.equal(pickDialInRecommendation({ latest: [{ shotId: 's0', recommendation: { ...stored, status: 'abstain' } }, { shotId: 's1', recommendation: stored }] }, 's1'), stored);
+    assert.equal(pickDialInRecommendation([{ shotId: 's1', ...stored }], 's1').status, 'suggestion');
+    assert.equal(pickDialInRecommendation(stored, 's1'), stored, 'a bare entry');
+    for (const body of [null, {}, { latest: [] }, { error: 'shotId is invalid' }, 'html']) assert.equal(pickDialInRecommendation(body, 's1'), null);
 });
 
-test('dial-in rows: what to grind next and why, in the plugin\'s words', () => {
+test('dial-in rows: the next grind, then the plugin\'s own message', () => {
+    assert.deepEqual(dialInRecommendationRows(stored), [
+        { label: 'Suggested grind', value: '495 µm (finer)', translate: false },
+        { label: '', value: stored.message },
+    ]);
+    assert.deepEqual(dialInRecommendationRows({ ...stored, proposedSetting: null, proposedPreset: 'B', message: 'Next shot: grind finer, preset B.' }), [
+        { label: 'Suggested grind', value: 'B (finer)', translate: false },
+        { label: '', value: 'Next shot: grind finer, preset B.' },
+    ]);
+    assert.deepEqual(dialInRecommendationRows({ status: 'abstain', message: 'No grind change suggested yet: more feedback is needed.' }), [
+        { label: 'Suggested grind', value: 'No recommendation', translate: true },
+        { label: '', value: 'No grind change suggested yet: more feedback is needed.' },
+    ]);
+    assert.deepEqual(dialInRecommendationRows({ status: 'suggestion', message: 'Balanced: keep the setting.' }), [
+        { label: 'Suggested grind', value: 'Balanced: keep the setting.', translate: false },
+    ]);
     assert.deepEqual(dialInRecommendationRows({ status: 'recommendation', grinderSetting: '12', settingUnit: 'clicks', warnings: ['History scan is bounded'] }), [
         { label: 'Recommended grind', value: '12 clicks', translate: false },
         { label: '', value: 'History scan is bounded' },
     ]);
-    assert.deepEqual(dialInRecommendationRows({ status: 'suggestion', proposedSetting: '11.5', direction: 'finer', reason: 'Sour and fast' }), [
-        { label: 'Suggested grind', value: '11.5 (finer)', translate: false },
-        { label: '', value: 'Sour and fast' },
-    ]);
-    assert.deepEqual(dialInRecommendationRows({ status: 'abstain', reason: 'No comparable marked-good shot found' }), [
-        { label: 'Recommended grind', value: 'No recommendation', translate: true },
-        { label: '', value: 'No comparable marked-good shot found' },
-    ]);
     assert.deepEqual(dialInRecommendationRows({ status: 'suggestion' }), []);
     assert.deepEqual(dialInRecommendationRows(null), []);
+});
+
+test('shot details: the advice the shot was brewed with, from the workflow snapshot', () => {
+    assert.deepEqual(shotDetailRows(shot({ extras: { 'assisted-dialin.reaplugin': { recommendation: { afterShotId: 's0', ...stored } } } })), [
+        { label: 'Advice before this shot', value: stored.message },
+    ]);
 });

@@ -587,9 +587,11 @@ Streamline.js stores every shot twice: locally in the browser's IndexedDB, and i
 The dialog lists what the shot's workflow recorded: the coffee (roaster and name), the grinder
 (model and burrs) and grind setting, and, from the Mahlkönig E64 plugin, the grinder's display
 when it differs and its last grind before the shot (weight against target, grind time, mode).
-With the assisted dial-in plugin loaded, its recommendation for the shot is added when the plugin
-answers `GET /api/v1/plugins/assisted-dialin.reaplugin/recommendations?shotId=<id>`; a plugin
-without that endpoint adds nothing.
+With the assisted dial-in plugin (0.8.0 or later) loaded, its suggestion for the next shot is
+added with the plugin's own explanation (`GET
+/api/v1/plugins/assisted-dialin.reaplugin/recommendations?shotId=<id>`); an older plugin adds
+nothing. The advice the shot was brewed with, which the plugin copies into the workflow, is listed
+as **Advice before this shot**.
 
 ### The history long-press menu
 
