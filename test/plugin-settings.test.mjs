@@ -17,6 +17,15 @@ import {
     pluginManagementProbeTarget,
     PLUGIN_MANAGEMENT_PROBE_KEY,
     pluginChangeBlockedByMachine,
+    pluginSurfaceLinks,
+    pluginDeviceSurfaces,
+    parseSetupStatus,
+    pluginMachineControl,
+    pluginEnumOptions,
+    isAdvancedPluginSetting,
+    isJsonPluginSetting,
+    pluginSettingUsesTextarea,
+    parsePluginTextSetting,
 } from '../src/settings/plugin-view.js';
 
 test('plugin management opens only when the probe gets past the auth gate', () => {
@@ -298,4 +307,128 @@ test('isFlowCalPluginManaging resolves loaded + Enabled + !DryRun', () => {
     assert.equal(isFlowCalPluginManaging([plugin()], undefined), true);
     // no manifest settings at all -> Enabled true, DryRun false
     assert.equal(isFlowCalPluginManaging([{ id: AUTO_FLOW_CAL_PLUGIN_ID, loaded: true }], undefined), true);
+});
+
+// --- plugin pages (Set up / Settings / Diagnostics), setup status, grants ------------
+
+const API = 'http://tablet:8080';
+const http = (...ids) => ids.map(id => ({ id, type: 'http', data: {} }));
+const e64 = {
+    id: 'mahlkoenig-e64.reaplugin', loaded: true,
+    api: http('setup', 'ui', 'e64-diagnostics'),
+    drivers: [{ id: 'e64', type: 'grinder', surfaces: [{ id: 'diagnostics', role: 'diagnostics', endpoint: 'e64-diagnostics', label: 'E64 diagnostics' }] }],
+    surfaces: [
+        { id: 'setup', role: 'setup', endpoint: 'setup', label: 'Set up' },
+        { id: 'diagnostics', role: 'diagnostics', endpoint: 'e64-diagnostics', label: 'E64 diagnostics' },
+    ],
+};
+
+test('declared plugin pages open their endpoint on the API origin, setup with a status URL', () => {
+    assert.deepEqual(pluginSurfaceLinks(e64, API), [
+        { role: 'setup', label: 'Set up', href: `${API}/api/v1/plugins/mahlkoenig-e64.reaplugin/setup?ui=1&surface=setup`, statusHref: `${API}/api/v1/plugins/mahlkoenig-e64.reaplugin/setup?status=1` },
+        { role: 'diagnostics', label: 'E64 diagnostics', href: `${API}/api/v1/plugins/mahlkoenig-e64.reaplugin/e64-diagnostics?ui=1&surface=diagnostics`, statusHref: null },
+    ]);
+});
+
+test('a host that drops top-level surfaces still offers Set up from a setup endpoint', () => {
+    const { surfaces, ...stock } = e64;
+    assert.deepEqual(pluginSurfaceLinks(stock, API).map(l => [l.role, l.href]), [
+        ['setup', `${API}/api/v1/plugins/mahlkoenig-e64.reaplugin/setup?ui=1&surface=setup`],
+    ]);
+    assert.deepEqual(pluginSurfaceLinks({ ...stock, api: http('ui') }, API), []);
+});
+
+test('a connected device\'s page replaces the plugin-level one it serves, and adds roles the plugin lacks', () => {
+    const deviceHref = '/api/v1/plugins/mahlkoenig-e64.reaplugin/e64-diagnostics?ui=1&deviceId=e64%3A1&deviceName=E64';
+    const devices = pluginDeviceSurfaces(e64.id, [{ surfaces: [{ id: 'diagnostics', role: 'diagnostics', href: deviceHref, label: 'E64 diagnostics' }] }], API);
+    assert.deepEqual(devices, [{ role: 'diagnostics', label: 'E64 diagnostics', href: `${API}${deviceHref}` }]);
+    assert.equal(pluginSurfaceLinks(e64, API, devices)[1].href, `${API}${deviceHref}`);
+
+    const skale = { id: 'skale.reaplugin', loaded: true, api: http('device-settings'), drivers: [{ type: 'scale', surfaces: [{ role: 'settings', endpoint: 'device-settings' }] }] };
+    const skaleDevices = pluginDeviceSurfaces(skale.id, [{ surfaces: [{ role: 'settings', href: '/api/v1/plugins/skale.reaplugin/device-settings?ui=1&deviceId=s' }] }], API);
+    assert.deepEqual(pluginSurfaceLinks(skale, API, skaleDevices).map(l => [l.role, l.label]), [['settings', null]]);
+});
+
+test('page links stay on this plugin\'s pages on the API origin', () => {
+    const evil = { id: 'a.reaplugin', loaded: true, api: http('setup'), surfaces: [
+        { role: 'setup', href: 'http://evil.example/api/v1/plugins/a.reaplugin/setup' },
+        { role: 'settings', href: '/api/v1/plugins/other.reaplugin/settings' },
+        { role: 'diagnostics', href: 'http://user:pw@tablet:8080/api/v1/plugins/a.reaplugin/d' },
+    ] };
+    assert.deepEqual(pluginSurfaceLinks(evil, API), []);
+    assert.deepEqual(pluginDeviceSurfaces('a.reaplugin', [{ surfaces: [
+        { role: 'settings', href: '/api/v1/plugins/b.reaplugin/x' },
+        { role: 'settings', href: 'javascript:alert(1)' },
+        { role: 'bogus', href: '/api/v1/plugins/a.reaplugin/x' },
+    ] }], API), []);
+});
+
+test('page links: one per role, setup before settings before diagnostics, ui left to Open, none while unloaded', () => {
+    const plugin = { id: 'd.reaplugin', loaded: true, api: http('ui', 'setup', 'diag', 'conf'), surfaces: [
+        { role: 'diagnostics', endpoint: 'diag' },
+        { role: 'settings', endpoint: 'ui' },
+        { role: 'settings', endpoint: 'conf' },
+        { role: 'setup', endpoint: 'setup' },
+        { role: 'setup', endpoint: 'diag' },
+        { role: 'settings', endpoint: 'undeclared' },
+    ] };
+    assert.deepEqual(pluginSurfaceLinks(plugin, API).map(l => [l.role, new URL(l.href).pathname]), [
+        ['setup', '/api/v1/plugins/d.reaplugin/setup'],
+        ['settings', '/api/v1/plugins/d.reaplugin/conf'],
+        ['diagnostics', '/api/v1/plugins/d.reaplugin/diag'],
+    ]);
+    assert.deepEqual(pluginSurfaceLinks({ ...plugin, loaded: false }, API), []);
+    assert.deepEqual(pluginSurfaceLinks(null, API), []);
+});
+
+test('setup status is read only from a boolean needsSetup', () => {
+    assert.deepEqual(parseSetupStatus({ needsSetup: true, message: ' No grinder is configured yet. ' }), { needsSetup: true, message: 'No grinder is configured yet.' });
+    assert.deepEqual(parseSetupStatus({ needsSetup: false, instances: [] }), { needsSetup: false, message: null });
+    for (const body of [null, 'html', {}, { needsSetup: 'true' }, []]) assert.equal(parseSetupStatus(body), null, JSON.stringify(body));
+});
+
+test('machine control: shown only where Decaid reports a grant', () => {
+    assert.deepEqual(pluginMachineControl({ machineControl: false }), { granted: false, reason: null });
+    assert.deepEqual(pluginMachineControl({ machineControl: true }), { granted: true, reason: null });
+    assert.deepEqual(pluginMachineControl({ machineControl: { granted: true, reason: ' The square button starts shots. ' } }), { granted: true, reason: 'The square button starts shots.' });
+    for (const plugin of [{}, null, { machineControl: 'true' }, { machineControl: { reason: 'x' } }]) assert.equal(pluginMachineControl(plugin), null);
+});
+
+// --- generated-form hints -------------------------------------------------------------
+
+test('enum options carry valueLabels and valueDescriptions, the raw value as fallback', () => {
+    assert.deepEqual(pluginEnumOptions({
+        type: 'enum', values: ['off', 'grinder', true],
+        valueLabels: { off: 'Just show the grinder', grinder: '  ' },
+        valueDescriptions: { grinder: 'The grinder decides.' },
+    }), [
+        { value: 'off', label: 'Just show the grinder', description: null },
+        { value: 'grinder', label: 'grinder', description: 'The grinder decides.' },
+        { value: 'true', label: 'true', description: null },
+    ]);
+    assert.deepEqual(pluginEnumOptions({ type: 'enum' }), []);
+});
+
+test('advanced is a boolean hint only', () => {
+    assert.equal(isAdvancedPluginSetting({ advanced: true }), true);
+    for (const schema of [{ advanced: 'true' }, {}, null]) assert.equal(isAdvancedPluginSetting(schema), false);
+});
+
+test('JSON and multiline strings are edited in a text area; secrets never are', () => {
+    assert.equal(isJsonPluginSetting({ type: 'string', default: '[]' }), true);
+    assert.equal(isJsonPluginSetting({ type: 'string', default: '{"a":1}' }), true);
+    for (const schema of [{ type: 'string', default: '1' }, { type: 'string', default: 'null' }, { type: 'string', default: 'x' }, { type: 'number', default: '[]' }]) {
+        assert.equal(isJsonPluginSetting(schema), false, JSON.stringify(schema));
+    }
+    assert.equal(pluginSettingUsesTextarea({ type: 'string', multiline: true }), true);
+    assert.equal(pluginSettingUsesTextarea({ type: 'string', default: '[]' }), true);
+    assert.equal(pluginSettingUsesTextarea({ type: 'string', default: '{}', secure: true }), false);
+    assert.equal(pluginSettingUsesTextarea({ type: 'string', multiline: 'yes' }), false);
+});
+
+test('a JSON setting saves only JSON objects or arrays; other text is trimmed', () => {
+    const json = { type: 'string', default: '[]' };
+    assert.deepEqual(parsePluginTextSetting(' [{"id":"a"}]\n', json), { value: '[{"id":"a"}]' });
+    for (const bad of ['', '[', '"x"', '1', 'null']) assert.deepEqual(parsePluginTextSetting(bad, json), { error: 'Invalid JSON' }, bad);
+    assert.deepEqual(parsePluginTextSetting(' line 1\nline 2 ', { type: 'string', multiline: true }), { value: 'line 1\nline 2' });
 });

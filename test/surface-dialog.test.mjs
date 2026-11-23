@@ -24,7 +24,7 @@ class Element extends EventTarget {
         const node = tag => new Element(tag, this.document);
         const links = [node('a'), node('a')];
         this.nodes = {
-            '.surface-dialog-frame': node('iframe'),
+            '.surface-dialog-frame': Object.assign(node('iframe'), { contentWindow: {} }),
             '.surface-dialog-close': node('button'),
             '.surface-dialog-title': node('h2'),
             '.surface-dialog-error': node('div'),
@@ -59,8 +59,11 @@ function harness({ available = true, theme = 'dark' } = {}) {
     const opener = new Element('button', document);
     opener.isConnected = true;
     opener.focus();
+    const window = new EventTarget();
     const deps = {
         document,
+        window,
+        getCurrentLanguage: () => 'de',
         setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; },
         clearTimeout: id => timers.delete(id),
         getTranslation: key => key,
@@ -72,7 +75,10 @@ function harness({ available = true, theme = 'dark' } = {}) {
         .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
     const api = new Function(...Object.keys(deps), `${source}\nreturn { openSurfaceDialog, closeSurfaceDialog, isSurfaceDialogOpen };`)(...Object.values(deps));
     return {
-        ...api, document, opener, probes,
+        ...api, document, window, opener, probes,
+        post(dialog, data, source = dialog.querySelector('.surface-dialog-frame').contentWindow) {
+            window.dispatchEvent(Object.assign(new Event('message'), { data, source }));
+        },
         timeout() { for (const [id, fn] of [...timers]) { timers.delete(id); fn(); } },
         get pendingTimers() { return timers.size; },
     };
@@ -89,7 +95,7 @@ test('opens the page in a modal dialog with focus on Close', async () => {
     assert.equal(dialog.attributes.role, undefined);
     assert.equal(dialog.attributes['aria-labelledby'], 'surface-dialog-title');
     assert.equal(dialog.querySelector('.surface-dialog-title').textContent, 'Diagnostics');
-    assert.equal(dialog.querySelector('.surface-dialog-frame').src, `${HREF}&embed=1&theme=dark`, 'the page is told to embed and follow the theme');
+    assert.equal(dialog.querySelector('.surface-dialog-frame').src, `${HREF}&embed=1&theme=dark&lang=de`, 'the page is told to embed and follow the theme and language');
     assert.equal(h.probes[0].url, HREF);
     assert.match(dialog.html, /sandbox="allow-scripts allow-same-origin allow-forms"/);
     assert.equal(h.document.activeElement, dialog.querySelector('.surface-dialog-close'));
@@ -149,6 +155,7 @@ test('a frame that never loads turns into the error; one that loads does not', a
     h = harness();
     dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     dialog.querySelector('.surface-dialog-frame').dispatchEvent(new Event('load'));
+    h.timeout();
     assert.equal(h.pendingTimers, 0);
     assert.equal(dialog.querySelector('.surface-dialog-error').hidden, true);
 });
@@ -194,7 +201,7 @@ test('a probe that cannot reach the page (CORS, network) keeps the frame; the lo
 test('the light theme reaches the page; Open anyway keeps the plain page URL', async () => {
     const h = harness({ theme: 'light' });
     const dialog = await h.openSurfaceDialog(HREF, 'Settings');
-    assert.equal(dialog.querySelector('.surface-dialog-frame').src, `${HREF}&embed=1&theme=light`);
+    assert.equal(dialog.querySelector('.surface-dialog-frame').src, `${HREF}&embed=1&theme=light&lang=de`);
     for (const link of dialog.querySelectorAll('[data-open]')) assert.equal(link.href, HREF);
 });
 
@@ -205,4 +212,37 @@ test('focus returns to the re-rendered opener when the original button is gone',
     h.opener.isConnected = false;
     dialog.close();
     assert.equal(h.document.activeElement, replacement);
+});
+
+test('a page that says ready keeps the themed frame; any other page gets a white canvas', async () => {
+    let h = harness();
+    let dialog = await h.openSurfaceDialog(HREF, 'Settings');
+    let frame = dialog.querySelector('.surface-dialog-frame');
+    h.post(dialog, { type: 'streamline:ready' });
+    frame.dispatchEvent(new Event('load'));
+    h.timeout();
+    assert.equal(frame.dataset.plain, undefined);
+
+    h = harness();
+    dialog = await h.openSurfaceDialog(HREF, 'Settings');
+    frame = dialog.querySelector('.surface-dialog-frame');
+    h.post(dialog, { type: 'streamline:ready' }, {});
+    frame.dispatchEvent(new Event('load'));
+    h.timeout();
+    assert.equal(frame.dataset.plain, '1', 'a message from another window does not count');
+    h.post(dialog, { type: 'streamline:ready' });
+    assert.equal(frame.dataset.plain, undefined, 'a ready that arrives after the load still themes the frame');
+});
+
+test('the page\'s own streamline:close closes the dialog and runs onClose once', async () => {
+    const h = harness();
+    let closed = 0;
+    const dialog = await h.openSurfaceDialog(HREF, 'Set up', null, () => closed++);
+    h.post(dialog, { type: 'streamline:close' }, {});
+    assert.equal(dialog.open, true, 'only the framed page may close it');
+    h.post(dialog, { type: 'streamline:close' });
+    assert.equal(dialog.removed, true);
+    assert.equal(closed, 1);
+    h.post(dialog, { type: 'streamline:close' });
+    assert.equal(closed, 1, 'the listener is gone with the dialog');
 });

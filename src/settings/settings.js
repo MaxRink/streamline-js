@@ -1,7 +1,7 @@
 import { isEcoSteamEnabled, setEcoSteamEnabled } from '../modules/eco-steam.js';
 import {  getReaSettings, getDe1Settings, getDe1AdvancedSettings, setReaSettings, setDe1Settings, setDe1AdvancedSettings, resetDe1Settings, setMachineState, connectScaleDevice, connectDeviceWebSocket, sendDeviceCommand, awaitDeviceConnectResult, dimDisplay, restoreDisplay, isBlackScreenSaver, setBlackScreenSaver as apiSetBlackScreenSaver, rememberBrightness, getLastDisplayState, currentMachineState, signalHeartbeat, MachineState, getDeviceWebSocket, initDeviceWebSocketWithCallback, saveScaleDeviceId, getScaleDeviceId, connectDisplayWebSocket, sendDisplayCommand, connectUpdateWebSocket, sendUpdateCommand, enableWakeLock, disableWakeLock, isWakeLockEnabled, isWakeProfileEnabled, getWakeProfileId, getPresenceSettings, setPresenceSettings, getPresenceSchedules, createPresenceSchedule, updatePresenceSchedule, deletePresenceSchedule, getAppInfo, getMachineInfo, getWorkflow, updateWorkflow, getAllSkins, getDefaultSkin, setDefaultSkin, updateSkins, stopWebuiServer, startWebuiServer, getWebuiServerStatus, uploadFirmware, applyFirmware, cancelFirmwareUpdate, getFirmwareCatalog, setWaterLevels, API_BASE_URL, listWifiScales, addWifiScale, removeWifiScale, forgetDevice, getLedStrip, setLedStrip, commitLedStrip, previewLedStrip, clearLedStripPreview, getCupWarmer, setCupWarmer, setCupWarmerPrewarm, calibrateScale, tareScale, getSensorCalibration, setSensorCalibration, getMachineCalibration, setMachineCalibration, getLastMachineSnapshot, ensureMachineSnapshotSocket, connectScaleWebSocket, setFirmwareFlashInFlight, persistSharedValue, readSharedValue, MILK_STOP_LAST_VALUE_KEY, STEAM_DURATION_LAST_VALUE_KEY, STEAM_FLOW_LAST_VALUE_KEY, STEAM_TEMP_LAST_VALUE_KEY, HOT_WATER_VOLUME_LAST_VALUE_KEY, HOT_WATER_TEMP_LAST_VALUE_KEY, getPlugins, getDecentAccountStatus, getPluginSettings, setPluginSettings, callPluginEndpoint, enablePlugin, getScaleInfo, getDevices } from '../modules/api.js';
 import { isCustomSaverBrightness, setCustomSaverBrightnessEnabled, getSaverBrightness, setSaverBrightness, SAVER_BRIGHTNESS_DEFAULT } from '../modules/api.js';
-import { disablePlugin, getMachineState, probePluginManagement } from '../modules/api.js';
+import { disablePlugin, getMachineState, probePluginManagement, getGrinderInfo, setPluginMachineControl, getPluginSetupStatus } from '../modules/api.js';
 import * as ui from '../modules/ui.js';
 import { availableProfiles, translateProfileTitle, loadAvailableProfiles } from '../modules/profileManager.js';
 import { initScaling } from '../modules/scaling.js';
@@ -36,7 +36,10 @@ import { escapeHtml, pluginViewModel, pluginStatusLabel, pluginNavEntries,
          pluginIdFromCategory, pluginCategoryFor, pluginStatus, isManagedPluginSource,
          minutesSince, isPluginSettingVisible, pluginUiUrl,
          pluginManagementAllowed, pluginChangeBlockedByMachine,
-         AUTO_FLOW_CAL_PLUGIN_ID, isFlowCalPluginManaging } from './plugin-view.js';
+         AUTO_FLOW_CAL_PLUGIN_ID, isFlowCalPluginManaging,
+         pluginSurfaceLinks, pluginDeviceSurfaces, parseSetupStatus, pluginMachineControl,
+         pluginEnumOptions, isAdvancedPluginSetting, isJsonPluginSetting, pluginSettingUsesTextarea,
+         parsePluginTextSetting } from './plugin-view.js';
 import { createScaleInfoLifecycle, primaryConnectedScale } from './scale-device-details.js';
 import { parseSkinAnswer, deviceSurfaceLinks, deviceSurfaceUrl } from '../modules/plugin-surfaces.js';
 import { openSurfaceDialog, closeSurfaceDialog } from '../modules/surface-dialog.js';
@@ -6109,9 +6112,13 @@ export function renderPluginSettingControl(key, schema, idPrefix = 'shotupload')
     // anything else, so it is a closed list, not free text -- a plugin that
     // declares one used to render nothing at all here.
     if (schema?.type === 'enum' && Array.isArray(schema.values)) {
-        const options = schema.values
-            .map(value => `<option value="${escapeHtml(value)}">${escapeHtml(getTranslation(String(value)))}</option>`)
+        const enumOptions = pluginEnumOptions(schema);
+        const options = enumOptions
+            .map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(getTranslation(option.label))}</option>`)
             .join('');
+        const valueDescription = enumOptions.some(option => option.description)
+            ? `<p data-value-description class="font-normal leading-[1.4] text-[var(--text-primary)] opacity-70 text-[24px] w-full"></p>`
+            : '';
         return `
             <div class="flex flex-col gap-[30px] w-full">
                 <div class="flex items-center justify-between gap-[24px] w-full">
@@ -6120,6 +6127,30 @@ export function renderPluginSettingControl(key, schema, idPrefix = 'shotupload')
                         ${options}
                     </select>
                 </div>
+                ${valueDescription}
+                ${description}
+            </div>`;
+    }
+
+    if (pluginSettingUsesTextarea(schema)) {
+        return `
+            <div class="flex flex-col gap-[30px] w-full">
+                <label for="${id}">${labelHtml}</label>
+                <textarea id="${id}" rows="6" spellcheck="false" autocapitalize="off" data-setting-key="${escapeHtml(key)}" data-setting-type="${isJsonPluginSetting(schema) ? 'json' : 'string'}" class="w-full font-mono ${inputClass}"></textarea>
+                ${description}
+            </div>`;
+    }
+
+    // A secure value is write-only: the row says whether one is stored, and the empty
+    // field sends nothing until something is typed.
+    if (schema?.type === 'string' && schema.secure) {
+        return `
+            <div class="flex flex-col gap-[30px] w-full">
+                <div class="flex items-center justify-between gap-[24px] w-full">
+                    <label for="${id}">${labelHtml}</label>
+                    <span data-secure-status class="text-[20px] font-bold px-[16px] py-[6px] rounded-full whitespace-nowrap bg-[var(--muted-pill-bg)] text-[var(--text-primary)]"></span>
+                </div>
+                <input type="password" id="${id}" autocomplete="off" data-setting-key="${escapeHtml(key)}" data-setting-type="secure" class="w-full ${inputClass}">
                 ${description}
             </div>`;
     }
@@ -6128,7 +6159,7 @@ export function renderPluginSettingControl(key, schema, idPrefix = 'shotupload')
         return `
             <div class="flex flex-col gap-[30px] w-full">
                 <label for="${id}">${labelHtml}</label>
-                <input type="${schema.secure ? 'password' : 'text'}" id="${id}" data-setting-key="${escapeHtml(key)}" data-setting-type="${schema.secure ? 'secure' : 'string'}" class="w-full ${inputClass}">
+                <input type="text" id="${id}" data-setting-key="${escapeHtml(key)}" data-setting-type="string" class="w-full ${inputClass}">
                 ${description}
             </div>`;
     }
@@ -6164,6 +6195,12 @@ export function bindPluginSettingControls(rootEl, {
     const markSecure = (el, isSet) => {
         el.value = '';
         el.placeholder = getTranslation(isSet ? 'Saved' : 'Not set');
+        const status = el.parentElement?.querySelector('[data-secure-status]');
+        if (status) status.textContent = getTranslation(isSet ? 'Set' : 'Not set');
+    };
+    const describeValue = el => {
+        const target = el.parentElement?.parentElement?.querySelector('[data-value-description]');
+        if (target) target.textContent = getTranslation(pluginEnumOptions(schema[el.dataset.settingKey]).find(o => o.value === el.value)?.description || '');
     };
 
     // Stored value first, manifest default second -- a plugin that has never
@@ -6176,6 +6213,7 @@ export function bindPluginSettingControls(rootEl, {
         if (el.dataset.settingType === 'secure') markSecure(el, pluginSecureIsSet(value));
         else if (el.type === 'checkbox') el.checked = value === true;
         else if (value !== undefined && value !== null) el.value = value;
+        if (el.dataset.settingType === 'enum') describeValue(el);
     }
 
     if (readOnly) {
@@ -6201,6 +6239,14 @@ export function bindPluginSettingControls(rootEl, {
                 value = this.value;
             } else if (type === 'string' || type === 'enum') {
                 value = this.value.trim();
+            } else if (type === 'json') {
+                const parsed = parsePluginTextSetting(this.value, schema[key]);
+                this.setAttribute('aria-invalid', parsed.error ? 'true' : 'false');
+                if (parsed.error) {
+                    ui.showToast(getTranslation(parsed.error), 4000, 'error');
+                    return;
+                }
+                value = parsed.value;
             } else {
                 value = parseFloat(this.value);
                 // Rejected rather than written: a NaN or a negative would be
@@ -6216,6 +6262,7 @@ export function bindPluginSettingControls(rootEl, {
                 if (type === 'boolean') this.checked = previous === true;
                 else if (type === 'secure') markSecure(this, pluginSecureIsSet(previous));
                 else this.value = previous ?? '';
+                if (type === 'enum') describeValue(this);
             };
 
             this.disabled = true;
@@ -6229,6 +6276,7 @@ export function bindPluginSettingControls(rootEl, {
                 if (value === true) await ensureLoaded();
                 await setPluginSettings(pluginId, { [key]: value });
                 settings[key] = type === 'secure' ? { isSet: true } : value;
+                if (type === 'enum') describeValue(this);
                 if (type === 'boolean') {
                     ui.showToast(
                         `${getTranslation(pluginSettingDisplayLabel(key, schema[key]))}: ${getTranslation(value ? 'On' : 'Off')}`,
@@ -6681,11 +6729,36 @@ function renderPluginCard(pluginId, plugins, { asPage = false } = {}) {
             </div>
         </div>`.trim() : '';
 
-    const schemaControls = vm.settingsKeys.map(key => {
+    const controlsFor = keys => keys.map(key => {
         const html = renderPluginSettingControl(key, vm.settingsSchema[key], `plugin-${pluginId}`);
         if (!html) logger.warn(`${pluginId}: no control for setting ${key} of type ${vm.settingsSchema[key]?.type}`);
         return html;
     }).join('');
+    const listClass = 'flex flex-col w-full divide-y divide-[var(--border-primary)] [&>*]:py-[60px] [&>*:first-child]:pt-0 [&>*:last-child]:pb-0 [&_:disabled]:opacity-50 [&_label:has(input:disabled)]:opacity-50';
+    const basicControls = controlsFor(vm.settingsKeys.filter(key => !isAdvancedPluginSetting(vm.settingsSchema[key])));
+    const advancedControls = controlsFor(vm.settingsKeys.filter(key => isAdvancedPluginSetting(vm.settingsSchema[key])));
+    const schemaControls = basicControls || advancedControls ? `
+            ${basicControls ? `<div class="${listClass}">${basicControls}</div>` : ''}
+            ${advancedControls ? `
+            <details data-role="plugin-advanced" class="w-full">
+                <summary class="cursor-pointer font-semibold text-[var(--mimoja-blue-v2)] text-[30px] leading-[1.2] py-[12px]" data-i18n-key="Advanced">${getTranslation('Advanced')}</summary>
+                <div class="${listClass} pt-[40px]">${advancedControls}</div>
+            </details>` : ''}` : '';
+
+    const control = vm.plugin ? pluginMachineControl(vm.plugin) : null;
+    const machineControlRow = control ? `
+        <div data-role="plugin-machine-control-row" class="flex flex-col gap-[16px] w-full">
+            <div class="flex items-center justify-between gap-[24px] w-full">
+                <span class="font-semibold text-[var(--action-label)] text-[30px] leading-[1.2]" data-i18n-key="Allow machine control">${getTranslation('Allow machine control')}</span>
+                <label class="relative flex items-center cursor-pointer flex-shrink-0 w-[100px] h-[50px]">
+                    <input type="checkbox" data-role="plugin-machine-control-toggle" class="sr-only peer" disabled ${control.granted ? 'checked' : ''}
+                           aria-label="${escapeHtml(getTranslation('Allow machine control'))}">
+                    <div class="absolute inset-0 rounded-full border-2 transition-colors duration-200 bg-[var(--toggle-off-bg)] border-[var(--toggle-off-border)] peer-checked:bg-[var(--button-primary-bg)] peer-checked:border-[var(--button-primary-bg)] peer-disabled:opacity-50"></div>
+                    <div class="absolute top-1/2 left-[5px] -translate-y-1/2 peer-checked:translate-x-[46px] size-[40px] rounded-full transition-[transform,background-color] duration-200 bg-[var(--toggle-off-knob)] peer-checked:bg-white"></div>
+                </label>
+            </div>
+            <p class="font-normal leading-[1.4] text-[var(--text-primary)] opacity-70 text-[24px] w-full">${escapeHtml(control.reason || getTranslation('Lets this plugin start, stop and change the machine.'))}</p>
+        </div>` : '';
 
     return `
         <div class="flex flex-col gap-[60px] w-full py-[10px]" data-plugin-card="${escapeHtml(pluginId)}">
@@ -6698,10 +6771,19 @@ function renderPluginCard(pluginId, plugins, { asPage = false } = {}) {
                 </div>
             </div>` : ''}
 
+            <div data-role="plugin-setup-status" class="w-full" hidden>
+                <div class="flex flex-col gap-[12px] w-full rounded-[16px] bg-amber-500/10 border border-amber-500/30 p-[24px]">
+                    <span class="self-start text-[20px] font-bold px-[16px] py-[6px] rounded-full whitespace-nowrap bg-amber-500/15 text-amber-600" data-i18n-key="Needs setup">${getTranslation('Needs setup')}</span>
+                    <p data-role="plugin-setup-message" class="text-[24px] text-[var(--text-primary)] break-words"></p>
+                </div>
+            </div>
+            <div data-role="plugin-surfaces" class="w-full" hidden></div>
+
             ${rule}
 
             <div class="flex flex-col gap-[24px] w-full">
                 ${enableRow}
+                ${machineControlRow}
                 <div data-role="plugin-version-info" class="w-full text-[24px] text-[var(--text-secondary)]">${getTranslation('Checking')}…</div>
                 ${manageRow}
             </div>
@@ -6712,7 +6794,7 @@ function renderPluginCard(pluginId, plugins, { asPage = false } = {}) {
 
             ${schemaControls ? `
             ${rule}
-            <div class="flex flex-col w-full divide-y divide-[var(--border-primary)] [&>*]:py-[60px] [&>*:first-child]:pt-0 [&>*:last-child]:pb-0 [&_:disabled]:opacity-50 [&_label:has(input:disabled)]:opacity-50">${schemaControls}</div>` : ''}
+            ${schemaControls}` : ''}
         </div>`;
 }
 
@@ -6793,6 +6875,90 @@ function bindPluginEnableToggle(cardEl, pluginId, refreshVersion) {
     });
 }
 
+const PLUGIN_SURFACE_LABELS = { setup: 'Set up', settings: 'Settings', diagnostics: 'Diagnostics' };
+
+function paintPluginSurfaces(cardEl, links, needsSetup) {
+    const row = cardEl.querySelector('[data-role="plugin-surfaces"]');
+    if (!row) return;
+    const OUTLINE = 'border-2 border-[var(--mimoja-blue-v2)] text-[var(--mimoja-blue-v2)] hover:bg-[var(--button-primary-bg)] hover:text-white';
+    const PRIMARY = 'border-2 border-[var(--button-primary-bg)] bg-[var(--button-primary-bg)] text-white';
+    row.hidden = links.length === 0;
+    row.innerHTML = links.length ? `<div class="flex items-center gap-[14px] flex-wrap w-full">${links.map(link => {
+        const label = escapeHtml(getTranslation(link.label || PLUGIN_SURFACE_LABELS[link.role]));
+        return `<button type="button" data-surface="${escapeHtml(link.href)}" data-surface-role="${link.role}" data-label="${label}" aria-haspopup="dialog"
+            class="${link.role === 'setup' && needsSetup ? PRIMARY : OUTLINE} h-[56px] px-[28px] rounded-[64px] text-[24px] font-bold inline-flex items-center transition-colors duration-200">${label}</button>`;
+    }).join('')}</div>` : '';
+}
+
+async function pluginDeviceInfos(plugin) {
+    const types = new Set((plugin?.drivers || []).filter(d => Array.isArray(d?.surfaces) && d.surfaces.length).map(d => d?.type));
+    const reads = [];
+    if (types.has('grinder')) reads.push(getGrinderInfo());
+    if (types.has('scale')) reads.push(getScaleInfo().catch(() => null));
+    return (await Promise.all(reads)).filter(Boolean);
+}
+
+// Set up, Settings and Diagnostics: the plugin's own pages, opened over Settings in the
+// surface dialog. A plugin that reports `needsSetup` gets the Needs setup box and a
+// primary Set up button; closing its setup or settings page redraws the page.
+function bindPluginSurfaces(cardEl, plugin) {
+    if (!plugin?.loaded) return;
+    let links = pluginSurfaceLinks(plugin, apiOrigin());
+    paintPluginSurfaces(cardEl, links, false);
+
+    cardEl.addEventListener('click', event => {
+        const button = event.target.closest?.('[data-surface]');
+        if (!button || !cardEl.contains(button)) return;
+        const href = deviceSurfaceUrl(button.dataset.surface, apiOrigin());
+        if (!href) return;
+        const redraw = button.dataset.surfaceRole !== 'diagnostics';
+        openSurfaceDialog(href, button.dataset.label,
+            () => cardEl.querySelector(`[data-surface="${CSS.escape(href)}"]`),
+            () => { if (redraw && activeSettingsCategory) updateSettingsContentArea(activeSettingsCategory); });
+    });
+
+    (async () => {
+        const deviceSurfaces = pluginDeviceSurfaces(plugin.id, await pluginDeviceInfos(plugin).catch(() => []), apiOrigin());
+        if (deviceSurfaces.length) links = pluginSurfaceLinks(plugin, apiOrigin(), deviceSurfaces);
+        const setup = links.find(link => link.statusHref);
+        const status = setup ? parseSetupStatus(await getPluginSetupStatus(setup.statusHref)) : null;
+        if (!cardEl.isConnected) return;
+        const box = cardEl.querySelector('[data-role="plugin-setup-status"]');
+        if (box && status) {
+            box.hidden = !status.needsSetup;
+            box.querySelector('[data-role="plugin-setup-message"]').textContent = status.message || '';
+        }
+        paintPluginSurfaces(cardEl, links, !!status?.needsSetup);
+    })().catch(error => logger.warn(`Plugin pages unavailable for ${plugin.id}:`, error));
+}
+
+// Decaid's machine-control grant for this plugin. Granting asks first; a refusal (extension
+// protection) puts the switch back and points to Decaid.
+function bindPluginMachineControl(cardEl, plugin) {
+    const toggle = cardEl.querySelector('[data-role="plugin-machine-control-toggle"]');
+    if (!toggle) return;
+    toggle.disabled = false;
+    toggle.addEventListener('change', async function () {
+        const on = this.checked;
+        const reason = pluginMachineControl(plugin)?.reason || getTranslation('Lets this plugin start, stop and change the machine.');
+        if (on && !confirm(`${getTranslation('Allow machine control')}: ${plugin.name || plugin.id}?\n\n${reason}`)) {
+            this.checked = false;
+            return;
+        }
+        this.disabled = true;
+        try {
+            await setPluginMachineControl(plugin.id, on);
+            ui.showToast(`${getTranslation('Allow machine control')}: ${getTranslation(on ? 'On' : 'Off')}`, 2000, 'success');
+        } catch (error) {
+            this.checked = !on;
+            logger.warn(`Machine control for ${plugin.id} not changed:`, error);
+            const refused = error?.status === 401 || error?.status === 403;
+            ui.showToast(refused ? getTranslation('Manage this plugin in the Decaid dashboard.') : `${getTranslation('Failed')}: ${error.message || error}`, 4000, 'error');
+        }
+        this.disabled = false;
+    });
+}
+
 function setupPluginCard(cardEl, pluginId, plugins) {
     const override = pluginCardOverride(pluginId);
     const vm = pluginViewModel(plugins, pluginId);
@@ -6814,12 +6980,14 @@ function setupPluginCard(cardEl, pluginId, plugins) {
     cardEl.querySelector('[data-role="plugin-manage"]')?.addEventListener('click', exitToDecentDashboard);
 
     bindPluginOpenButton(cardEl, vm.plugin);
+    bindPluginSurfaces(cardEl, vm.plugin);
 
     const managementAllowed = probePluginManagement().then(pluginManagementAllowed);
     managementAllowed.then(allowed => {
         if (!allowed || !vm.plugin || !cardEl.isConnected) return;
         cardEl.querySelector('[data-role="plugin-manage-row"]').hidden = true;
         bindPluginEnableToggle(cardEl, pluginId, () => refreshVersion());
+        bindPluginMachineControl(cardEl, vm.plugin);
     });
 
     const schema = vm.settingsSchema;

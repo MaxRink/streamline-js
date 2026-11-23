@@ -46,6 +46,57 @@ This is a Streamline convention. It does not require a new Decaid build, but
 Decaid's native settings screen and other skins need their own support to hide
 the same fields. Older Streamline versions continue displaying them.
 
+## Presentation hints
+
+Streamline also reads these optional per-setting keys. Like `hidden`, they are
+presentation only and pass through Decaid unchanged:
+
+| Key | Effect |
+| --- | --- |
+| `valueLabels` | `{value: label}` for an `enum`; the raw value is the fallback |
+| `valueDescriptions` | `{value: text}` shown under the control for the selected value |
+| `advanced: true` | Groups the setting under a collapsed **Advanced** section |
+| `multiline: true` | Edits a `string` in a text area |
+
+A `string` whose `default` is a JSON object or array is also edited in a text
+area, and Streamline saves it only when it parses as an object or array. A
+`secure` setting is write-only: the row shows **Set** or **Not set**, the field
+stays empty, and a value is sent only when one is typed.
+
+## Set up, Settings and Diagnostics pages
+
+A plugin page in Streamline shows a button for each of the plugin's own pages
+and opens it in a dialog over Settings:
+
+- the top-level `surfaces` Decaid lists for the plugin (`role` `setup`,
+  `settings` or `diagnostics`; at most one per role; an `endpoint` that names a
+  declared HTTP endpoint, or an `href` on this plugin's pages on the Decaid API
+  origin). A surface on endpoint `ui` is left to the **Open** button;
+- on a host that does not list top-level surfaces, **Set up** for an HTTP
+  endpoint named `setup`;
+- device pages from a connected device's `surfaces` (`GET /api/v1/grinder/info`,
+  `GET /api/v1/scale/info`). A plugin-level page whose endpoint a device also
+  serves opens the device's page, which carries the `deviceId`.
+
+The page URL gets `ui=1`, `surface=<id>`, `embed=1`, `theme=light|dark` and
+`lang=<code>`. A page that posts `streamline:ready` to its parent (the
+[plugin-ui kit](plugin-ui/README.md) does) is shown on the skin's theme
+background, so keep its `body` transparent when embedded. Any other page gets a
+white canvas. A page can close the dialog by posting `streamline:close`.
+
+**Needs setup.** For a setup page, Streamline reads
+`GET /api/v1/plugins/<id>/<setup endpoint>?status=1`. A JSON answer with a
+boolean `needsSetup` (and an optional `message`) shows the **Needs setup** box
+and makes **Set up** the primary button. Any other answer shows nothing.
+
+## Machine control
+
+Where Decaid reports `machineControl` for a plugin in `GET /api/v1/plugins`,
+the page shows an **Allow machine control** switch. Turning it on asks for
+confirmation, then sends `PUT /api/v1/plugins/<id>/machine-control`
+`{"granted": true}`. A refused write (extension protection) puts the switch back
+and points to Decaid. Hosts without the field show no switch.
+
 ## Return to Streamline settings
 
 The **Open** link includes a URL-encoded `returnTo` query parameter containing

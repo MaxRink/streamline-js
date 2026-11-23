@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { pluginUiUrl as buildPluginUiUrl, isPluginSettingVisible, pluginViewModel, escapeHtml } from '../src/settings/plugin-view.js';
+import { pluginUiUrl as buildPluginUiUrl, isPluginSettingVisible, pluginViewModel, escapeHtml,
+    pluginEnumOptions, isJsonPluginSetting, pluginSettingUsesTextarea, isAdvancedPluginSetting, pluginMachineControl } from '../src/settings/plugin-view.js';
 
 // The Plugins settings page links each plugin to its own web UI. Decaid routes
 // /api/v1/plugins/<id>/<endpoint> from the manifest's api declarations, so a link
@@ -115,8 +116,8 @@ const shotUpload = (() => {
     ].join('\n');
     // getTranslation is identity here: untranslated strings fall back to the
     // source string, so the manifest text is what reaches the page.
-    return new Function('getTranslation', 'isPluginSettingVisible',
-        `${body}\nreturn { renderPluginSettingControl, pluginSettingLabel };`)(k => k, isPluginSettingVisible);
+    return new Function('getTranslation', 'isPluginSettingVisible', 'pluginEnumOptions', 'isJsonPluginSetting', 'pluginSettingUsesTextarea',
+        `${body}\nreturn { renderPluginSettingControl, pluginSettingLabel };`)(k => k, isPluginSettingVisible, pluginEnumOptions, isJsonPluginSetting, pluginSettingUsesTextarea);
 })();
 
 // The manifest shot-upload 0.2.1 actually ships.
@@ -178,6 +179,28 @@ test('an enum renders a closed list of the manifest values', () => {
     assert.match(html, /<select id="shotupload-setting-Roast"[^>]*data-setting-type="enum"/);
     assert.match(html, /<option value="Light">Light<\/option>/);
     assert.match(html, /<option value="Dark">Dark<\/option>/);
+});
+
+test('an enum shows valueLabels and leaves room for the selected value\'s description', () => {
+    const html = shotUpload.renderPluginSettingControl('Owner', {
+        type: 'enum', values: ['off', 'grinder'],
+        valueLabels: { off: 'Just show the grinder', grinder: '<b>x</b>' },
+        valueDescriptions: { off: 'Nothing is sent.' },
+    });
+    assert.match(html, /<option value="off">Just show the grinder<\/option>/);
+    assert.match(html, /<option value="grinder">&lt;b&gt;x&lt;\/b&gt;<\/option>/, 'labels are manifest text: escaped');
+    assert.match(html, /data-value-description/);
+    assert.doesNotMatch(shotUpload.renderPluginSettingControl('Roast', { type: 'enum', values: ['a'] }), /data-value-description/);
+});
+
+test('JSON and multiline strings get a text area; JSON is typed for validation', () => {
+    assert.match(shotUpload.renderPluginSettingControl('Anchors', { type: 'string', default: '[]' }),
+        /<textarea id="shotupload-setting-Anchors"[^>]*data-setting-type="json"/);
+    assert.match(shotUpload.renderPluginSettingControl('Notes', { type: 'string', multiline: true }),
+        /<textarea id="shotupload-setting-Notes"[^>]*data-setting-type="string"/);
+    const secret = shotUpload.renderPluginSettingControl('Tokens', { type: 'string', secure: true, default: '{}', multiline: true });
+    assert.match(secret, /type="password"[^>]*data-setting-type="secure"/);
+    assert.match(secret, /data-secure-status/);
 });
 
 test('an enum missing its values list renders nothing rather than an empty menu', () => {
@@ -272,10 +295,11 @@ test('a card with only custom-UI settings keeps Open and version info, hides its
     assert.ok(match, 'renderPluginCard not found');
     const render = new Function('pluginCardOverride', 'pluginViewModel', 'getTranslation',
         'pluginDescription', 'pluginUiUrl', 'API_BASE_URL', 'window', 'escapeHtml',
-        'renderPluginSettingControl', 'logger', `${match[0]}\nreturn renderPluginCard;`)(
+        'renderPluginSettingControl', 'logger', 'isAdvancedPluginSetting', 'pluginMachineControl', `${match[0]}\nreturn renderPluginCard;`)(
         () => ({}), pluginViewModel, k => k, pluginDescription, buildPluginUiUrl,
         'http://localhost:8080/api/v1', { location: { href: 'http://localhost:24803/index.html?page=settings' } },
-        escapeHtml, shotUpload.renderPluginSettingControl, { warn() { assert.fail('hidden fields are not unsupported types'); } });
+        escapeHtml, shotUpload.renderPluginSettingControl, { warn() { assert.fail('hidden fields are not unsupported types'); } },
+        isAdvancedPluginSetting, pluginMachineControl);
     const plugin = {
         id: 'custom.reaplugin', name: 'Custom settings', loaded: true,
         api: [{ id: 'ui', type: 'http' }],
@@ -300,6 +324,15 @@ test('a card with only custom-UI settings keeps Open and version info, hides its
 
     plugin.settings.normal = { type: 'boolean', default: false };
     assert.match(render(plugin.id, [plugin]), /data-setting-key="normal"/);
+    assert.doesNotMatch(render(plugin.id, [plugin]), /plugin-advanced|plugin-machine-control-row/, 'no Advanced group or grant row unless declared');
+
+    plugin.settings.expert = { type: 'number', default: 1, advanced: true };
+    plugin.machineControl = false;
+    const advanced = render(plugin.id, [plugin]);
+    assert.match(advanced, /<details data-role="plugin-advanced"[\s\S]*data-setting-key="expert"[\s\S]*<\/details>/, 'advanced settings sit in a collapsed group');
+    assert.doesNotMatch(advanced, /<details[^>]*\bopen\b/);
+    assert.match(advanced, /data-role="plugin-machine-control-toggle"[^>]*disabled/, 'the grant switch waits for the management probe');
+    assert.match(advanced, /<div data-role="plugin-setup-status" class="w-full" hidden>/);
 });
 
 // ── What a tap on Open does ────────────────────────────────────────────────

@@ -3449,6 +3449,33 @@ export async function disablePlugin(pluginId) {
     return result;
 }
 
+/** PUT /plugins/{id}/machine-control. Throws with `status` when Decaid refuses. */
+export async function setPluginMachineControl(pluginId, granted) {
+    const response = await fetch(`${API_BASE_URL}/plugins/${encodeURIComponent(pluginId)}/machine-control`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ granted }),
+    });
+    if (!response.ok) {
+        const error = new Error(`Failed to change machine control for ${pluginId}: ${response.status} ${response.statusText}`);
+        error.status = response.status;
+        throw error;
+    }
+    document.dispatchEvent(new CustomEvent('streamline:plugins-changed', { detail: { pluginId } }));
+    return response.json();
+}
+
+/** A plugin's own setup status (`GET <setup>?status=1`) as parsed JSON; null when it offers none. */
+export async function getPluginSetupStatus(url) {
+    try {
+        const response = await fetch(url);
+        return response.ok ? await response.json() : null;
+    } catch (error) {
+        logger.debug('Plugin setup status unavailable:', url, error);
+        return null;
+    }
+}
+
 // Plugin distribution is Decaid's job: it records where each plugin came from
 // (.rea_source.json) and installs updates itself on its normal update cadence.
 // These three cover everything Streamline needs — no direct GitHub calls, so no
