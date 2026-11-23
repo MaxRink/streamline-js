@@ -12,7 +12,7 @@ import { loadStyle } from './vendor-loader.js';
 const LOAD_TIMEOUT_MS = 10000;
 let closeCurrent = null;
 
-loadStyle('src/css/surface-dialog.css').catch(() => {});
+const styleReady = loadStyle('src/css/surface-dialog.css').catch(() => {});
 
 export function isSurfaceDialogOpen() {
     return closeCurrent !== null;
@@ -22,7 +22,7 @@ export function closeSurfaceDialog() {
     closeCurrent?.();
 }
 
-export function openSurfaceDialog(href, title) {
+export async function openSurfaceDialog(href, title) {
     closeSurfaceDialog();
     const opener = document.activeElement;
     const probe = new AbortController();
@@ -84,6 +84,8 @@ export function openSurfaceDialog(href, title) {
     dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
     frame.addEventListener('load', () => clearTimeout(timer), { once: true });
 
+    await styleReady;
+    if (closeCurrent !== close) return dialog;
     document.body.appendChild(dialog);
     dialog.showModal();
     closeButton.focus();

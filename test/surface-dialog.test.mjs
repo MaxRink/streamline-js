@@ -72,9 +72,9 @@ function harness({ available = true } = {}) {
 const HREF = 'http://tablet:8080/api/v1/plugins/e64/diagnostics?ui=1&deviceId=e64';
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
-test('opens the page in a modal dialog with focus on Close', () => {
+test('opens the page in a modal dialog with focus on Close', async () => {
     const h = harness();
-    const dialog = h.openSurfaceDialog(HREF, 'Diagnostics');
+    const dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     assert.equal(dialog.open, true);
     assert.equal(dialog.attributes.role, 'dialog');
     assert.equal(dialog.attributes['aria-modal'], 'true');
@@ -88,9 +88,9 @@ test('opens the page in a modal dialog with focus on Close', () => {
     assert.equal(h.isSurfaceDialogOpen(), true);
 });
 
-test('Close removes the dialog, stops the probe and gives focus back', () => {
+test('Close removes the dialog, stops the probe and gives focus back', async () => {
     const h = harness();
-    const dialog = h.openSurfaceDialog(HREF, 'Diagnostics');
+    const dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     dialog.querySelector('.surface-dialog-close').dispatchEvent(new Event('click'));
     assert.equal(dialog.removed, true);
     assert.equal(dialog.open, false);
@@ -100,14 +100,14 @@ test('Close removes the dialog, stops the probe and gives focus back', () => {
     assert.equal(h.isSurfaceDialogOpen(), false);
 });
 
-test('Escape (the dialog\'s own close) and a backdrop tap close it; a tap inside does not', () => {
+test('Escape (the dialog\'s own close) and a backdrop tap close it; a tap inside does not', async () => {
     const h = harness();
-    let dialog = h.openSurfaceDialog(HREF, 'Settings');
+    let dialog = await h.openSurfaceDialog(HREF, 'Settings');
     dialog.close();
     assert.equal(dialog.removed, true);
     assert.equal(h.document.activeElement, h.opener);
 
-    dialog = h.openSurfaceDialog(HREF, 'Settings');
+    dialog = await h.openSurfaceDialog(HREF, 'Settings');
     const inside = dialog.querySelector('.surface-dialog-title');
     dialog.dispatchEvent(Object.defineProperty(new Event('click'), 'target', { value: inside }));
     assert.equal(dialog.open, true);
@@ -117,7 +117,7 @@ test('Escape (the dialog\'s own close) and a backdrop tap close it; a tap inside
 
 test('a page that answers with an error shows the error, Close and Open anyway -- never a blank frame', async () => {
     const h = harness({ available: false });
-    const dialog = h.openSurfaceDialog(HREF, 'Diagnostics');
+    const dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     h.probes[0].resolve();
     await settle();
     assert.equal(dialog.querySelector('.surface-dialog-frame').removed, true);
@@ -127,33 +127,43 @@ test('a page that answers with an error shows the error, Close and Open anyway -
     assert.equal(dialog.open, true);
 });
 
-test('a frame that never loads turns into the error; one that loads does not', () => {
+test('a frame that never loads turns into the error; one that loads does not', async () => {
     let h = harness();
-    let dialog = h.openSurfaceDialog(HREF, 'Diagnostics');
+    let dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     h.timeout();
     assert.equal(dialog.querySelector('.surface-dialog-error').hidden, false);
     assert.equal(dialog.querySelector('.surface-dialog-hint').hidden, true);
 
     h = harness();
-    dialog = h.openSurfaceDialog(HREF, 'Diagnostics');
+    dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     dialog.querySelector('.surface-dialog-frame').dispatchEvent(new Event('load'));
     assert.equal(h.pendingTimers, 0);
     assert.equal(dialog.querySelector('.surface-dialog-error').hidden, true);
 });
 
+test('a dialog closed while its stylesheet loads is never shown', async () => {
+    const h = harness();
+    const pending = h.openSurfaceDialog(HREF, 'Diagnostics');
+    h.closeSurfaceDialog();
+    const dialog = await pending;
+    assert.equal(dialog.open, undefined);
+    assert.equal(h.probes.length, 0);
+    assert.equal(h.isSurfaceDialogOpen(), false);
+});
+
 test('the error never lands on a dialog that was already closed', async () => {
     const h = harness({ available: false });
-    const dialog = h.openSurfaceDialog(HREF, 'Diagnostics');
+    const dialog = await h.openSurfaceDialog(HREF, 'Diagnostics');
     h.closeSurfaceDialog();
     h.probes[0].resolve();
     await settle();
     assert.equal(dialog.querySelector('.surface-dialog-frame').removed, undefined);
 });
 
-test('opening a second page closes the first', () => {
+test('opening a second page closes the first', async () => {
     const h = harness();
-    const first = h.openSurfaceDialog(HREF, 'Diagnostics');
-    const second = h.openSurfaceDialog(`${HREF}&x=1`, 'Settings');
+    const first = await h.openSurfaceDialog(HREF, 'Diagnostics');
+    const second = await h.openSurfaceDialog(`${HREF}&x=1`, 'Settings');
     assert.equal(first.removed, true);
     assert.equal(second.open, true);
     assert.equal(h.isSurfaceDialogOpen(), true);
