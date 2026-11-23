@@ -15,7 +15,7 @@ import { shouldUseNumpad } from './numpad-policy.js';
 import { openContextMenu } from './context-menu.js';
 import { initCalibratedSteam } from './calibrated-steam-ui.js';
 import { logger } from './logger.js';
-import { grindDecimals } from './grinder-sync.js';
+import { grindDecimals, grindTileDisplay } from './grinder-sync.js';
 import { shouldWriteStatus } from './machine-status-render.js';
 import { SETTINGS_RESTORED_EVENT } from './settingsSync.js';
 import * as chart from './chart.js';
@@ -502,6 +502,9 @@ export async function applyPluginStepAsync(field, by) {
 }
 
 export function updateGrindValue(newValue) {
+    workflowGrind = newValue;
+    document.getElementById('grind-value')?.style.removeProperty('font-size');
+    showGrindSource(false);
     const workflowUpdate = {
         context: {
             grinderSetting: parseFloat(newValue).toFixed(2)
@@ -3753,15 +3756,34 @@ export function updateFlushDisplay(duration) {
     syncPresetHighlight(document.getElementById('flush-presets'), t => t === target);
 }
 
+let grinderReading = null;
+let workflowGrind = null;
+
+function showGrindSource(fromGrinder) {
+    const valueEl = document.getElementById('grind-value');
+    const sourceEl = document.getElementById('grind-source');
+    if (sourceEl) sourceEl.hidden = !fromGrinder;
+    if (fromGrinder) valueEl?.setAttribute('aria-describedby', 'grind-source');
+    else valueEl?.removeAttribute('aria-describedby');
+}
+
 export function updateGrindDisplay(grinderData) {
     const grindValueEl = document.getElementById('grind-value');
-    // Support both new context format (grinderData.grinderSetting) and legacy format (grinderData.setting)
-    // Prefer grinderSetting over setting (context takes precedence)
-    const grindValue = grinderData?.grinderSetting ?? grinderData?.setting;
-    if (grindValueEl && grindValue !== undefined) {
-        const parsed = parseFloat(grindValue);
-        grindValueEl.textContent = Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(1);
-    }
+    workflowGrind = grinderData?.grinderSetting ?? grinderData?.setting ?? null;
+    if (!grindValueEl) return;
+    const { text, fromGrinder } = grindTileDisplay(workflowGrind, grinderReading);
+    grindValueEl.textContent = text;
+    if (fromGrinder) fitTextToWidth(grindValueEl);
+    else grindValueEl.style.fontSize = '';
+    showGrindSource(fromGrinder);
+}
+
+/** The connected grinder's own setting text, or null. The tile shows it while the workflow names no grind. */
+export function setGrinderReading(text) {
+    const next = typeof text === 'string' ? text : null;
+    if (next === grinderReading) return;
+    grinderReading = next;
+    if (!Number.isFinite(parseFloat(workflowGrind))) updateGrindDisplay({ grinderSetting: workflowGrind });
 }
 
 export function updateDoseInDisplay(doseInValue) {

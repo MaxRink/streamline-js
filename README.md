@@ -654,6 +654,11 @@ plugin — with none installed the page says so and offers **Search**. Two switc
 | **Follow Grinder** | The Grind tile shows what the grinder is set to |
 | **Send Grind** | The Grind tile sets the grinder. Only available on a grinder that accepts settings |
 
+Whatever the switches say, a recipe that names no grind shows the connected grinder's own reading
+on the tile, marked **Grinder**, so a grinder the skin cannot set is never a blank tile.
+Follow Grinder accepts a reading with a unit after the number (`827 ddValueDum` follows as 827);
+a reading that is not a number, such as `espresso/A`, is shown but never followed.
+
 ![Grinder settings, with no grinder plugin installed](docs/media/grinder-settings.jpg)
 
 See [docs/grinders.md](docs/grinders.md) for the plugin side.
