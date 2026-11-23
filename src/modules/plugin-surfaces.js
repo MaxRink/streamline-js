@@ -202,6 +202,17 @@ export function deviceSurfaceUrl(href, apiOrigin) {
     }
 }
 
+/** A button per device surface with a valid href, labelled by the plugin, else by its role ("Settings" for settings). */
+export function deviceSurfaceLinks(surfaces, apiOrigin) {
+    if (!Array.isArray(surfaces)) return [];
+    return surfaces.flatMap(surface => {
+        const href = deviceSurfaceUrl(surface?.href, apiOrigin);
+        const role = typeof surface?.role === 'string' ? surface.role.trim() : '';
+        const label = (typeof surface?.label === 'string' && surface.label.trim()) || (role === 'settings' ? 'Settings' : role);
+        return href && label ? [{ href, label }] : [];
+    });
+}
+
 // The size an overlay asked for with `streamline:size`, held to what the overlay may
 // use: never bigger than the default dialog or the screen, never a sliver. null for junk.
 export const OVERLAY_LIMITS = { maxWidth: 1100, maxHeight: 760, minWidth: 280, minHeight: 160 };
