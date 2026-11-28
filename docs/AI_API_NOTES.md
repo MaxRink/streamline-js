@@ -26,6 +26,8 @@ Use **Decaid** in prose. Do not rename compatibility identifiers such as `reaHos
 
 Device scanning is a useful example: the client may stop waiting and fall back to the current device list while the server-side scan continues. A client abort is not proof that the Decaid operation stopped.
 
+Scans go through `src/modules/device-scan.js`: `POST /api/v1/devices/scan` (the `GET` is deprecated and needs a token in protected mode), falling back to `GET` for the rest of the page session when an older host answers `404` or `405`.
+
 ## WebSocket Contracts
 
 Use the existing reconnecting wrapper and socket-slot helpers. Socket replacement is close-before-open so a resync cannot leak a previous connection or deliver each frame twice.

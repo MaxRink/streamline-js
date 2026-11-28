@@ -9,6 +9,7 @@ import { AUTO_STEAM_SESSION_KEY, readAutoSteamSession } from './auto-steam-sessi
 import { openDB, getSetting, setSetting } from './idb.js';
 import { deriveDisplayAction, isScreensaverSuppressed } from './screensaver-policy.js';
 import { parseSse } from './derek-stream.js';
+import { createDeviceScanRequester } from './device-scan.js';
 import { assertDeclaredFields, workflowPatchKeys } from './workflow-fields.js';
 import { selectedRecipeSteam } from './dye-selection.js';
 import { isSteamOff, steamOffPatch, steamOnPatch, steamDurationWrite, MIN_STEAM_DURATION_S } from './steam-mode.js';
@@ -306,6 +307,8 @@ export async function getSensors() {
 // real post-scan list; only the pathological one gets cut short.
 const SCAN_RESPONSE_BUDGET_MS = 20000;
 
+const requestDeviceScan = createDeviceScanRequester((url, init) => fetch(url, init));
+
 /**
  * Ask REA to scan (and connect). Bounded: the endpoint takes its slow branch for
  * us — `quick` defaults false and `connect` defaults TRUE (devices_handler.dart:217),
@@ -321,7 +324,7 @@ export async function scanForDevices({ timeoutMs = SCAN_RESPONSE_BUDGET_MS } = {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        const response = await fetch(`${API_BASE_URL}/devices/scan`, { signal: controller.signal });
+        const response = await requestDeviceScan(`${API_BASE_URL}/devices/scan`, { signal: controller.signal });
         if (!response.ok) {
             throw new Error('Failed to scan for devices');
         }
@@ -362,9 +365,7 @@ export async function reconnectDevice(deviceId) {
 export async function connectScaleDevice() {
     try {
         logger.info('Attempting to connect to scale...');
-        const response = await fetch(`${API_BASE_URL}/devices/scan?connect=true`, {
-            method: 'GET',
-        });
+        const response = await requestDeviceScan(`${API_BASE_URL}/devices/scan?connect=true`);
         if (!response.ok) {
             logger.error(`Failed to send connect request for scale: ${response.statusText}`);
             return response.json();
