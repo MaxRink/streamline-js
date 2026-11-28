@@ -8,7 +8,7 @@ const match = source.match(/export async function connectScaleDevice\(\) \{[\s\S
 test('scale connection preserves the original fetch failure', async () => {
     assert.ok(match);
     const failure = new Error('offline');
-    const connect = new Function('fetch', 'API_BASE_URL', 'logger', `${match[0].replace('export ', '')}; return connectScaleDevice;`)(
+    const connect = new Function('requestDeviceScan', 'API_BASE_URL', 'logger', `${match[0].replace('export ', '')}; return connectScaleDevice;`)(
         async () => { throw failure; },
         'http://localhost',
         { info() {}, error() {} },
